@@ -383,6 +383,198 @@ cd ~/projects/my-task
 | **跨会话恢复** | ⚠️  依赖对话上下文 | ✅ 完全无状态恢复 |
 | **禁止路径检查** | ❌ 无 | ✅ 检测临时目录警告 |
 
+## 🔗 与其他 Skills 集成
+
+本 skill 是 superpowers 标准工作流的**执行和恢复**增强，与其他 skills 完美配合。
+
+### 推荐的完整工作流
+
+```
+阶段 1 - 设计探索
+  /brainstorming
+  → 输出: docs/plans/YYYY-MM-DD-<主题>-design.md
+  → 作用: 将想法转化为清晰的设计方案
+
+阶段 2 - 实施规划
+  /using-git-worktrees（可选，需要隔离工作区时）
+  /writing-plans
+  → 输出: docs/plans/YYYY-MM-DD-<主题>-implementation.md
+  → 作用: 将设计转化为详细的执行计划
+
+阶段 3 - 开始执行
+  /context-resilient-task（初始化）
+  → 动作:
+      • 创建 MRS 目录（.task-state/ 或 task-work/）
+      • 关联实施计划（链接或引用）
+      • 初始化 task_state.md、snapshot.md
+      • 开始执行工作
+
+阶段 4 - 恢复工作（如果中断）
+  /context-resilient-task（恢复）
+  → 动作:
+      • 自动检测 MRS 文件
+      • 从 artifacts 重建任务状态
+      • 无缝继续执行
+
+阶段 5 - 完成收尾
+  /finishing-a-development-branch
+  → 动作: 合并/PR/清理
+```
+
+### 推荐的目录结构
+
+与多个 skills 配合使用时的目录组织：
+
+```
+project/
+  ├── docs/plans/              # brainstorming + writing-plans 输出
+  │   ├── 2026-02-10-design.md           # 设计文档（不可变）
+  │   └── 2026-02-10-implementation.md   # 实施计划（蓝图）
+  │
+  ├── .task-state/             # context-resilient-task MRS
+  │   ├── plan.md             # 链接到 implementation.md
+  │   ├── task_state.md       # 当前执行状态
+  │   ├── snapshot.md         # 会话快照
+  │   ├── findings.md         # 执行中的发现
+  │   └── progress.md         # 详细进度追踪
+  │
+  └── src/                     # 正在开发的代码
+```
+
+**关键原则：**
+- **设计文档** (brainstorming 输出) → 不可变参考
+- **实施计划** (writing-plans 输出) → 执行蓝图
+- **MRS artifacts** (context-resilient-task) → 活跃的执行状态
+
+### Skills 兼容性矩阵
+
+| Skill | 关系 | 集成说明 |
+|-------|------|---------|
+| **brainstorming** | ✅ 互补 | 设计阶段 → 执行阶段 |
+| **writing-plans** | ✅ 互补 | 计划输出 → MRS 输入 |
+| **using-git-worktrees** | ✅ 兼容 | MRS 放在 worktree 根目录 |
+| **executing-plans** | ⚠️ 重叠 | 两者都管理执行，选择其一或嵌套使用 |
+| **subagent-driven-development** | ✅ 兼容 | 子代理在 MRS 上下文中工作 |
+| **finishing-a-development-branch** | ✅ 兼容 | 在 MRS 追踪的工作完成后使用 |
+
+### 何时使用 context-resilient-task vs executing-plans
+
+**使用 context-resilient-task 当：**
+- 任务跨越多天/多会话
+- 中断风险高（网络、上下文限制）
+- 需要在不同 IDE/环境间切换
+- 在共享/远程系统上工作
+
+**使用 executing-plans 当：**
+- 单次连续会话完成
+- 执行计划有明确的审查检查点
+- 需要更结构化的阶段门控
+
+**两者结合使用：**
+- executing-plans 提供框架
+- context-resilient-task 处理检查点之间的恢复
+
+### 从现有计划初始化
+
+当已有 design.md 或 implementation.md 时：
+
+```bash
+# 方式 1: 创建符号链接（推荐）
+cd .task-state
+ln -s ../docs/plans/2026-02-10-implementation.md plan.md
+
+# 方式 2: 在 task_state.md 中引用
+echo "完整计划: 见 docs/plans/2026-02-10-implementation.md" >> task_state.md
+
+# 方式 3: 复制并追踪变化
+cp docs/plans/2026-02-10-implementation.md plan.md
+# 然后随着执行进展更新 plan.md
+```
+
+### 跨 Skill 的 Artifact 流转
+
+```
+/brainstorming
+  ↓ design.md（设计方案）
+/writing-plans
+  ↓ implementation.md（实施计划）
+/context-resilient-task (init)
+  ↓ 创建 MRS (task_state.md, snapshot.md)
+  ↓ plan.md → 引用 implementation.md
+[执行工作]
+  ↓ 更新 findings.md, progress.md
+  ↓ 生成快照
+[会话中断]
+/context-resilient-task (recover)
+  ↓ 检测 MRS
+  ↓ 重建状态
+  ↓ 继续工作
+/finishing-a-development-branch
+  ↓ 合并/PR/清理
+```
+
+### 实用技巧
+
+**1. MRS 工作目录命名**
+```bash
+# 选项 A: 隐藏目录（不影响项目结构）
+.task-state/
+
+# 选项 B: 显式目录（清晰可见）
+task-work/
+
+# 选项 C: 嵌套在 docs 下
+docs/task-state/
+```
+
+**2. 计划文件同步**
+
+如果 `implementation.md` 更新了：
+```bash
+# 如果使用符号链接 - 自动同步
+# 如果复制了文件 - 需要手动同步
+cp docs/plans/2026-02-10-implementation.md .task-state/plan.md
+
+# 在 task_state.md 中记录
+echo "Plan updated: synced with implementation.md v2" >> task_state.md
+```
+
+**3. 多阶段任务的完整示例**
+
+```bash
+# 假设任务：构建 API 认证模块
+
+# 步骤 1: 设计
+/brainstorming
+# → 输出到 docs/plans/2026-02-10-auth-module-design.md
+
+# 步骤 2: 规划
+/writing-plans
+# → 输出到 docs/plans/2026-02-10-auth-module-implementation.md
+
+# 步骤 3: 开始执行
+mkdir -p .task-state
+cd .task-state
+/context-resilient-task
+# → 初始化 MRS，链接 implementation.md
+
+# [执行第一阶段...]
+# [晚上下班，关闭 IDE]
+
+# 步骤 4: 第二天恢复
+cd ~/project/.task-state
+/context-resilient-task
+# → 自动检测 MRS
+# → 输出: "From task_state.md: Current phase is 'Phase 2 - API Endpoints'"
+# → 继续工作
+
+# [执行完成]
+
+# 步骤 5: 完成
+/finishing-a-development-branch
+# → 合并到主分支
+```
+
 ## 🎯 适用场景
 
 ### ✅ 最适合的场景

@@ -290,6 +290,133 @@ Key steps:
 | Output structure | Free-form | Fixed template at key checkpoints |
 | Anti-hallucination | Implicit | Explicit rules + source attribution |
 
+## Integration with Other Skills
+
+This skill complements the standard superpowers workflow by enhancing **execution** and **recovery** capabilities.
+
+### Recommended Workflow
+
+```
+Phase 1 - Design:
+  /brainstorming
+  → Output: docs/plans/YYYY-MM-DD-<topic>-design.md
+
+Phase 2 - Planning:
+  /using-git-worktrees (optional)
+  /writing-plans
+  → Output: docs/plans/YYYY-MM-DD-<topic>-implementation.md
+
+Phase 3 - Execution:
+  /context-resilient-task (initialize)
+  → Action:
+      - Create MRS directory (.task-state/ or task-work/)
+      - Link to implementation plan
+      - Initialize task_state.md, snapshot.md
+      - Begin execution
+
+Phase 4 - Recovery (if interrupted):
+  /context-resilient-task (resume)
+  → Action:
+      - Auto-detect MRS
+      - Reconstruct state from artifacts
+      - Continue seamlessly
+
+Phase 5 - Completion:
+  /finishing-a-development-branch
+```
+
+### Directory Structure
+
+Recommended organization when using multiple skills:
+
+```
+project/
+  ├── docs/plans/              # brainstorming + writing-plans output
+  │   ├── 2026-02-10-design.md
+  │   └── 2026-02-10-implementation.md
+  │
+  ├── .task-state/             # context-resilient-task MRS
+  │   ├── plan.md             # Links to docs/plans/implementation.md
+  │   ├── task_state.md       # Current execution state
+  │   ├── snapshot.md         # Session snapshots
+  │   ├── findings.md         # Discoveries during execution
+  │   └── progress.md         # Detailed progress tracking
+  │
+  └── src/                     # Code being developed
+```
+
+**Key principles:**
+- **Design documents** (from brainstorming) → Immutable reference
+- **Implementation plans** (from writing-plans) → Blueprint
+- **MRS artifacts** (from context-resilient-task) → Living execution state
+
+### Skill Compatibility Matrix
+
+| Skill | Relationship | Integration Notes |
+|-------|-------------|-------------------|
+| brainstorming | ✅ Complements | Design phase → Execution phase |
+| writing-plans | ✅ Complements | Plan output becomes MRS input |
+| using-git-worktrees | ✅ Compatible | Place MRS in worktree root |
+| executing-plans | ⚠️ Overlaps | Both manage execution; choose one or nest |
+| subagent-driven-development | ✅ Compatible | Subagents work within MRS context |
+| finishing-a-development-branch | ✅ Compatible | Completes after MRS-tracked work |
+
+### When to Use This vs executing-plans
+
+**Use context-resilient-task when:**
+- Task spans multiple days/sessions
+- High risk of interruption (network, context limits)
+- Need to switch between IDEs/environments
+- Working on shared/remote systems
+
+**Use executing-plans when:**
+- Single continuous session
+- Execution plan has explicit review checkpoints
+- More structured phase gates needed
+
+**Use both when:**
+- executing-plans provides the framework
+- context-resilient-task handles recovery between checkpoints
+
+### Initialization from Existing Plans
+
+When initializing with existing design/implementation docs:
+
+```bash
+# Option 1: Link to existing plan
+cd .task-state
+ln -s ../docs/plans/2026-02-10-implementation.md plan.md
+
+# Option 2: Reference in task_state.md
+echo "Implementation Plan: See docs/plans/2026-02-10-implementation.md" >> task_state.md
+
+# Option 3: Copy and track
+cp docs/plans/2026-02-10-implementation.md plan.md
+# Then update plan.md as execution progresses
+```
+
+### Cross-Skill Artifact Flow
+
+```
+brainstorming
+  ↓ design.md
+writing-plans
+  ↓ implementation.md
+context-resilient-task (init)
+  ↓ MRS created (task_state.md, snapshot.md)
+  ↓ plan.md → references implementation.md
+[Execution work happens]
+  ↓ findings.md, progress.md updated
+  ↓ snapshots generated
+[Session interruption]
+context-resilient-task (recover)
+  ↓ MRS detected
+  ↓ State reconstructed
+  ↓ Work continues
+finishing-a-development-branch
+  ↓ Merge/PR/cleanup
+```
+
 ## Best Practices
 
 **DO:**
