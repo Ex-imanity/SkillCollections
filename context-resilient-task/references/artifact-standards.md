@@ -8,8 +8,11 @@ File naming, structure, and path conventions to ensure reliable recovery.
 
 **task_state.md**
 - Single source of truth for current state
-- MUST be updated after every phase transition
+- MUST be updated **in-place** (edit existing fields) after every phase transition
 - MUST include timestamp of last update
+- MUST include `Active Todos` and `Completed Items` sections (see Todo Management below)
+- If file exceeds 300 lines: compress by summarizing completed phases into a single line, moving detail to `progress.md`
+- NEVER append new dated sections; all history belongs in `progress.md`
 
 **plan.md**
 - Complete task plan with all phases
@@ -30,6 +33,8 @@ File naming, structure, and path conventions to ensure reliable recovery.
 **progress.md**
 - Session execution log
 - Chronological entries with timestamps
+- Append-only; NEVER overwrite or rewrite existing entries
+- On conflict with task_state.md, task_state.md is authoritative
 
 **architecture.md**
 - System architecture and design
@@ -134,15 +139,34 @@ About to start /login endpoint implementation
 - Token policy needs decision before proceeding
 ```
 
+## Todo Management
+
+`task_state.md` MUST contain exactly two todo sections. These are the **only** authoritative source for pending and completed work.
+
+```markdown
+## Active Todos
+- [ ] <item> (added: YYYY-MM-DD, source: plan Phase N / user request)
+- [ ] <item>
+
+## Completed Items
+- [x] <item> (completed: YYYY-MM-DD)
+- [x] <item>
+```
+
+**Rules:**
+- Completing a todo = **remove from Active Todos** + **append to Completed Items**. Never mark in-place with `[x]` inside Active Todos.
+- When reporting todo status: read **Active Todos only** for what is pending. Read **Completed Items only** for what is done. Never infer from `progress.md`.
+- Both sections must be present even when empty.
+
 ## Update Frequency
 
-| File | Update Trigger |
-|------|----------------|
-| task_state.md | After every phase transition, major decision, or blocker |
-| plan.md | When phases change, new phases added, or scope adjusted |
-| snapshot.md | Every 2-4 hours of active work, or before ending session |
-| findings.md | Immediately after any discovery or research |
-| progress.md | After each significant action (file created, test passed, etc.) |
+| File | Update Trigger | Method |
+|------|----------------|--------|
+| task_state.md | Phase transition, major decision, blocker, todo change | **In-place edit** |
+| plan.md | Phase status change, new docs/plans file created | **In-place edit** (Plan Registry append) |
+| snapshot.md | Phase complete, blocker encountered, major decision, session ending | **Overwrite** (archive previous with `--archive`) |
+| findings.md | Immediately after any discovery | **Append only** |
+| progress.md | After each significant action | **Append only** |
 
 ## Validation Rules
 
@@ -150,14 +174,18 @@ About to start /login endpoint implementation
 
 **task_state.md:**
 - `Last Updated` timestamp (ISO 8601)
+- `Status` field: `active | paused | blocked | completed`
 - `Goal` section (non-empty)
 - `Current Phase` (must match plan.md)
 - `Next Action` (concrete, actionable)
+- `Active Todos` section (may be empty list)
+- `Completed Items` section (may be empty list)
 
 **plan.md:**
 - At least one phase defined
 - Each phase has status: `pending|in_progress|complete|blocked`
 - Phases numbered/ordered
+- `Plan Registry` section listing all docs/plans files
 
 **snapshot.md:**
 - Timestamp in filename or header

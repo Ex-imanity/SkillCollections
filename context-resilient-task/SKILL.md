@@ -1,6 +1,6 @@
 ---
 name: context-resilient-task
-description: Context-resilient task management with stateless recovery from artifacts. Use when starting multi-phase tasks, when task involves multiple sessions, after /clear or session interruption, or when you need to recover task state without relying on conversational memory. Implements three-tier MRS (Minimum Recovery Set), automatic artifact detection, anti-hallucination structured outputs, and degraded failure modes. Replaces planning-with-files with enhanced recovery capabilities.
+description: Context-resilient task management with stateless recovery from artifacts. Use when starting multi-phase tasks, when task involves multiple sessions, after /clear or session interruption, or when you need to recover task state without relying on conversational memory. Implements three-tier MRS (Minimum Recovery Set), on-invoke artifact detection, anti-hallucination structured outputs, and degraded failure modes. Replaces planning-with-files with enhanced recovery capabilities.
 allowed-tools:
   - Read
   - Write
@@ -20,30 +20,34 @@ Context-resilient task management that enables stateless recovery from artifacts
 
 Never rely on conversational memory. Always reconstruct task state from artifacts on disk.
 
+### File Authority
+
+- **`task_state.md`** — Source of truth for current state. Always update **in-place** (edit existing fields). Never append dated sections; that is `progress.md`'s job.
+- **`progress.md`** — Append-only chronological log. Never overwrite; only append.
+- On conflict between the two, `task_state.md` wins.
+
 ## Quick Start
 
-**On first invocation or session start:**
+**On invocation:**
 
-1. **Check for existing artifacts** (automatic)
-2. **If MRS detected** → Enter recovery mode
-3. **If MRS missing** → Initialize new task
-4. **Output reconstructed state** using structured template
-5. **Continue work**
+1. Check for existing artifacts (on invocation)
+2. If MRS detected → Enter recovery mode
+3. If MRS missing → Initialize new task
+4. Output reconstructed state using structured template
+5. Continue work
 
 ## Minimum Recovery Set (MRS)
 
-Three-tier system ensures reliable recovery:
-
 ### Tier 0: Core Required (MUST exist)
-- `task_state.md` - Current state snapshot
-- `plan.md` - Complete task plan
-- `snapshot.md` - Timestamped checkpoint
+- `task_state.md` - Current state (in-place updated, never appended)
+- `plan.md` - Task plan + Plan Registry of all docs/plans files
+- `snapshot.md` - Latest checkpoint
 
 **If missing:** STOP, run initialization wizard
 
 ### Tier 1: Important Context (SHOULD exist)
 - `findings.md` - Research and discoveries
-- `progress.md` - Session execution log
+- `progress.md` - Session execution log (append-only)
 - `architecture.md` - Architecture (for system-level tasks)
 
 **If missing:** WARN, ask user to confirm continuation
@@ -57,21 +61,26 @@ Three-tier system ensures reliable recovery:
 
 See [references/minimum-recovery-set.md](references/minimum-recovery-set.md) for complete MRS specification.
 
-## Automatic Recovery
+## On-Invoke Detection
 
-When skill starts, it automatically:
+On every invocation, run this detection flow:
 
-```python
-1. Scan current directory for Tier 0 files
-2. If all present → Recovery mode
-3. If any missing → Initialization mode
-4. Check Tier 1, emit warnings if missing
-5. Load and validate artifact consistency
-6. Output "Reconstructed Task State"
-7. Continue from last checkpoint
+```
+1. Scan MRS directory for Tier 0 files
+2. If status=completed in task_state.md → Skip recovery, prompt archival
+3. If all Tier 0 present → Recovery mode
+4. If any Tier 0 missing → Initialization mode
+5. Check Tier 1, emit warnings if missing
+6. Validate artifact consistency
+7. Output "Reconstructed Task State"
+8. Continue from last checkpoint
 ```
 
-No user action required. Just invoke the skill.
+**Task lifecycle (status field in task_state.md):**
+- `active` — Work in progress
+- `paused` — Temporarily halted, resumable
+- `blocked` — Cannot proceed without external resolution
+- `completed` — Done; skip recovery on next invocation, prompt to archive MRS
 
 ## Structured Output Template
 
@@ -81,7 +90,7 @@ At key checkpoints, MUST output this structure:
 ## Reconstructed Task State
 
 ### Goal
-(from artifact: task_state.md:3)
+(from artifact: task_state.md:Goal)
 <goal statement>
 
 ### What Has Been Done
@@ -119,6 +128,28 @@ See [references/output-template.md](references/output-template.md) for complete 
 3. **No Inference:** Don't fill gaps with assumptions
 4. **Single Next Action:** Only one concrete step at a time
 5. **Output Artifact:** Every action produces/updates an artifact
+
+## Todo Management
+
+Todos must have a single canonical location to prevent "forgotten completion" failures.
+
+**In `task_state.md`, maintain two explicit sections:**
+
+```markdown
+## Active Todos
+- [ ] <item> (added: date, source: plan/user)
+- [ ] <item>
+
+## Completed Items
+- [x] <item> (completed: date)
+- [x] <item>
+```
+
+**Rules:**
+- When completing a todo: **remove from Active Todos**, **append to Completed Items**. Never leave completed items in Active Todos with a checkmark.
+- When asked about todo status: read **only Active Todos** for pending items; read **only Completed Items** for done items.
+- Never infer completion status from progress.md; always read task_state.md as authoritative.
+- If `task_state.md` grows beyond 300 lines: compress by summarizing completed phases into a one-line entry and moving detail to `progress.md`.
 
 ## Failure Modes (Degraded Recovery)
 
@@ -160,6 +191,16 @@ Options:
 Cannot safely proceed. Which is correct?
 ```
 
+**Task already completed (PROMPT):**
+```
+ℹ️  task_state.md status=completed
+
+This task is marked done. Options:
+1. Archive MRS to .task-state/archive/
+2. Start new task (reinitialize)
+3. Reopen task (set status=active)
+```
+
 ## Initialization Wizard
 
 If Tier 0 missing, guide user through setup:
@@ -178,12 +219,32 @@ I'll help create the required files. Please provide:
    > -
 
 Creating:
-✅ task_state.md (from template)
-✅ plan.md (generated from requirements)
+✅ task_state.md (from template with status=active)
+✅ plan.md (with Plan Registry section)
 ✅ snapshot.md (initial checkpoint)
 
 Ready to begin!
 ```
+
+**`plan.md` minimum structure:**
+
+```markdown
+## Plan: <task name>
+
+### Phase 1: <name> [status: pending|in_progress|complete|blocked]
+- Step 1.1: ...
+- Step 1.2: ...
+
+### Phase 2: <name> [status: pending]
+...
+
+## Plan Registry (docs/plans)
+| File | Source Skill | Date | Status |
+|------|-------------|------|--------|
+| <filename> | writing-plans | YYYY-MM-DD | pending|in_progress|completed |
+```
+
+The Plan Registry tracks every file produced by `writing-plans`/`brainstorming` under `docs/plans/`. See [references/multi-skill-integration.md](references/multi-skill-integration.md) for the full handoff protocol.
 
 ## Workflow
 
@@ -198,67 +259,48 @@ Ready to begin!
 6. Output "Reconstructed Task State"
 7. Confirm with user
 8. Continue from Next Action
-9. Update artifacts after each phase
-10. Generate snapshot at checkpoints
+9. Update task_state.md in-place after each phase
+10. Append to progress.md after each action
+11. Generate snapshot on key events (see File Standards)
 ```
 
 ### Recovery After Interruption
 
 ```
 1. New session opens
-2. Navigate to project directory
-3. Invoke skill
-4. MRS detected automatically
-5. Recovery mode activates
-6. State reconstructed from files
+2. Invoke skill
+3. MRS detected on invocation
+4. Recovery mode activates
+5. State reconstructed from task_state.md (source of truth)
+6. Active Todos read from task_state.md##Active Todos
 7. Work continues seamlessly
-```
-
-### Cross-Session, Cross-IDE
-
-```
-1. Work in Cursor, create artifacts
-2. Close Cursor
-3. Open VS Code
-4. Navigate to same directory
-5. Invoke skill
-6. Recovery mode activates
-7. Full context restored
 ```
 
 ## Scripts
 
-**Verify MRS:**
+Both scripts live in this skill's `scripts/` directory. Run them from the MRS directory with `.` as the target argument. Locate the scripts relative to where this SKILL.md was loaded from.
+
+**Verify MRS** — checks Tier 0/1/2 presence, consistency, forbidden paths:
 ```bash
-python scripts/verify_mrs.py .
+python <skill-root>/scripts/verify_mrs.py .
 ```
 
-Checks:
-- Tier 0/1/2 file presence
-- Artifact structure validity
-- Snapshot recency
-- Forbidden paths
-
-**Generate Snapshot:**
+**Generate Snapshot** — creates/archives `snapshot.md`:
 ```bash
-python scripts/generate_snapshot.py .
-python scripts/generate_snapshot.py --archive .
+python <skill-root>/scripts/generate_snapshot.py .
+python <skill-root>/scripts/generate_snapshot.py --archive .
 ```
-
-Creates:
-- `snapshot.md` (current)
-- `snapshots/snapshot_YYYYMMDD_HHMM.md` (archived)
 
 ## File Standards
 
 **Required structure:** See [references/artifact-standards.md](references/artifact-standards.md)
 
-**Update frequency:**
-- `task_state.md` → After every phase transition
-- `plan.md` → When scope changes
-- `snapshot.md` → Every 2-4 hours or before ending session
-- `findings.md` → Immediately after discoveries
-- `progress.md` → After each significant action
+**Update rules:**
+- `task_state.md` → In-place edit after every phase transition or status change. Compress if >300 lines.
+- `plan.md` → Update Plan Registry when new docs/plans file is created; update phase status in-place.
+- `snapshot.md` → Generate on **events**: phase complete, blocker encountered, major decision made, session ending.
+- `findings.md` → Append immediately after discoveries.
+- `progress.md` → Append after each significant action (never overwrite).
 
 **Forbidden paths:**
 - `/.cursor/` (ephemeral)
@@ -266,190 +308,47 @@ Creates:
 - `/temp/`, `/tmp/` (not persistent)
 - `/.cache/` (volatile)
 
-## Recovery Workflow
+## Cross-Skill Integration
 
-Complete recovery process: [references/recovery-workflow.md](references/recovery-workflow.md)
+When `writing-plans` or `brainstorming` produces a new file in `docs/plans/`:
 
-Key steps:
-1. Load Tier 0 artifacts
-2. Validate consistency
-3. Check Tier 1 (warn if missing)
-4. Output reconstructed state
-5. Confirm with user
-6. Continue work
+1. Add the file to `plan.md` → Plan Registry with `status: pending`
+2. Update `task_state.md` → Current Phase to reference it
+3. Generate a snapshot (event trigger)
 
-## Comparison to planning-with-files
+Full protocol: [references/multi-skill-integration.md](references/multi-skill-integration.md)
 
-| Feature | planning-with-files | context-resilient-task |
-|---------|---------------------|------------------------|
-| Artifact tracking | task_plan.md, findings.md, progress.md | + MRS tiers, task_state.md, snapshot.md |
-| Recovery | Manual re-read | Automatic detection & reconstruction |
-| Validation | None | verify_mrs.py script |
-| Snapshot | None | Timestamped checkpoints |
-| Failure modes | Unspecified | Degraded recovery (Tier 0 stop, Tier 1 warn) |
-| Output structure | Free-form | Fixed template at key checkpoints |
-| Anti-hallucination | Implicit | Explicit rules + source attribution |
-
-## Integration with Other Skills
-
-This skill complements the standard superpowers workflow by enhancing **execution** and **recovery** capabilities.
-
-### Recommended Workflow
+**Recommended workflow with other skills:**
 
 ```
-Phase 1 - Design:
-  /brainstorming
-  → Output: docs/plans/YYYY-MM-DD-<topic>-design.md
-
-Phase 2 - Planning:
-  /using-git-worktrees (optional)
-  /writing-plans
-  → Output: docs/plans/YYYY-MM-DD-<topic>-implementation.md
-
-Phase 3 - Execution:
-  /context-resilient-task (initialize)
-  → Action:
-      - Create MRS directory (.task-state/ or task-work/)
-      - Link to implementation plan
-      - Initialize task_state.md, snapshot.md
-      - Begin execution
-
-Phase 4 - Recovery (if interrupted):
-  /context-resilient-task (resume)
-  → Action:
-      - Auto-detect MRS
-      - Reconstruct state from artifacts
-      - Continue seamlessly
-
-Phase 5 - Completion:
-  /finishing-a-development-branch
-```
-
-### Directory Structure
-
-Recommended organization when using multiple skills:
-
-```
-project/
-  ├── docs/plans/              # brainstorming + writing-plans output
-  │   ├── 2026-02-10-design.md
-  │   └── 2026-02-10-implementation.md
-  │
-  ├── .task-state/             # context-resilient-task MRS
-  │   ├── plan.md             # Links to docs/plans/implementation.md
-  │   ├── task_state.md       # Current execution state
-  │   ├── snapshot.md         # Session snapshots
-  │   ├── findings.md         # Discoveries during execution
-  │   └── progress.md         # Detailed progress tracking
-  │
-  └── src/                     # Code being developed
-```
-
-**Key principles:**
-- **Design documents** (from brainstorming) → Immutable reference
-- **Implementation plans** (from writing-plans) → Blueprint
-- **MRS artifacts** (from context-resilient-task) → Living execution state
-
-### Skill Compatibility Matrix
-
-| Skill | Relationship | Integration Notes |
-|-------|-------------|-------------------|
-| brainstorming | ✅ Complements | Design phase → Execution phase |
-| writing-plans | ✅ Complements | Plan output becomes MRS input |
-| using-git-worktrees | ✅ Compatible | Place MRS in worktree root |
-| executing-plans | ⚠️ Overlaps | Both manage execution; choose one or nest |
-| subagent-driven-development | ✅ Compatible | Subagents work within MRS context |
-| finishing-a-development-branch | ✅ Compatible | Completes after MRS-tracked work |
-
-### When to Use This vs executing-plans
-
-**Use context-resilient-task when:**
-- Task spans multiple days/sessions
-- High risk of interruption (network, context limits)
-- Need to switch between IDEs/environments
-- Working on shared/remote systems
-
-**Use executing-plans when:**
-- Single continuous session
-- Execution plan has explicit review checkpoints
-- More structured phase gates needed
-
-**Use both when:**
-- executing-plans provides the framework
-- context-resilient-task handles recovery between checkpoints
-
-### Initialization from Existing Plans
-
-When initializing with existing design/implementation docs:
-
-```bash
-# Option 1: Link to existing plan
-cd .task-state
-ln -s ../docs/plans/2026-02-10-implementation.md plan.md
-
-# Option 2: Reference in task_state.md
-echo "Implementation Plan: See docs/plans/2026-02-10-implementation.md" >> task_state.md
-
-# Option 3: Copy and track
-cp docs/plans/2026-02-10-implementation.md plan.md
-# Then update plan.md as execution progresses
-```
-
-### Cross-Skill Artifact Flow
-
-```
-brainstorming
-  ↓ design.md
-writing-plans
-  ↓ implementation.md
-context-resilient-task (init)
-  ↓ MRS created (task_state.md, snapshot.md)
-  ↓ plan.md → references implementation.md
-[Execution work happens]
-  ↓ findings.md, progress.md updated
-  ↓ snapshots generated
-[Session interruption]
-context-resilient-task (recover)
-  ↓ MRS detected
-  ↓ State reconstructed
-  ↓ Work continues
-finishing-a-development-branch
-  ↓ Merge/PR/cleanup
+brainstorming → docs/plans/YYYY-MM-DD-design.md
+writing-plans → docs/plans/YYYY-MM-DD-implementation.md
+  ↓ Register in plan.md Plan Registry
+context-resilient-task (init) → MRS created
+  ↓ Execution
+[writing-plans produces another plan]
+  ↓ Register in Plan Registry + snapshot
+context-resilient-task (recover) → State reconstructed
+finishing-a-development-branch → Merge/PR/cleanup
+  ↓ Set status=completed, archive MRS
 ```
 
 ## Best Practices
 
 **DO:**
-✅ Update task_state.md after every phase
-✅ Generate snapshots every 2-4 hours
-✅ Use structured template at checkpoints
+✅ Update `task_state.md` in-place (edit existing fields, never append dated blocks)
+✅ Append to `progress.md` for every action
+✅ Generate snapshots on key events (phase complete, blocker, major decision)
 ✅ Cite source files in all statements
 ✅ Mark unknowns explicitly
+✅ Register every new docs/plans file in Plan Registry immediately
+✅ Compress `task_state.md` when it exceeds 300 lines
 
 **DON'T:**
 ❌ Rely on conversational memory
-❌ Guess information not in artifacts
+❌ Append new dated sections to `task_state.md` (use `progress.md` instead)
+❌ Leave completed todos in Active Todos list
+❌ Infer todo status from `progress.md`; always read `task_state.md`
 ❌ Use forbidden temp paths
 ❌ Skip MRS verification
 ❌ Rename files mid-task
-
-## Extending for Domain-Specific Tasks
-
-For specialized workflows, add Tier 2 artifacts:
-
-**Backend development:**
-- `api_design.md`
-- `database_schema.md`
-- `deployment.md`
-
-**Frontend development:**
-- `components.md`
-- `state_management.md`
-- `routing.md`
-
-**Data pipeline:**
-- `data_flow.md`
-- `transformations.md`
-- `validation_rules.md`
-
-Tier 2 files are optional but enhance context quality.
