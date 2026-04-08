@@ -152,6 +152,22 @@ case-lite-output/{slug}/
 
 > **飞书工具详细用法**：见 [references/feishu-tools-guide.md](references/feishu-tools-guide.md)
 
+7. **收集补充信息**（可选，不阻塞）：
+
+```
+已选定的文档章节会作为用例生成的主要依据。
+
+是否还有补充信息需要纳入？例如：
+- TAPD/Jira 上的需求描述或验收标准
+- 产品口头沟通的额外规则或约束
+- 接口文档、字段说明等技术细节
+- 其他背景信息
+
+可以直接粘贴文本，也可以回复"没有了"继续。
+```
+
+如果用户提供了补充信息，保存到 `corpus/extra-context.md`，在后续 Step 3 生成时与选定语料一同作为输入。
+
 ### Step 3：生成场景结构 [HITL]
 
 #### 3a. 收集参考用例（可选，不阻塞）
@@ -169,22 +185,41 @@ case-lite-output/{slug}/
 
 #### 3b. 拉取选定语料
 
-根据 Step 2 记录的 position range，对每个选定章节调用：
+对每个选定章节，按以下两步拉取完整内容（文本 + 媒体）：
+
+**Step 3b-1：拉取文本和媒体元数据**
 ```
 get_document_blocks(document_id, start_position=X, end_position=Y)
+```
+返回章节的文本内容和媒体元数据。**注意：图片/画板只返回 block_id 和 token，不包含实际图片。**
+
+**Step 3b-2：下载图片**（如果上一步返回了图片元数据）
+```
+download_image_blocks(document_id, image_block_ids=["block_id_1", "block_id_2"])
+```
+将实际图片下载到本地，返回可视化的图片内容。
+
+如果章节包含画板（流程图、架构图等），额外调用：
+```
+download_board_as_image(board_tokens=["token_1"], document_id=document_id, board_block_ids=["block_id_1"])
 ```
 
 将所有选定章节内容拼接为 `corpus/selected-corpus.md`，格式：
 ```markdown
 <!-- SOURCE: {docKey} | {section_title} | pos:{start}-{end} -->
-{章节内容}
+{章节文本内容}
+[📷 图片: {image_description_or_context}]
 <!-- END SOURCE -->
 ```
+
+> **关键**：文档中的流程图、接口说明图、交互稿等视觉信息对用例生成至关重要。
+> 如果跳过图片下载，生成的用例可能遗漏图中描述的分支逻辑和交互细节。
 
 #### 3c. 生成场景结构
 
 基于以下输入生成 `structure.md`：
 - 选定语料（`selected-corpus.md`）
+- 补充信息（`extra-context.md`，如有）
 - 风格参考（参考用例或默认规则）
 - 需求名称
 
@@ -209,10 +244,12 @@ get_document_blocks(document_id, start_position=X, end_position=Y)
 
 **生成 prompt 要点**：
 - 严格按照 structure.md 的场景和测试点展开
-- 每个测试点包含：前置条件（可选）、执行步骤、预期结果
+- 每个测试点只包含：执行步骤、预期结果（**不生成"前置条件"section**）
+- 如有前置条件，将其精简后融入执行步骤的第一步（如"1. 已登录管理后台，进入XX页面"）
 - 执行步骤精确到字段名/按钮名/接口路径
 - 预期结果多层验证（UI/交互/接口/数据层），断言可量化
 - 不扩写 structure.md 中没有的场景
+- 即使参考用例中包含"前置条件"节点，也不要模仿，一律融入执行步骤
 
 生成后输出 `full.md` 并请用户审核：
 
@@ -239,26 +276,36 @@ get_document_blocks(document_id, start_position=X, end_position=Y)
    Glob("**/case-lite/scripts/writeback.py")
    ```
 
-3. **dry-run 预览**（先让用户确认）：
+3. **dry-run 验证**（**必须先执行，不可跳过**）：
    ```bash
    python {writeback.py路径} case-lite-output/{slug}/full.md \
      --case-id {caseId} --dry-run
    ```
-   脚本输出场景/测试点/节点数摘要，展示给用户确认。
+   脚本会执行以下检查：
+   - 格式验证：检测未被识别的 `##` / `###` 标题（格式漂移）
+   - 数量校验：对比 markdown 原文与解析出的场景/测试点数
+   - 完整性检查：检测无执行步骤的测试点
+   
+   **如果有 ⚠ 警告，必须先修复 full.md 再写回。** 不要带警告强行写入。
+   展示场景概览和节点数给用户确认。
 
 4. **用户确认后，执行写回**：
    ```bash
    python {writeback.py路径} case-lite-output/{slug}/full.md \
      --case-id {caseId} --modifier case-lite
    ```
-   脚本自动完成：解析 markdown → 构建节点树 → 调用搬山 batchAddNode → testCaseDetail 验证。
+   脚本自动完成：
+   - 重复写入检测：若 caseId 已有 AI 节点则提醒并中止，请用户先在搬山平台清空用例后重试
+   - 解析 markdown → 构建节点树 → 调用搬山 batchAddNode → testCaseDetail 验证
+   
    agent 只需读取终端输出摘要并告知用户结果。
 
 5. **产物**：
    - `writeback/node-tree.json` — 节点树 JSON
    - `writeback/writeback-log.json` — 写回日志
 
-脚本源码：[scripts/writeback.py](scripts/writeback.py)。零外部依赖，纯 Python 标准库（urllib）。
+脚本源码：[scripts/writeback.py](scripts/writeback.py)。零外部依赖，纯 Python 标准库。
+MCP 端点可通过环境变量 `BANSHAN_MCP_ENDPOINT` 覆盖。
 
 ---
 
@@ -281,11 +328,9 @@ get_document_blocks(document_id, start_position=X, end_position=Y)
 
 ### 测试点1.1：测试点标题
 
-**前置条件**（可选）:
-- 条件描述
-
 #### 执行步骤
-1. 操作步骤（精确到字段/按钮/接口级）
+1. 前置：已登录XX系统，进入XX页面（前置条件融入第一步）
+2. 操作步骤（精确到字段/按钮/接口级）
 
 #### 预期结果
 1. 期望结果（可量化断言）
@@ -294,6 +339,7 @@ get_document_blocks(document_id, start_position=X, end_position=Y)
 - 场景：`## 场景N：标题`
 - 测试点：`### 测试点N.M：标题`
 - 执行步骤 / 预期结果：`####` 级标题 + 编号列表
+- **不生成 `**前置条件**` section**，前置条件融入执行步骤第一步
 
 ### full.md 写回解析约束（必须严格遵守）
 
@@ -307,8 +353,8 @@ get_document_blocks(document_id, start_position=X, end_position=Y)
 | 步骤/结果标题用 `####` | `#### 执行步骤` | `### 执行步骤`、`**执行步骤**` |
 | 步骤/结果内容用编号列表 | `1. 操作内容` | `- 操作内容`（步骤不支持 `-`） |
 | 每个测试点必须有执行步骤 | 先 `#### 执行步骤` 再 `#### 预期结果` | 只有预期结果无执行步骤（结果会被丢弃） |
-
-**前置条件**（`**前置条件**`）不会被解析为节点，不影响写回，可正常使用。
+| 测试点之间不用分割线 | 直接换行进入下一个 `###` | `---` 分割线可能干扰解析 |
+| 不生成前置条件 section | 将前置条件融入执行步骤第一步 | `**前置条件**` 内容会被解析器跳过，不写入搬山 |
 
 > 生成 full.md 时务必逐项检查上述格式。如果 `writeback.py --dry-run` 输出的场景/测试点数与 full.md 不符，说明存在格式问题。
 

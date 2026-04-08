@@ -74,14 +74,37 @@ get_document_blocks(
 - `start_position` 和 `end_position` 来自 `extract_document_structure` 或 `get_document_section_digests` 的输出
 - 这种方式只拉取选定范围的 blocks，不会加载整个文档，**节省 token**
 - 返回的内容包含文本、表格、代码块等结构化信息
+- **图片和画板只返回元数据（block_id、token），不包含实际图片文件**
 
-如果某个章节包含图片且需要查看：
+### 3.1 下载图片（必须配合 get_document_blocks 使用）
+
+`get_document_blocks` 返回的"图表元数据信息"中会列出图片的 block_id。需要额外调用：
+
 ```
 download_image_blocks(
   document_id = "docId",
-  image_block_ids = ["block_id_1", "block_id_2"]
+  image_block_ids = ["block_id_1", "block_id_2"],
+  include_context = true     # 返回图片所属章节和前后文本
 )
 ```
+
+返回：实际图片文件（base64 ImageContent）+ 上下文信息（section_path、context_before/after）。
+
+### 3.2 下载画板（流程图、架构图等）
+
+如果章节包含画板类型的 block：
+
+```
+download_board_as_image(
+  board_tokens = ["HCXEwkQOmh6CpEbVfRccAC1SnHd"],
+  document_id = "docId",
+  board_block_ids = ["block_id_1"]
+)
+```
+
+画板会被导出为 PNG 图片。
+
+> **完整拉取流程**：`get_document_blocks` → 检查返回的图片/画板元数据 → 如有，调 `download_image_blocks` / `download_board_as_image` → 合并到语料中
 
 ## 4. 章节 position range 的确定
 
