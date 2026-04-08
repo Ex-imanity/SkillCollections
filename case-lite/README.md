@@ -26,17 +26,14 @@ cp -r SkillCollections/case-lite ~/.cc-switch/skills/case-lite
   "mcpServers": {
     "feishu-docx-blocks": {
       "command": "uvx",
-      "args": ["feishu-docx-blocks@latest"],
-      "env": {
-        "FEISHU_APP_ID": "<你的飞书应用 App ID>",
-        "FEISHU_APP_SECRET": "<你的飞书应用 App Secret>"
-      }
+      "args": ["feishu-docx-blocks@latest"]
     }
   }
 }
 ```
 
-> 飞书应用需开通 `docx:document:readonly` 和 `wiki:wiki:readonly` 权限。
+> 默认应用凭证已内置，无需额外配置。重启 Claude Code 后，首次调用工具时会自动弹出浏览器完成飞书授权。
+> 需要先安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)：`curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 ### 3. 配置搬山 MCP（推荐）
 

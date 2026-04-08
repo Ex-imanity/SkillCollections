@@ -26,17 +26,14 @@ description: 小需求测试用例生成 skill。用户提供飞书文档链接 
   "mcpServers": {
     "feishu-docx-blocks": {
       "command": "uvx",
-      "args": ["feishu-docx-blocks@latest"],
-      "env": {
-        "FEISHU_APP_ID": "<你的飞书应用 App ID>",
-        "FEISHU_APP_SECRET": "<你的飞书应用 App Secret>"
-      }
+      "args": ["feishu-docx-blocks@latest"]
     }
   }
 }
 ```
 
-> 飞书应用需要开通 `docx:document:readonly` 和 `wiki:wiki:readonly` 权限。
+> 默认应用凭证已内置，无需配置 `FEISHU_APP_ID/SECRET`。首次调用工具时会自动弹出浏览器完成飞书授权。
+> 如需使用自建飞书应用，可在 env 中覆盖 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。
 
 ### 搬山测试平台工具（推荐）
 
@@ -109,7 +106,18 @@ case-lite-output/{slug}/
 
 1. **解析文档 ID**：调用 `parse_document_id(url)` 获取 document_id
 2. **获取章节树**：调用 `extract_document_structure(document_id, max_level=4, output_format="json")`
-3. **格式化展示**：将章节树转为用户友好的编号列表
+3. **处理无章节的文档**：如果章节树为空（文档没有任何 H1-H4 标题），告知用户并让其选择：
+   ```
+   📄 文档 "{文档标题}" 未解析出任何章节标题，可能是纯文本/列表格式。
+   请选择处理方式：
+   1. 全量导入该文档内容（适合短文档）
+   2. 跳过该文档
+   3. 我手动指定需要的内容
+   ```
+   - 选 1：调用 `get_document_blocks(document_id, fetch_all=true)` 获取全文，后续作为语料直接使用
+   - 选 2：跳过该文档，继续处理下一个
+   - 选 3：按用户指示获取部分内容（如用 `search_document_content` 搜索关键词定位）
+4. **格式化展示**（正常有章节时）：将章节树转为用户友好的编号列表
 
 展示格式示例：
 
