@@ -39,15 +39,9 @@ MCP_ENDPOINT = os.environ.get(
 # Markdown parser (same logic as casegen-tools/node_builder.py)
 # ---------------------------------------------------------------------------
 
-def _parse_priority(text: str) -> tuple[str, int | None]:
-    """Extract priority from title text, return (clean_title, priority_int)."""
-    m = re.search(r"\(?(P[012])\)?", text, re.IGNORECASE)
-    if m:
-        p = m.group(1).upper()
-        clean = text[: m.start()].rstrip() + text[m.end() :]
-        priority = {"P0": 1, "P1": 2, "P2": 3}.get(p)
-        return clean.strip(), priority
-    return text.strip(), None
+def _clean_title(text: str) -> str:
+    """Strip priority markers like (P0) from title text."""
+    return re.sub(r"\s*\(?P[012]\)?\s*", " ", text, flags=re.IGNORECASE).strip()
 
 
 def parse_full_md(text: str) -> list[dict[str, Any]]:
@@ -100,9 +94,9 @@ def parse_full_md(text: str) -> list[dict[str, Any]]:
         if m_s:
             if current_point is not None:
                 _flush_point(current_point)
-            title, priority = _parse_priority(m_s.group(1))
+            title = _clean_title(m_s.group(1))
             current_scenario = {
-                "data": {"text": title, "resource": ["场景"], "sourceDesc": "ai", "priority": priority},
+                "data": {"text": title, "resource": ["场景"], "sourceDesc": "ai"},
                 "children": [],
             }
             node_tree.append(current_scenario)
@@ -115,9 +109,9 @@ def parse_full_md(text: str) -> list[dict[str, Any]]:
         if m_p and current_scenario is not None:
             if current_point is not None:
                 _flush_point(current_point)
-            title, priority = _parse_priority(m_p.group(1))
+            title = _clean_title(m_p.group(1))
             current_point = {
-                "data": {"text": title, "resource": ["测试点"], "sourceDesc": "ai", "priority": priority},
+                "data": {"text": title, "resource": ["测试点"], "sourceDesc": "ai"},
                 "children": [],
             }
             current_scenario["children"].append(current_point)
