@@ -21,31 +21,29 @@ def detect_recovery_mode():
 
 ### Step 1: Load Core Artifacts (Tier 0)
 
-```bash
-# Read in priority order
-cat task_state.md
-cat plan.md
-cat snapshot.md
-```
+Read the contents of these files in priority order:
+1. `task_state.md`
+2. `plan.md`
+3. `snapshot.md`
 
 Parse to extract:
 - **Goal:** Main objective
+- **Active Todos:** Pending work items (from top of task_state.md)
 - **Current Phase:** Where we are in plan
 - **Last Action:** What was done last
 - **Next Action:** What should happen next
 
 ### Step 2: Load Context Artifacts (Tier 1)
 
-```bash
-# Check and load if present
-[ -f findings.md ] && cat findings.md
-[ -f progress.md ] && cat progress.md
-[ -f architecture.md ] && cat architecture.md
-```
+Read the following files if present:
+- `findings.md`
+- `progress.md`
+- `architecture.md`
+- `decisions.md`
 
 If missing, emit warning:
 ```
-⚠️  WARNING: Missing Tier 1 artifact: findings.md
+WARNING: Missing Tier 1 artifact: findings.md
 This may reduce context quality. Continue anyway? (y/n)
 ```
 
@@ -53,7 +51,8 @@ This may reduce context quality. Continue anyway? (y/n)
 
 Check for conflicts:
 - Does task_state.md match plan.md current phase?
-- Is snapshot.md timestamp recent (<24h)?
+- Is snapshot.md timestamp recent (<7 days)? (WARNING if stale, not error)
+- Does snapshot.md have a single `## Context` section? (Multiple = improper appending)
 - Are there open questions in findings.md?
 
 ### Step 4: Output Reconstructed State
@@ -64,7 +63,7 @@ Use the structured template:
 ## Reconstructed Task State
 
 ### Goal
-(from artifact: task_state.md:3)
+(from artifact: task_state.md)
 <goal extracted from task_state.md>
 
 ### What Has Been Done
@@ -77,7 +76,7 @@ Use the structured template:
 <identify gaps, ambiguities, or outdated info>
 
 ### Next Required Action
-(from artifact: task_state.md:25)
+(from artifact: task_state.md)
 <next action from task_state.md>
 
 ### Artifact to Be Produced
@@ -90,6 +89,7 @@ Ask user:
 ```
 Recovered task state from artifacts. Does this look correct?
 - Goal: <goal>
+- Active Todos: <count> items
 - Last completed: <last action>
 - Next action: <next action>
 
@@ -131,11 +131,16 @@ I'll help create the required files. Please provide:
 ### Step 3: Generate Initial Artifacts
 
 Create from templates:
-- `task_state.md` ← `assets/task_state.template.md`
-- `plan.md` ← Generate phases from requirements
-- `snapshot.md` ← `assets/snapshot.template.md`
+- `task_state.md` from `assets/task_state.template.md`
+- `plan.md` — Generate phases from requirements
+- `snapshot.md` from `assets/snapshot.template.md`
+- `decisions.md` — Create if multi-session, multi-agent, or >10 phases expected
 
-### Step 4: Enter Recovery Mode
+### Step 4: Copy MRS Rules to AGENTS.md
+
+If the project uses multiple agents (Codex, etc.), copy `references/agents-md-snippet.md` content into the project's `AGENTS.md`.
+
+### Step 5: Enter Recovery Mode
 
 Once Tier 0 created, switch to recovery mode and continue.
 
@@ -145,8 +150,8 @@ Once Tier 0 created, switch to recovery mode and continue.
 
 If artifacts exist but are malformed:
 ```
-⚠️  ERROR: task_state.md exists but is malformed
-Cannot parse required fields: goal, current_phase
+ERROR: task_state.md exists but is malformed
+Cannot parse required fields: goal, status, active_todos
 
 Options:
 1. Regenerate task_state.md (will lose existing data)
@@ -158,9 +163,9 @@ Choose option (1-3):
 
 ### Stale Snapshot
 
-If snapshot.md is >7 days old:
+If snapshot.md is >7 days old (this is a WARNING, not an error):
 ```
-⚠️  WARNING: snapshot.md is 9 days old (last updated 2026-02-01)
+WARNING: snapshot.md is 9 days old (last updated 2026-02-01)
 Task context may be outdated.
 
 Options:
@@ -171,15 +176,40 @@ Options:
 Choose option (1-3):
 ```
 
+### Snapshot Improperly Appended
+
+If snapshot.md contains multiple `## Context` sections:
+```
+WARNING: snapshot.md appears to have been appended rather than overwritten.
+It contains 5 "## Context" sections instead of 1.
+
+Options:
+1. Regenerate snapshot (keeps only latest state)
+2. Archive current and generate fresh
+3. Continue with current (not recommended)
+```
+
 ### Conflicting Information
 
 If plan.md says Phase 2 complete but task_state.md says Phase 1:
 ```
-⚠️  CONFLICT DETECTED:
+CONFLICT DETECTED:
 - plan.md: Phase 2 complete (line 45)
-- task_state.md: current_phase = "Phase 1" (line 8)
+- task_state.md: current_phase = "Phase 1" (line 12)
 
 Cannot safely proceed. Please resolve conflict:
 1. Which is correct?
 2. Should I update task_state.md to match plan.md?
+```
+
+### Task Already Completed
+
+If task_state.md shows status=completed:
+```
+task_state.md status=completed
+
+This task is marked done. Options:
+1. Archive MRS to .task-state/archive/
+2. Start new task (reinitialize)
+3. Reopen task (set status=active)
 ```

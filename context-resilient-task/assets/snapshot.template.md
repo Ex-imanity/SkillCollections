@@ -1,3 +1,4 @@
+<!-- OVERWRITE THIS FILE on each update. Do NOT append new sections. Archive previous version first with: python <skill-root>/scripts/generate_snapshot.py --archive . -->
 # Snapshot: {timestamp}
 
 ## Context

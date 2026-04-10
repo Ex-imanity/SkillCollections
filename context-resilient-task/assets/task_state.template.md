@@ -9,18 +9,14 @@
 ## Status
 {active|paused|blocked|completed}
 
+## Active Todos
+- [ ] {todo_item} (added: {date}, source: {plan Phase N / user request})
+
 ## Current Phase
 Phase {N}: {phase_name}
 
-## Last Completed Action
-- {action_1} (source: progress.md {timestamp})
-- {action_2}
-
 ## Next Action
 {single_concrete_next_step}
-
-## Active Todos
-- [ ] {todo_item} (added: {date}, source: {plan Phase N / user request})
 
 ## Completed Items
 - [x] {completed_item} (completed: {date})
@@ -30,8 +26,8 @@ Phase {N}: {phase_name}
 
 ## Artifacts
 - plan.md (updated {timestamp})
-- findings.md (updated {timestamp})
+- snapshot.md (updated {timestamp})
 - progress.md (updated {timestamp})
 
-## Notes
-{additional_context}
+## Project Context
+See CLAUDE.md for project constraints, AGENTS.md for agent guidelines.

@@ -24,12 +24,27 @@ Every `plan.md` MUST include a Plan Registry section at the bottom:
 ```markdown
 ## Plan Registry (docs/plans)
 
-| File | Source Skill | Date | Status | MRS Note |
-|------|-------------|------|--------|----------|
-| 2026-02-13-migration-implementation.md | writing-plans | 2026-02-13 | completed | Phases 1-3 in plan.md main body |
-| 2026-02-17-feature-x-design.md | brainstorming | 2026-02-17 | completed | Reference only, no execution phases |
-| 2026-02-17-feature-x-implementation.md | writing-plans | 2026-02-17 | in_progress | Current execution target |
-| 2026-02-24-ui-portal-implementation.md | writing-plans | 2026-02-24 | pending | Not yet started |
+| File | Source Skill | Date | Status |
+|------|-------------|------|--------|
+| 2026-02-13-migration-implementation.md | writing-plans | 2026-02-13 | completed |
+| 2026-02-17-feature-x-design.md | brainstorming | 2026-02-17 | completed |
+| 2026-02-17-feature-x-implementation.md | writing-plans | 2026-02-17 | in_progress |
+| 2026-02-24-ui-portal-implementation.md | writing-plans | 2026-02-24 | pending |
+```
+
+**Strict boundary — only register `docs/plans/*.md` files.** Do NOT register:
+- `CLAUDE.md` / `AGENTS.md` — Agent auto-loads these; they are not plans
+- `.task-state/*` — MRS files themselves; circular reference
+- `docs/runbooks/*` — Operational guides, not execution plans
+
+If other reference files need tracking, add a separate **Reference Index** section:
+
+```markdown
+## Reference Index
+| File | Purpose |
+|------|---------|
+| docs/runbooks/dev-guide.md | Development setup |
+| CLAUDE.md | Project constraints |
 ```
 
 **Status values:**

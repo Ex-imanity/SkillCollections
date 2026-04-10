@@ -3,39 +3,16 @@
 Generate a timestamped snapshot of current task state.
 
 Usage:
-    python generate_snapshot.py [--archive]
+    python generate_snapshot.py [--archive] [directory]
 
 Options:
     --archive    Save to snapshots/ directory with timestamp, keep snapshot.md updated
 """
 
 import sys
-import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import argparse
-
-
-SNAPSHOT_TEMPLATE = """# Snapshot: {timestamp}
-
-## Context
-{context}
-
-## Recent Progress
-{progress}
-
-## Current Focus
-{current_focus}
-
-## Blockers
-{blockers}
-
-## Files Modified
-{files_modified}
-
-## Next Session Should Know
-{next_session_notes}
-"""
 
 
 def extract_section(content: str, section_header: str) -> str:
@@ -67,6 +44,7 @@ def read_task_state(directory: Path) -> dict:
             "goal": "(task_state.md not found)",
             "current_phase": "(unknown)",
             "next_action": "(unknown)",
+            "open_questions": "(unknown)",
         }
 
     content = task_state_path.read_text(encoding="utf-8")
@@ -95,7 +73,6 @@ def read_progress(directory: Path, last_n_lines: int = 10) -> str:
 
 def list_recent_files(directory: Path, hours: int = 24) -> list[str]:
     """List files modified in last N hours."""
-    from datetime import timedelta
 
     cutoff = datetime.now() - timedelta(hours=hours)
     recent_files = []
@@ -117,6 +94,26 @@ def list_recent_files(directory: Path, hours: int = 24) -> list[str]:
     return recent_files[:20]  # Limit to 20 files
 
 
+def build_next_session_notes(state: dict) -> str:
+    """Build Next Session Should Know from task state fields."""
+    notes = []
+
+    # Include open questions
+    open_q = state.get("open_questions", "")
+    if open_q and open_q != "(No content)" and open_q != "(unknown)":
+        for line in open_q.split("\n"):
+            line = line.strip()
+            if line and line != "(No content)":
+                notes.append(line if line.startswith("- ") else f"- {line}")
+
+    # Include next action
+    next_action = state.get("next_action", "")
+    if next_action and next_action != "(No content)" and next_action != "(unknown)":
+        notes.append(f"- Next action: {next_action.strip()}")
+
+    return "\n".join(notes) if notes else "- (No specific notes — review task_state.md)"
+
+
 def generate_snapshot(directory: Path) -> str:
     """Generate snapshot content from current state."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -129,20 +126,24 @@ def generate_snapshot(directory: Path) -> str:
 
     # List recent files
     files = list_recent_files(directory)
-    files_str = "\n".join(f"- {f}" for f in files) if files else "(No recent changes detected)"
+    files_str = "\n".join(f"- {f}" for f in files) if files else "- (No recent changes detected)"
 
     # Build context
     context = f"Working on {state['current_phase']} - Goal: {state['goal']}"
 
-    # Build snapshot
-    snapshot = SNAPSHOT_TEMPLATE.format(
-        timestamp=timestamp,
-        context=context,
-        progress=recent_progress,
-        current_focus=state["next_action"],
-        blockers=state.get("open_questions", "(None)"),
-        files_modified=files_str,
-        next_session_notes="(To be filled by user or AI)",
+    # Build next session notes from actual state
+    next_session_notes = build_next_session_notes(state)
+
+    # Build snapshot (follows structure from assets/snapshot.template.md)
+    snapshot = (
+        f"<!-- OVERWRITE THIS FILE on each update. Do NOT append new sections. -->\n"
+        f"# Snapshot: {timestamp}\n\n"
+        f"## Context\n{context}\n\n"
+        f"## Recent Progress\n{recent_progress}\n\n"
+        f"## Current Focus\n{state['next_action']}\n\n"
+        f"## Blockers\n{state.get('open_questions', '(None)')}\n\n"
+        f"## Files Modified\n{files_str}\n\n"
+        f"## Next Session Should Know\n{next_session_notes}\n"
     )
 
     return snapshot
@@ -150,10 +151,10 @@ def generate_snapshot(directory: Path) -> str:
 
 def save_snapshot(directory: Path, content: str, archive: bool = False):
     """Save snapshot to file."""
-    # Always update snapshot.md
+    # Always overwrite snapshot.md
     snapshot_path = directory / "snapshot.md"
     snapshot_path.write_text(content, encoding="utf-8")
-    print(f"✅ Updated: {snapshot_path}")
+    print(f"Updated: {snapshot_path}")
 
     # Optionally archive
     if archive:
@@ -163,7 +164,7 @@ def save_snapshot(directory: Path, content: str, archive: bool = False):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         archive_path = snapshots_dir / f"snapshot_{timestamp}.md"
         archive_path.write_text(content, encoding="utf-8")
-        print(f"✅ Archived: {archive_path}")
+        print(f"Archived: {archive_path}")
 
 
 def main():
@@ -184,10 +185,10 @@ def main():
     # Generate snapshot
     snapshot = generate_snapshot(directory)
 
-    # Save
+    # Save (overwrites existing snapshot.md)
     save_snapshot(directory, snapshot, archive=args.archive)
 
-    print("\n✅ Snapshot generated successfully")
+    print("\nSnapshot generated successfully")
     print("\nPreview:")
     print("=" * 60)
     print(snapshot[:500] + "..." if len(snapshot) > 500 else snapshot)

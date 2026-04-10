@@ -5,9 +5,9 @@ The MRS defines the minimum artifacts required to recover task context without r
 ## Three-Tier Architecture
 
 ### Tier 0: Core Required (MUST exist)
-- `task_state.md` - Current task state snapshot
-- `plan.md` - Complete task plan with phases
-- `snapshot.md` - Latest timestamped snapshot
+- `task_state.md` - Current task state (Active Todos in header)
+- `plan.md` - Complete task plan with phases + Plan Registry
+- `snapshot.md` - Latest timestamped snapshot (overwritten, not appended)
 
 **Failure Mode:** Missing any Tier 0 file → STOP, run initialization wizard
 
@@ -15,11 +15,13 @@ The MRS defines the minimum artifacts required to recover task context without r
 - `findings.md` - Research and discoveries
 - `progress.md` - Session execution log
 - `architecture.md` - System architecture (for architectural tasks)
+- `decisions.md` - Stable conclusions and design decisions
+  - **Required** when: multi-session, multi-agent, or >10 phases
+  - Optional for small/single-session tasks
 
 **Failure Mode:** Missing Tier 1 → WARNING, ask user to confirm continuation
 
 ### Tier 2: Optional Context (MAY exist)
-- `decisions.md` - Design decision records
 - `blockers.md` - Current blockers
 - Domain-specific artifacts
 
@@ -46,4 +48,6 @@ When skill starts:
 - Offer to create missing Tier 0 files
 - Use templates from assets/
 - Guide user through setup
+- If multi-session/multi-agent/>10 phases: also create `decisions.md`
+- Copy MRS rules to project AGENTS.md (see agents-md-snippet.md)
 - Once complete, enter recovery mode
