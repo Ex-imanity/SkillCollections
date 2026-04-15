@@ -1,21 +1,29 @@
 ---
 name: case-generation-strategy
-description: Generate comprehensive, executable test cases from PRD, technical design, interaction docs, acceptance criteria, APIs, or telemetry specs. Use when the user asks for 测试用例, 测试点, 场景设计, case generation, APP/C-end, WEB/B-end, cross-end validation, or event/telemetry tracking coverage with boundary, exception, state-transition, consistency, and evidence assertions.
+description: Test design strategy and coverage-review guidance for requirement-based cases. Use when the user asks for 用例设计策略, 覆盖度补充, 用例评审, 边界/异常/权限/状态/埋点覆盖, telemetry/cross-end risk analysis, or when no end-to-end case generator is responsible. Do not trigger for case-lite small-demand generation/writeback flows unless explicitly requested as coverage guidance.
 ---
 
 # Case Generation Strategy
 
 ## Goal
-Turn requirement materials into complete, executable test cases. Optimize for coverage depth, stable granularity, observable assertions, and clear risk disclosure rather than simply listing happy-path checks.
+Provide a reusable test-design strategy layer for agents that generate or review requirement-based cases. Optimize for coverage depth, stable granularity, observable assertions, and clear risk disclosure rather than owning the end-to-end case-generation workflow.
+
+## Role Boundary
+This skill is a **strategy/reference layer**, not the default case-generation runner.
+
+- Use it to strengthen coverage, review generated cases, design telemetry/cross-end risk checks, or guide an agent that has no more specific case-generation workflow.
+- When a workflow skill is already active (for example `case-lite`), treat that skill as the source of truth for input collection, HITL checkpoints, output format, priority visibility, artifacts, and writeback rules.
+- In combined use, borrow only the coverage thinking from this skill. Do not override downstream format constraints such as `full.md` structure, "no priority in final case", Banshan writeback format, or tool flow.
+- If the user asks for "小需求用例", "简单需求生成用例", Feishu chapter selection, or Banshan writeback, prefer the dedicated generator skill and do not use this skill unless the user explicitly asks for coverage review/strategy.
 
 ## Trigger Fit
 Use this skill when the user needs any of the following:
-- Generate or review test cases from requirement documents, PRD, technical design, prototypes, APIs, or acceptance criteria.
-- Design scenes/test points for APP (C-end), WEB (B-end), backend-admin flows, cross-end loops, or data-reporting flows.
+- Review or improve existing test cases for missing scenarios, weak assertions, vague expected results, or unstable granularity.
+- Design a coverage strategy before another agent writes the actual cases.
+- Strengthen APP (C-end), WEB (B-end), backend-admin, cross-end, reporting, or API cases with boundary/exception/state/permission/consistency angles.
 - Validate telemetry/event tracking requirements such as `eventid`, trigger timing, event type, parameters, exposure/click/conversion chains.
-- Strengthen existing cases for boundary, exception, role, state-transition, recovery, consistency, or observability coverage.
 
-Do not use this skill for pure code-unit-test implementation unless the user asks for product-level test design.
+Do not use this skill for pure code-unit-test implementation, Feishu document ingestion, Banshan writeback, or case-lite small-demand generation unless the user explicitly asks for product-level test design strategy.
 
 ## Input Triage
 Require at least one concrete source:
@@ -55,7 +63,7 @@ If the source is incomplete, continue with explicit assumptions unless one missi
 - For list/detail/reporting flows, always include list-detail-export or detail-aggregate reconciliation where applicable.
 
 ## Test Point Template
-Each test point should use this structure:
+When this skill is used standalone, each test point should use this structure:
 
 | Field | Requirement |
 |---|---|
@@ -69,7 +77,11 @@ Each test point should use this structure:
 
 Do not write vague expected results such as “works normally” or “meets requirements”.
 
+If another active skill defines a stricter output format, follow that skill's format and use this template only as an internal checklist.
+
 ## Priority Rules
+Use priorities only when the downstream output format allows them.
+
 - `P0`: core business flow, money/data correctness, permission isolation, blocking failure, required telemetry acceptance.
 - `P1`: common alternatives, key boundaries, recoverable exceptions, cross-state consistency, duplicate-submit/idempotency.
 - `P2`: low-frequency compatibility, long-tail UI display, optional analytics, non-blocking edge cases.
