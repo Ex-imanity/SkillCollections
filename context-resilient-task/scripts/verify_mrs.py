@@ -12,6 +12,8 @@ Exit codes:
     3: Validation errors (files malformed)
 """
 
+from __future__ import annotations  # Python 3.7+ compatible type hints
+
 import sys
 import json
 import argparse
@@ -40,10 +42,26 @@ def check_file_exists(directory: Path, filename: str) -> bool:
 
 def find_section_line(content: str, section: str) -> int | None:
     """Find the line number (1-based) of a section header. Returns None if not found."""
-    for i, line in enumerate(content.splitlines(), 1):
+    for line_number, line in enumerate(content.splitlines(), 1):
         if line.strip() == section:
-            return i
+            return line_number
     return None
+
+
+def extract_section_content(content: str, section: str) -> str:
+    """Extract content under an exact markdown section header."""
+    lines = content.splitlines()
+    section_line = find_section_line(content, section)
+    if section_line is None:
+        return ""
+
+    section_content = []
+    for line in lines[section_line:]:
+        if line.strip().startswith("#"):
+            break
+        section_content.append(line)
+
+    return "\n".join(section_content).strip()
 
 
 def validate_task_state(filepath: Path) -> tuple[bool, str, list[str]]:
@@ -64,7 +82,7 @@ def validate_task_state(filepath: Path) -> tuple[bool, str, list[str]]:
             "## Next Action",
             "## Completed Items",
         ]
-        missing = [sec for sec in required if sec not in content]
+        missing = [section for section in required if find_section_line(content, section) is None]
 
         if missing:
             return False, f"Missing sections: {', '.join(missing)}", warnings
@@ -72,6 +90,12 @@ def validate_task_state(filepath: Path) -> tuple[bool, str, list[str]]:
         # Check for timestamp
         if "**Last Updated:**" not in content:
             return False, "Missing Last Updated timestamp", warnings
+
+        # Check status enum
+        status = extract_section_content(content, "## Status")
+        valid_statuses = {"active", "paused", "blocked", "completed"}
+        if status not in valid_statuses:
+            return False, f"Invalid Status '{status}' (expected: active, paused, blocked, completed)", warnings
 
         # WARNING: line count exceeds threshold
         if line_count > MAX_TASK_STATE_LINES:
@@ -164,10 +188,6 @@ def validate_snapshot(filepath: Path) -> tuple[bool, str, list[str]]:
             return False, f"Missing sections: {', '.join(missing)}", warnings
 
         # WARNING: multiple ## Context sections (improper appending)
-        context_count = content.count("\n## Context")
-        if content.startswith("## Context"):
-            context_count += 1
-        # More robust count
         context_count = len(re.findall(r"^## Context\b", content, re.MULTILINE))
         if context_count > 1:
             warnings.append(

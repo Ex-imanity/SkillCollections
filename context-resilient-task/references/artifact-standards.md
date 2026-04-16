@@ -86,7 +86,7 @@ FORBIDDEN_SUBSTRINGS = [
 <one-sentence goal>
 
 ## Status
-in_progress
+active
 
 ## Active Todos
 - [ ] Implement auth module (added: 2026-02-10, source: plan Phase 2)

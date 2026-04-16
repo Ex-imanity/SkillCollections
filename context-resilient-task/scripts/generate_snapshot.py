@@ -9,6 +9,8 @@ Options:
     --archive    Save to snapshots/ directory with timestamp, keep snapshot.md updated
 """
 
+from __future__ import annotations  # Python 3.7+ compatible type hints
+
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -16,14 +18,20 @@ import argparse
 
 
 def extract_section(content: str, section_header: str) -> str:
-    """Extract content under a specific markdown header."""
+    """Extract content under a specific markdown header.
+
+    Matches the header exactly (after stripping) to avoid false matches
+    like '## Goal Statement' when looking for '## Goal'.
+    """
     lines = content.split("\n")
     in_section = False
     section_content = []
+    target = section_header.strip()
 
     for line in lines:
-        if line.startswith("#"):
-            if section_header in line:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if stripped == target:
                 in_section = True
                 continue
             elif in_section:
