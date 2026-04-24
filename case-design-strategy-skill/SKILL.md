@@ -1,5 +1,5 @@
 ---
-name: case-generation-strategy
+name: case-design-strategy-skill
 description: Test design strategy and coverage-review guidance for requirement-based cases. Use when the user asks for 用例设计策略, 覆盖度补充, 用例评审, 边界/异常/权限/状态/埋点覆盖, telemetry/cross-end risk analysis, or when no end-to-end case generator is responsible. Do not trigger for case-lite small-demand generation/writeback flows unless explicitly requested as coverage guidance.
 ---
 

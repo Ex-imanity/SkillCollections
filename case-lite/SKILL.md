@@ -351,7 +351,7 @@ download_board_as_image(board_tokens=["token_1"], document_id=document_id, board
 #### 5b. 用户选择是
 
 1. **先检查当前环境是否有可辅助 Review 的 skill**  
-   优先检查是否存在 `case-generation-strategy` 或其他覆盖度评审 / 用例设计策略类 skill。  
+   优先检查是否存在 `case-design-strategy-skill` 或其他覆盖度评审 / 用例设计策略类 skill。  
    - 如果有，先读取对应 skill，并结合其流程执行 Review
    - 如果没有，直接进行 inline Review
 
