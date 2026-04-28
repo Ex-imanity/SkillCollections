@@ -350,10 +350,12 @@ download_board_as_image(board_tokens=["token_1"], document_id=document_id, board
 
 #### 5b. 用户选择是
 
-1. **先检查当前环境是否有可辅助 Review 的 skill**  
-   优先检查是否存在 `case-design-strategy-skill` 或其他覆盖度评审 / 用例设计策略类 skill。  
-   - 如果有，先读取对应 skill，并结合其流程执行 Review
-   - 如果没有，直接进行 inline Review
+1. **先检查当前会话的可用 skills 列表，判断是否有可辅助 Review 的 skill**  
+   优先检查当前会话的 available skills 中是否存在**精确名称** `case-design-strategy-skill`，其次再看其他覆盖度评审 / 用例设计策略类 skill。  
+   - 这里检查的是**当前会话已加载的 skill 列表**，不要靠文件系统路径扫描，也不要依赖记忆中的旧别名
+   - 如果当前会话可用 skills 中存在 `case-design-strategy-skill`，则**必须显式读取并使用它**，将当前步骤视为 coverage review / 边界异常覆盖评审
+   - 如果当前会话中不存在该 skill，即使磁盘上已安装，也应明确告知“当前窗口未加载到该 skill”，随后直接进行 inline Review
+   - 若用户希望使用该 skill 但当前窗口未加载到，可建议用户在新窗口 / 新会话重试
 
 2. **如果用户在此时提供了补充信息**  
    将其追加保存到 `corpus/extra-context.md`（如新增一个 `## Review 补充信息` 段落），后续如用户允许修改文档，则将这些补充信息一并纳入。

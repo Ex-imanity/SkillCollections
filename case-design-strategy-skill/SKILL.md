@@ -1,6 +1,6 @@
 ---
 name: case-design-strategy-skill
-description: Test design strategy and coverage-review guidance for requirement-based cases. Use when the user asks for 用例设计策略, 覆盖度补充, 用例评审, 边界/异常/权限/状态/埋点覆盖, telemetry/cross-end risk analysis, or when no end-to-end case generator is responsible. Do not trigger for case-lite small-demand generation/writeback flows unless explicitly requested as coverage guidance.
+description: Test design strategy and coverage-review guidance for requirement-based cases. Use when the user asks for 用例设计策略, 覆盖度补充, 用例评审, 边界/异常/权限/状态/埋点覆盖, telemetry/cross-end risk analysis, or when no end-to-end case generator is responsible. Also use during `case-lite` self-review when the active workflow explicitly enters coverage review / boundary-exception review. Do not trigger for `case-lite` document ingestion, chapter selection, full generation, or writeback steps.
 ---
 
 # Case Generation Strategy
@@ -14,7 +14,8 @@ This skill is a **strategy/reference layer**, not the default case-generation ru
 - Use it to strengthen coverage, review generated cases, design telemetry/cross-end risk checks, or guide an agent that has no more specific case-generation workflow.
 - When a workflow skill is already active (for example `case-lite`), treat that skill as the source of truth for input collection, HITL checkpoints, output format, priority visibility, artifacts, and writeback rules.
 - In combined use, borrow only the coverage thinking from this skill. Do not override downstream format constraints such as `full.md` structure, "no priority in final case", Banshan writeback format, or tool flow.
-- If the user asks for "小需求用例", "简单需求生成用例", Feishu chapter selection, or Banshan writeback, prefer the dedicated generator skill and do not use this skill unless the user explicitly asks for coverage review/strategy.
+- If the user asks for "小需求用例", "简单需求生成用例", Feishu chapter selection, or Banshan writeback, prefer the dedicated generator skill and do not use this skill for those steps.
+- Exception: when `case-lite` has already reached its self-review / coverage-review stage and explicitly asks for boundary/exception/permission/state coverage strengthening, this skill should be used as the strategy layer.
 
 ## Trigger Fit
 Use this skill when the user needs any of the following:
@@ -23,7 +24,7 @@ Use this skill when the user needs any of the following:
 - Strengthen APP (C-end), WEB (B-end), backend-admin, cross-end, reporting, or API cases with boundary/exception/state/permission/consistency angles.
 - Validate telemetry/event tracking requirements such as `eventid`, trigger timing, event type, parameters, exposure/click/conversion chains.
 
-Do not use this skill for pure code-unit-test implementation, Feishu document ingestion, Banshan writeback, or case-lite small-demand generation unless the user explicitly asks for product-level test design strategy.
+Do not use this skill for pure code-unit-test implementation, Feishu document ingestion, Banshan writeback, or the main case-lite generation/writeback flow. Do use it for the `case-lite` self-review stage when the workflow explicitly asks for coverage review, missing-scenario review, or boundary/exception strengthening.
 
 ## Input Triage
 Require at least one concrete source:
