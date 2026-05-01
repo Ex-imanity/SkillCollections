@@ -1,7 +1,14 @@
 context-resilient-task/docs/review-2026-04-10.md
 __pycache__/
 *.py[cod]
+<<<<<<< HEAD
 .omc/
 context-resilient-task/.omc/
 .claude/
 .idea/
+=======
+.claude/
+.idea/
+.omc/
+.test-mrs-scripts/
+>>>>>>> feature_improveCRT

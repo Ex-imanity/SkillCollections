@@ -1,6 +1,6 @@
 ---
 name: context-resilient-task
-description: Context-resilient task management with stateless recovery from artifacts. Use when starting multi-phase tasks, when task involves multiple sessions, after /clear or session interruption, or when you need to recover task state without relying on conversational memory.
+description: Context-resilient task management via a filesystem Minimum Recovery Set (MRS in .task-state/). Reconstructs task state from on-disk artifacts so work survives /clear, session interruption, agent switches, and context-window loss. Use this skill whenever the user mentions multi-phase tasks, multi-session work, cross-session recovery, task state restoration, MRS, .task-state, lost context, hallucinated todos, forgotten work, 任务状态恢复, 跨会话任务, 多会话开发, 上下文丢失, /clear 后继续, 任务恢复, or asks the agent to remember a task across sessions. Also trigger proactively when starting any task likely to span more than one session, even if the user doesn't explicitly request recovery — the upfront MRS structure prevents context-loss surprises later.
 ---
 
 # Context-Resilient Task
@@ -109,12 +109,29 @@ Full failure mode details: [references/recovery-workflow.md](references/recovery
 
 ## Initialization Wizard
 
-If Tier 0 missing, guide user:
+If Tier 0 missing, run the bundled script (CLI or interactive):
 
-1. Collect: Task Goal, Complexity (small/medium/large), Key Requirements
-2. Create from templates: `task_state.md`, `plan.md`, `snapshot.md`
-3. If multi-session/multi-agent/>10 phases: also create `decisions.md`
-4. **Copy MRS rules to project AGENTS.md** for Codex/other agent compatibility (see [references/agents-md-snippet.md](references/agents-md-snippet.md))
+```bash
+# CLI form
+python <skill-root>/scripts/init_mrs.py \
+  --dir .task-state \
+  --goal "Build payment service" \
+  --complexity medium \
+  --requirements "Stripe integration;3DS handling;Webhook verifier"
+
+# Interactive form (omit --goal/--complexity to be prompted)
+python <skill-root>/scripts/init_mrs.py
+```
+
+Behavior:
+1. Collects: Task Goal, Complexity (small/medium/large), Key Requirements (optional)
+2. Renders Tier 0 from templates: `task_state.md`, `plan.md`, `snapshot.md`
+3. Creates empty Tier 1 core logs: `findings.md`, `progress.md`
+4. Auto-creates `decisions.md` if `--complexity large`, `--multi-agent`, or >10 requirements
+5. Refuses to write into a non-empty target unless `--force`
+6. **Reminds you to copy MRS rules to project AGENTS.md** for Codex/other agent compatibility (see [references/agents-md-snippet.md](references/agents-md-snippet.md))
+
+If you prefer manual setup, copy templates from `assets/` (`task_state.template.md`, `plan.template.md`, `snapshot.template.md`, `decisions.template.md`) and fill the `{...}` placeholders.
 
 ## Plan Registry
 
@@ -147,14 +164,25 @@ Full standards: [references/artifact-standards.md](references/artifact-standards
 
 ## Scripts
 
-Run from the MRS directory. Locate scripts relative to this SKILL.md.
+Locate scripts relative to this SKILL.md.
 
 ```bash
-python <skill-root>/scripts/verify_mrs.py .          # Check MRS health
-python <skill-root>/scripts/verify_mrs.py --json .    # JSON output for agents
-python <skill-root>/scripts/generate_snapshot.py .    # Generate snapshot
-python <skill-root>/scripts/generate_snapshot.py --archive .  # Generate + archive
+# Initialize a fresh MRS (CLI or interactive)
+python <skill-root>/scripts/init_mrs.py --dir .task-state \
+    --goal "..." --complexity medium --requirements "a;b;c"
+python <skill-root>/scripts/init_mrs.py                       # interactive wizard
+
+# Check MRS health
+python <skill-root>/scripts/verify_mrs.py .task-state
+python <skill-root>/scripts/verify_mrs.py --json .task-state  # JSON for agents
+
+# Generate snapshot (overwrites snapshot.md)
+python <skill-root>/scripts/generate_snapshot.py .task-state
+python <skill-root>/scripts/generate_snapshot.py .task-state --project-root .  # explicit source scan root
+python <skill-root>/scripts/generate_snapshot.py --archive .task-state  # also archive
 ```
+
+All scripts read templates from `assets/` so the rendered MRS files always match the documented schema. When the snapshot target is `.task-state`, `generate_snapshot.py` scans that directory's parent project for recently modified source files unless `--project-root` is provided.
 
 ## Codex / Multi-Agent Compatibility
 

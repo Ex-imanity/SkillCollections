@@ -16,6 +16,10 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import argparse
 
+SKILL_ROOT = Path(__file__).resolve().parent.parent
+SNAPSHOT_TEMPLATE_PATH = SKILL_ROOT / "assets" / "snapshot.template.md"
+TEMPLATE_DOCS_MARKER = "<!--END_TEMPLATE_DOCS-->\n"
+
 
 def extract_section(content: str, section_header: str) -> str:
     """Extract content under a specific markdown header.
@@ -65,21 +69,27 @@ def read_task_state(directory: Path) -> dict:
     }
 
 
-def read_progress(directory: Path, last_n_lines: int = 10) -> str:
+def read_progress(mrs_dir: Path, last_n_lines: int = 10) -> str:
     """Read recent progress entries."""
-    progress_path = directory / "progress.md"
+    progress_path = mrs_dir / "progress.md"
 
     if not progress_path.exists():
         return "(progress.md not found)"
 
     content = progress_path.read_text(encoding="utf-8")
-    lines = [l for l in content.split("\n") if l.strip()]
+    lines = [
+        line
+        for line in content.split("\n")
+        if line.strip()
+        and not line.lstrip().startswith("#")
+        and not line.lstrip().startswith("<!--")
+    ]
     recent = lines[-last_n_lines:] if len(lines) > last_n_lines else lines
 
-    return "\n".join(recent) or "(No recent progress)"
+    return "\n".join(recent) or "- (No recent progress)"
 
 
-def list_recent_files(directory: Path, hours: int = 24) -> list[str]:
+def list_recent_files(project_root: Path, hours: int = 24) -> list[str]:
     """List files modified in last N hours."""
 
     cutoff = datetime.now() - timedelta(hours=hours)
@@ -89,7 +99,7 @@ def list_recent_files(directory: Path, hours: int = 24) -> list[str]:
     search_dirs = ["src", "tests", "lib", "app", "backend", "frontend"]
 
     for search_dir in search_dirs:
-        dir_path = directory / search_dir
+        dir_path = project_root / search_dir
         if not dir_path.exists():
             continue
 
@@ -97,7 +107,7 @@ def list_recent_files(directory: Path, hours: int = 24) -> list[str]:
             if item.is_file():
                 mtime = datetime.fromtimestamp(item.stat().st_mtime)
                 if mtime > cutoff:
-                    recent_files.append(str(item.relative_to(directory)))
+                    recent_files.append(str(item.relative_to(project_root)))
 
     return recent_files[:20]  # Limit to 20 files
 
@@ -108,7 +118,14 @@ def build_next_session_notes(state: dict) -> str:
 
     # Include open questions
     open_q = state.get("open_questions", "")
-    if open_q and open_q != "(No content)" and open_q != "(unknown)":
+    normalized_open_q = open_q.strip().lower()
+    if normalized_open_q and normalized_open_q not in {
+        "(no content)",
+        "(unknown)",
+        "_(none)_",
+        "none",
+        "(none)",
+    }:
         for line in open_q.split("\n"):
             line = line.strip()
             if line and line != "(No content)":
@@ -122,18 +139,52 @@ def build_next_session_notes(state: dict) -> str:
     return "\n".join(notes) if notes else "- (No specific notes — review task_state.md)"
 
 
-def generate_snapshot(directory: Path) -> str:
+def load_snapshot_template() -> str:
+    """Load snapshot template from assets/. Strips internal docs preamble."""
+    if not SNAPSHOT_TEMPLATE_PATH.exists():
+        raise FileNotFoundError(
+            f"Snapshot template missing at {SNAPSHOT_TEMPLATE_PATH}. "
+            "Reinstall context-resilient-task skill."
+        )
+    raw = SNAPSHOT_TEMPLATE_PATH.read_text(encoding="utf-8")
+    if TEMPLATE_DOCS_MARKER in raw:
+        _, _, body = raw.partition(TEMPLATE_DOCS_MARKER)
+        return body
+    return raw
+
+
+def normalize_blockers(raw: str) -> str:
+    """Normalize Open Questions content into a Blockers bullet list."""
+    normalized = raw.strip().lower()
+    if not normalized or normalized in {"(no content)", "(unknown)", "_(none)_", "none", "(none)"}:
+        return "- (None)"
+    return raw
+
+
+def infer_project_root(mrs_dir: Path) -> Path:
+    """Infer project root from an MRS directory.
+
+    When called with .task-state, scan the parent project. Otherwise preserve
+    the historical behavior and scan the provided directory.
+    """
+    if mrs_dir.name == ".task-state":
+        return mrs_dir.parent
+    return mrs_dir
+
+
+def generate_snapshot(mrs_dir: Path, project_root: Path | None = None) -> str:
     """Generate snapshot content from current state."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    project_root = project_root or infer_project_root(mrs_dir)
 
     # Read task state
-    state = read_task_state(directory)
+    state = read_task_state(mrs_dir)
 
     # Read recent progress
-    recent_progress = read_progress(directory)
+    recent_progress = read_progress(mrs_dir)
 
     # List recent files
-    files = list_recent_files(directory)
+    files = list_recent_files(project_root)
     files_str = "\n".join(f"- {f}" for f in files) if files else "- (No recent changes detected)"
 
     # Build context
@@ -142,19 +193,17 @@ def generate_snapshot(directory: Path) -> str:
     # Build next session notes from actual state
     next_session_notes = build_next_session_notes(state)
 
-    # Build snapshot (follows structure from assets/snapshot.template.md)
-    snapshot = (
-        f"<!-- OVERWRITE THIS FILE on each update. Do NOT append new sections. -->\n"
-        f"# Snapshot: {timestamp}\n\n"
-        f"## Context\n{context}\n\n"
-        f"## Recent Progress\n{recent_progress}\n\n"
-        f"## Current Focus\n{state['next_action']}\n\n"
-        f"## Blockers\n{state.get('open_questions', '(None)')}\n\n"
-        f"## Files Modified\n{files_str}\n\n"
-        f"## Next Session Should Know\n{next_session_notes}\n"
+    # Render via assets/snapshot.template.md (no inline duplication)
+    template = load_snapshot_template()
+    return template.format(
+        timestamp=timestamp,
+        context=context,
+        recent_progress=recent_progress,
+        current_focus=state["next_action"],
+        blockers=normalize_blockers(state.get("open_questions", "")),
+        files_modified=files_str,
+        next_session_notes=next_session_notes,
     )
-
-    return snapshot
 
 
 def save_snapshot(directory: Path, content: str, archive: bool = False):
@@ -179,19 +228,28 @@ def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Generate task snapshot")
     parser.add_argument("--archive", action="store_true", help="Archive snapshot to snapshots/ directory")
-    parser.add_argument("directory", nargs="?", default=".", help="Project directory (default: current)")
+    parser.add_argument(
+        "--project-root",
+        default=None,
+        help="Project root for scanning modified source files (default: parent of .task-state)",
+    )
+    parser.add_argument("directory", nargs="?", default=".", help="MRS directory (default: current)")
 
     args = parser.parse_args()
     directory = Path(args.directory).resolve()
+    project_root = Path(args.project_root).resolve() if args.project_root else None
 
     if not directory.is_dir():
         print(f"Error: {directory} is not a directory", file=sys.stderr)
+        sys.exit(1)
+    if project_root and not project_root.is_dir():
+        print(f"Error: {project_root} is not a directory", file=sys.stderr)
         sys.exit(1)
 
     print(f"Generating snapshot for: {directory}\n")
 
     # Generate snapshot
-    snapshot = generate_snapshot(directory)
+    snapshot = generate_snapshot(directory, project_root=project_root)
 
     # Save (overwrites existing snapshot.md)
     save_snapshot(directory, snapshot, archive=args.archive)
