@@ -1,3 +1,7 @@
 context-resilient-task/docs/review-2026-04-10.md
 __pycache__/
 *.py[cod]
+.claude/
+.idea/
+.omc/
+.test-mrs-scripts/

@@ -104,22 +104,40 @@ project/
 
 ## Initialization from Existing Plans
 
-When the MRS is being created after plan files already exist:
+When the MRS is being created after plan files already exist, the agent should:
 
-```bash
-# Step 1: Create MRS directory
-mkdir .task-state
+1. **Run the bundled initializer** to create Tier 0 from templates:
 
-# Step 2: Initialize from the most recent implementation plan
-# Copy it as plan.md baseline, then add Plan Registry
-cp docs/plans/YYYY-MM-DD-implementation.md .task-state/plan.md
+   ```
+   python <skill-root>/scripts/init_mrs.py --dir .task-state \
+       --goal "<task goal>" --complexity <small|medium|large> \
+       --requirements "<req1;req2;...>"
+   ```
 
-# Step 3: Append Plan Registry to plan.md listing all docs/plans files
-# (Claude should scan docs/plans/ and build the registry table)
+   Or invoke it without arguments for the interactive wizard. The script renders
+   `task_state.md`, `plan.md`, `snapshot.md` (and `decisions.md` when `--complexity large` /
+   `--multi-agent` / >10 requirements) from `assets/`.
 
-# Step 4: Create task_state.md from template
-cp <skill-root>/assets/task_state.template.md .task-state/task_state.md
-```
+2. **Seed plan.md from the most recent existing plan file.** Read the contents of the
+   newest `docs/plans/YYYY-MM-DD-*-implementation.md` and merge its phases into the
+   freshly generated `.task-state/plan.md`. Preserve the Plan Registry section
+   inserted by the initializer.
+
+3. **Build the Plan Registry rows.** Scan `docs/plans/*.md` and append one row per file
+   with `Source Skill`, `Date`, and `Status` (typically `pending` or `completed`).
+   Strict boundary still applies — only register `docs/plans/*.md` files.
+
+4. **Update task_state.md to reference the active plan.** Set `Current Phase` to point
+   at the in-progress plan file. Keep `Active Todos` near the top.
+
+5. **Generate a snapshot** to capture this initial state:
+
+   ```
+   python <skill-root>/scripts/generate_snapshot.py .task-state
+   ```
+
+The exact tool used to read existing plan files (Read, cat, file viewer, etc.) is
+agent-specific — only the resulting MRS structure matters.
 
 ## Skill Compatibility Matrix
 

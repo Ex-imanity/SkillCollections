@@ -208,12 +208,34 @@ project/
 
 ## 辅助脚本
 
-脚本位于本 skill 的 `scripts/` 目录下，从 MRS 目录运行：
+脚本位于本 skill 的 `scripts/` 目录下：
+
+### 初始化 MRS
+
+```bash
+# CLI 模式（全自动）
+python <skill-root>/scripts/init_mrs.py \
+  --dir .task-state \
+  --goal "构建支付服务" \
+  --complexity medium \
+  --requirements "Stripe 集成;3DS 处理;Webhook 校验"
+
+# 交互模式（省略 --goal/--complexity 时自动进入向导）
+python <skill-root>/scripts/init_mrs.py
+```
+
+行为：
+- 自动从 `assets/` 渲染 `task_state.md` / `plan.md` / `snapshot.md`
+- 同时创建空的 Tier 1 核心日志 `findings.md` / `progress.md`，初始化后即可通过基础校验
+- 当 `--complexity large` / `--multi-agent` / 需求数 > 10 时，自动创建 `decisions.md`
+- 目标目录非空时拒绝写入，需 `--force` 显式覆盖
+- 末尾提示用户将 `references/agents-md-snippet.md` 复制到项目 `AGENTS.md`
 
 ### 验证 MRS
 
 ```bash
-python <skill-root>/scripts/verify_mrs.py .
+python <skill-root>/scripts/verify_mrs.py .task-state
+python <skill-root>/scripts/verify_mrs.py --json .task-state   # 结构化输出供 agent 消费
 ```
 
 检查 Tier 0/1/2 完整性、文件格式、禁止路径。退出码：
@@ -225,9 +247,12 @@ python <skill-root>/scripts/verify_mrs.py .
 ### 生成快照
 
 ```bash
-python <skill-root>/scripts/generate_snapshot.py .
-python <skill-root>/scripts/generate_snapshot.py --archive .   # 同时归档
+python <skill-root>/scripts/generate_snapshot.py .task-state
+python <skill-root>/scripts/generate_snapshot.py .task-state --project-root .   # 显式指定源码扫描根目录
+python <skill-root>/scripts/generate_snapshot.py --archive .task-state   # 同时归档
 ```
+
+> 所有脚本均从 `assets/` 读取模板，因此渲染出的 MRS 文件始终与文档化的 schema 保持一致。对 `.task-state` 生成快照时，默认扫描其父目录作为项目根目录；也可用 `--project-root` 显式指定。
 
 ---
 
@@ -339,8 +364,13 @@ skill 读取 `task_state.md`，从 `Active Todos` 和 `Next Action` 中还原工
 | [`references/recovery-workflow.md`](references/recovery-workflow.md) | 完整恢复流程 |
 | [`references/multi-skill-integration.md`](references/multi-skill-integration.md) | Plan Registry 格式、跨 Skill Handoff 协议 |
 | [`references/agents-md-snippet.md`](references/agents-md-snippet.md) | 可嵌入 AGENTS.md 的精简版 MRS 规则（Codex 兼容） |
-| [`assets/task_state.template.md`](assets/task_state.template.md) | task_state.md 初始化模板 |
-| [`assets/snapshot.template.md`](assets/snapshot.template.md) | snapshot.md 模板 |
+| [`assets/task_state.template.md`](assets/task_state.template.md) | task_state.md 初始化模板（含字段说明） |
+| [`assets/plan.template.md`](assets/plan.template.md) | plan.md 模板（含 Plan Registry / Reference Index 骨架） |
+| [`assets/snapshot.template.md`](assets/snapshot.template.md) | snapshot.md 模板（覆写式） |
+| [`assets/decisions.template.md`](assets/decisions.template.md) | decisions.md 模板（仅追加） |
+| [`scripts/init_mrs.py`](scripts/init_mrs.py) | 初始化 MRS（CLI + 交互向导） |
+| [`scripts/verify_mrs.py`](scripts/verify_mrs.py) | 验证 MRS 健康度（支持 `--json`） |
+| [`scripts/generate_snapshot.py`](scripts/generate_snapshot.py) | 从当前状态生成 snapshot |
 
 ---
 
