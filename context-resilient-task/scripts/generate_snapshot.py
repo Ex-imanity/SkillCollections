@@ -164,10 +164,11 @@ def normalize_blockers(raw: str) -> str:
 def infer_project_root(mrs_dir: Path) -> Path:
     """Infer project root from an MRS directory.
 
-    When called with .task-state, scan the parent project. Otherwise preserve
-    the historical behavior and scan the provided directory.
+    Directories named .task-state or .task-state-<slug> scan the parent
+    project. Otherwise preserve the historical behavior and scan the
+    provided directory.
     """
-    if mrs_dir.name == ".task-state":
+    if mrs_dir.name == ".task-state" or mrs_dir.name.startswith(".task-state-"):
         return mrs_dir.parent
     return mrs_dir
 

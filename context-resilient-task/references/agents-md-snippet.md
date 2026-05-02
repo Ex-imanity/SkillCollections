@@ -28,3 +28,17 @@ This snippet ensures all agents (Claude Code, Codex, etc.) follow the same MRS u
 
 ### 校验
 运行 `python <skill-root>/scripts/verify_mrs.py .task-state` 检查 MRS 健康度（或加 `--json` 获取结构化输出）。`<skill-root>` 为 context-resilient-task skill 的安装路径。
+
+## 多任务支持（Multiple MRS）
+
+同一项目内允许多个 MRS 共存：
+
+- 默认 `.task-state/` 不变；并行任务使用 `.task-state-<slug>/`（兄弟目录）
+- agent 启动时从 CWD 向上找 `.task-state/` 和 `.task-state-<slug>/`：
+  - 找到 0 个 → 初始化新 MRS
+  - 找到 1 个 → 使用该 MRS
+  - 找到多个 → 必须列出并询问用户恢复哪个，可推荐 mtime 最新的，但不自动选
+- 切换任务靠用户在对话中明示，不写"当前任务"指针文件
+- 已完成的任务归档到 `.task-state/archive/<slug>-completed/`
+
+完整规则见项目内的 `references/multi-task-workflow.md`（如已安装 context-resilient-task skill）。

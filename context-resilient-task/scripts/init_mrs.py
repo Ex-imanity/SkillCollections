@@ -179,9 +179,13 @@ def write_files(
 ) -> dict[str, Path]:
     """Render and write MRS files. Returns mapping of filename → written path."""
     if target_dir.exists() and any(target_dir.iterdir()) and not force:
+        suggestion = target_dir.parent / f"{target_dir.name}-<slug>"
         raise FileExistsError(
-            f"{target_dir} is non-empty. Refusing to overwrite. "
-            "Use --force to proceed (DESTRUCTIVE)."
+            f"{target_dir} is non-empty.\n"
+            "\nTo start a parallel task without destroying existing MRS, use a sibling directory:\n"
+            f"  --dir {suggestion}\n"
+            "(replace <slug> with a short task identifier, e.g. 'auth' or 'bugfix-x42')\n"
+            "\nOr use --force to overwrite (DESTRUCTIVE - loses current MRS state)."
         )
     target_dir.mkdir(parents=True, exist_ok=True)
 

@@ -43,16 +43,25 @@ Full MRS specification: [references/minimum-recovery-set.md](references/minimum-
 ## On-Invoke Detection
 
 ```
-1. Scan for Tier 0 files
-2. If status=completed → Skip recovery, prompt archival
-3. If all Tier 0 present → Recovery mode
-4. If any Tier 0 missing → Initialization mode
-5. Check Tier 1, emit warnings if missing
-6. Output "Reconstructed Task State"
-7. Continue from last checkpoint
+1. Discover MRS: walk up from CWD; collect `.task-state/` and `.task-state-<slug>/`
+   at the first ancestor level where any exist (run: `python <skill-root>/scripts/list_mrs.py`)
+2. If 0 MRS found → Initialization mode
+3. If 1 MRS found → use it; proceed to step 5
+4. If >1 MRS found → ASK user which task to resume
+   - List each with goal/status/updated timestamp
+   - Recommend most recently updated (*) but never assume
+5. Scan selected MRS for Tier 0 files
+6. If status=completed → Skip recovery, prompt archival
+7. If all Tier 0 present → Recovery mode
+8. If any Tier 0 missing → Initialization mode
+9. Check Tier 1, emit warnings if missing
+10. Output "Reconstructed Task State"
+11. Continue from last checkpoint
 ```
 
 Task lifecycle: `active` → `paused` / `blocked` → `active` → `completed`
+
+For parallel/interrupted tasks (multiple MRS in one project), see [references/multi-task-workflow.md](references/multi-task-workflow.md).
 
 ## Structured Output Template
 
@@ -176,13 +185,17 @@ python <skill-root>/scripts/init_mrs.py                       # interactive wiza
 python <skill-root>/scripts/verify_mrs.py .task-state
 python <skill-root>/scripts/verify_mrs.py --json .task-state  # JSON for agents
 
+# List all MRS directories discoverable from CWD
+python <skill-root>/scripts/list_mrs.py
+python <skill-root>/scripts/list_mrs.py --json  # JSON for agents
+
 # Generate snapshot (overwrites snapshot.md)
 python <skill-root>/scripts/generate_snapshot.py .task-state
 python <skill-root>/scripts/generate_snapshot.py .task-state --project-root .  # explicit source scan root
 python <skill-root>/scripts/generate_snapshot.py --archive .task-state  # also archive
 ```
 
-All scripts read templates from `assets/` so the rendered MRS files always match the documented schema. When the snapshot target is `.task-state`, `generate_snapshot.py` scans that directory's parent project for recently modified source files unless `--project-root` is provided.
+All scripts read templates from `assets/` so the rendered MRS files always match the documented schema. When the snapshot target is `.task-state` or `.task-state-<slug>`, `generate_snapshot.py` scans that directory's parent project for recently modified source files unless `--project-root` is provided.
 
 ## Codex / Multi-Agent Compatibility
 
