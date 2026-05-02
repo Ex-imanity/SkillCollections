@@ -80,6 +80,111 @@ class MrsScriptsTest(unittest.TestCase):
         self.assertIn("## Blockers\n- (None)", snapshot)
         self.assertNotIn("_(none)_", snapshot)
 
+    def test_snapshot_infers_project_root_from_named_mrs(self):
+        project_dir = self.work_root / "project"
+        mrs_dir = project_dir / ".task-state-feature-x"
+        src_file = project_dir / "src" / "module.py"
+        src_file.parent.mkdir(parents=True)
+        src_file.write_text("x = 1\n", encoding="utf-8")
+
+        self.run_script(
+            "init_mrs.py",
+            "--dir",
+            mrs_dir,
+            "--goal",
+            "Build feature X",
+            "--complexity",
+            "medium",
+            "--requirements",
+            "Implement module",
+        )
+        self.run_script("generate_snapshot.py", mrs_dir)
+
+        snapshot = (mrs_dir / "snapshot.md").read_text(encoding="utf-8")
+        self.assertIn("- src/module.py", snapshot)
+
+    def test_list_mrs_finds_multiple_with_metadata(self):
+        project_dir = self.work_root / "project"
+        project_dir.mkdir()
+        self.run_script(
+            "init_mrs.py",
+            "--dir",
+            project_dir / ".task-state",
+            "--goal",
+            "Default task",
+            "--complexity",
+            "medium",
+        )
+        self.run_script(
+            "init_mrs.py",
+            "--dir",
+            project_dir / ".task-state-bugfix",
+            "--goal",
+            "Urgent bug fix",
+            "--complexity",
+            "small",
+        )
+
+        result = self.run_script("list_mrs.py", "--json", project_dir)
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(payload["count"], 2)
+        by_name = {m["name"]: m for m in payload["mrs"]}
+        self.assertEqual(sorted(by_name), [".task-state", ".task-state-bugfix"])
+        self.assertEqual(by_name[".task-state"]["goal"], "Default task")
+        self.assertEqual(by_name[".task-state"]["status"], "active")
+        self.assertEqual(by_name[".task-state-bugfix"]["goal"], "Urgent bug fix")
+        self.assertEqual(by_name[".task-state-bugfix"]["status"], "active")
+        for mrs in payload["mrs"]:
+            self.assertIn("updated", mrs)
+            self.assertIn("updated_human", mrs)
+            self.assertIn("path", mrs)
+
+    def test_list_mrs_reads_legacy_single_line_metadata(self):
+        project_dir = self.work_root / "legacy-project"
+        mrs_dir = project_dir / ".task-state"
+        mrs_dir.mkdir(parents=True)
+        (mrs_dir / "task_state.md").write_text(
+            "# Task State\n\n**Goal:** Legacy task\n**Status:** active\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_script("list_mrs.py", "--json", project_dir)
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["mrs"][0]["goal"], "Legacy task")
+        self.assertEqual(payload["mrs"][0]["status"], "active")
+
+    def test_init_mrs_suggests_sibling_on_conflict(self):
+        project_dir = self.work_root / "project"
+        mrs_dir = project_dir / ".task-state"
+
+        self.run_script(
+            "init_mrs.py",
+            "--dir",
+            mrs_dir,
+            "--goal",
+            "Original task",
+            "--complexity",
+            "small",
+        )
+
+        result = self.run_script(
+            "init_mrs.py",
+            "--dir",
+            mrs_dir,
+            "--goal",
+            "New task",
+            "--complexity",
+            "small",
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(".task-state-", result.stderr)
+        self.assertIn("--dir", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -168,6 +168,41 @@ finishing-a-development-branch → 合并/PR/清理
                   ↓ 设置 status=completed，归档 MRS
 ```
 
+### 多任务并行 / 中断切换
+
+当一个项目内同时存在多个独立任务时（例如同 repo 多个独立模块、或正在做的 feature 被高优任务中断），可使用兄弟目录命名让多个 MRS 共存：
+
+```
+project/
+  ├── .task-state/                  # 默认任务（保持向后兼容）
+  ├── .task-state-auth-refactor/    # 长期重构任务
+  └── .task-state-bugfix-x42/       # 中断进来的紧急任务
+```
+
+关键规则：
+- 默认 `.task-state/` 行为不变，旧项目无需迁移
+- 新增任务用 `.task-state-<slug>/` 命名（slug 用 kebab-case 短标识）
+- skill 调用时从 CWD 向上找 `.task-state/` 和 `.task-state-<slug>/`，多个时询问用户恢复哪个
+- mtime 最新的会被标记为推荐，但永远不自动选择
+
+典型使用：
+
+```bash
+# 中断场景：A 还在做，B 紧急插队
+python <skill-root>/scripts/init_mrs.py \
+    --dir .task-state-bugfix-x42 \
+    --goal "修复鉴权绕过" --complexity small
+
+# 列出当前 repo 内所有 MRS（含状态、最近更新时间）
+python <skill-root>/scripts/list_mrs.py
+
+# 任务完成后归档（保留可追溯）
+mkdir -p .task-state/archive
+mv .task-state-bugfix-x42 .task-state/archive/bugfix-x42-completed
+```
+
+完整工作流（命名约定、切换协议、归档模式、反模式）见 [`references/multi-task-workflow.md`](references/multi-task-workflow.md)。
+
 ### 目录结构
 
 ```
@@ -186,6 +221,8 @@ project/
   │   ├── decisions.md         # 设计决策（可选）
   │   ├── blockers.md          # 阻塞项（可选）
   │   └── archive/             # 已完成任务的归档快照
+  │
+  ├── .task-state-<slug>/      # 可选：并行任务的兄弟 MRS（同结构）
   │
   └── src/
 ```
@@ -244,6 +281,15 @@ python <skill-root>/scripts/verify_mrs.py --json .task-state   # 结构化输出
 - `2` = 缺少 Tier 1（降级模式）
 - `3` = 格式验证错误
 
+### 列出 MRS
+
+```bash
+python <skill-root>/scripts/list_mrs.py
+python <skill-root>/scripts/list_mrs.py --json   # 结构化输出供 agent 消费
+```
+
+从当前目录向上发现 `.task-state/` 和 `.task-state-<slug>/`。如果存在多个 MRS，输出会按最近更新时间排序并标记推荐项，但 agent 仍需询问用户后再恢复。
+
 ### 生成快照
 
 ```bash
@@ -252,7 +298,7 @@ python <skill-root>/scripts/generate_snapshot.py .task-state --project-root .   
 python <skill-root>/scripts/generate_snapshot.py --archive .task-state   # 同时归档
 ```
 
-> 所有脚本均从 `assets/` 读取模板，因此渲染出的 MRS 文件始终与文档化的 schema 保持一致。对 `.task-state` 生成快照时，默认扫描其父目录作为项目根目录；也可用 `--project-root` 显式指定。
+> 所有脚本均从 `assets/` 读取模板，因此渲染出的 MRS 文件始终与文档化的 schema 保持一致。对 `.task-state` 或 `.task-state-<slug>` 生成快照时，默认扫描其父目录作为项目根目录；也可用 `--project-root` 显式指定。
 
 ---
 
@@ -363,6 +409,7 @@ skill 读取 `task_state.md`，从 `Active Todos` 和 `Next Action` 中还原工
 | [`references/output-template.md`](references/output-template.md) | 结构化输出模板规范 |
 | [`references/recovery-workflow.md`](references/recovery-workflow.md) | 完整恢复流程 |
 | [`references/multi-skill-integration.md`](references/multi-skill-integration.md) | Plan Registry 格式、跨 Skill Handoff 协议 |
+| [`references/multi-task-workflow.md`](references/multi-task-workflow.md) | 多任务并行的命名、切换、归档协议 |
 | [`references/agents-md-snippet.md`](references/agents-md-snippet.md) | 可嵌入 AGENTS.md 的精简版 MRS 规则（Codex 兼容） |
 | [`assets/task_state.template.md`](assets/task_state.template.md) | task_state.md 初始化模板（含字段说明） |
 | [`assets/plan.template.md`](assets/plan.template.md) | plan.md 模板（含 Plan Registry / Reference Index 骨架） |
@@ -370,6 +417,7 @@ skill 读取 `task_state.md`，从 `Active Todos` 和 `Next Action` 中还原工
 | [`assets/decisions.template.md`](assets/decisions.template.md) | decisions.md 模板（仅追加） |
 | [`scripts/init_mrs.py`](scripts/init_mrs.py) | 初始化 MRS（CLI + 交互向导） |
 | [`scripts/verify_mrs.py`](scripts/verify_mrs.py) | 验证 MRS 健康度（支持 `--json`） |
+| [`scripts/list_mrs.py`](scripts/list_mrs.py) | 发现并列出当前 repo 内所有 MRS |
 | [`scripts/generate_snapshot.py`](scripts/generate_snapshot.py) | 从当前状态生成 snapshot |
 
 ---

@@ -1,4 +1,4 @@
-context-resilient-task/docs/review-2026-04-10.md
+context-resilient-task/docs/
 __pycache__/
 *.py[cod]
 <<<<<<< HEAD
@@ -11,4 +11,9 @@ context-resilient-task/.omc/
 .idea/
 .omc/
 .test-mrs-scripts/
+<<<<<<< HEAD
+>>>>>>> feature_improveCRT
+=======
+.test-discovery/
+docs/plans/
 >>>>>>> feature_improveCRT
