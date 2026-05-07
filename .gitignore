@@ -1,19 +1,10 @@
 context-resilient-task/docs/
 __pycache__/
 *.py[cod]
-<<<<<<< HEAD
 .omc/
 context-resilient-task/.omc/
 .claude/
 .idea/
-=======
-.claude/
-.idea/
-.omc/
 .test-mrs-scripts/
-<<<<<<< HEAD
->>>>>>> feature_improveCRT
-=======
 .test-discovery/
 docs/plans/
->>>>>>> feature_improveCRT
