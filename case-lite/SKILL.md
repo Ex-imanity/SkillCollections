@@ -178,7 +178,15 @@ case-lite-output/{slug}/
 多个文档请分别选择。
 ```
 
-7. **记录选择**：保存用户选定的章节及其 position range（从 extract_document_structure 的 JSON 结果中获取）
+7. **记录选择**：在 `chapters/{docKey}-chapters.md` 末尾追加选章结果，格式：
+
+```markdown
+## 用户选章结果
+- {章节标题} | pos:{start}-{end}
+- {章节标题} | pos:{start}-{end}
+```
+
+position range 从 `extract_document_structure` 的 JSON 返回值中读取。每个文档单独追加到其对应的 chapters 文件。
 
 完成所有文档的章节展示与选章后，再统一进入补充信息确认。
 
@@ -240,7 +248,9 @@ case-lite-output/{slug}/
 
 #### 3b. 拉取选定语料
 
-对每个选定章节，按以下两步拉取完整内容（文本 + 媒体）：
+> **⛔ 严禁改写** — `selected-corpus.md` 必须**原文**写入 `get_document_blocks` 返回的文本，包括表格、代码块、JSON 示例、curl 命令、字段说明。**不得摘要、精简、改写任何内容。** 唯一允许的处理是添加章节分隔注释 `<!-- SOURCE: ... -->`。
+
+对每个选定章节，**按顺序执行以下三步，每章完成后立即追加写入 `corpus/selected-corpus.md`，不等所有章节拉完再统一写盘**：
 
 **Step 3b-1：拉取文本和媒体元数据**
 ```
@@ -253,22 +263,32 @@ get_document_blocks(document_id, start_position=X, end_position=Y)
 download_image_blocks(document_id, image_block_ids=["block_id_1", "block_id_2"])
 ```
 将实际图片下载到本地，返回可视化的图片内容。
+- 下载成功：在 corpus 对应位置插入 `[📷 图片: {上下文描述}]`
+- 下载失败：插入 `[📷 图片下载失败: block_id={id}，跳过]`，**不阻塞后续流程**
 
 如果章节包含画板（流程图、架构图等），额外调用：
 ```
 download_board_as_image(board_tokens=["token_1"], document_id=document_id, board_block_ids=["block_id_1"])
 ```
 
-将所有选定章节内容拼接为 `corpus/selected-corpus.md`，格式：
+**Step 3b-3：立即追加写入**
+
+完成上两步后，立即将本章内容追加到 `corpus/selected-corpus.md`，格式：
 ```markdown
 <!-- SOURCE: {docKey} | {section_title} | pos:{start}-{end} -->
-{章节文本内容}
+{章节文本内容，原文逐字写入，不做任何处理}
 [📷 图片: {image_description_or_context}]
 <!-- END SOURCE -->
 ```
 
+所有章节处理完毕后，`corpus/selected-corpus.md` 应包含每个章节各自的 `<!-- SOURCE -->` 注释块。
+
 > **关键**：文档中的流程图、接口说明图、交互稿等视觉信息对用例生成至关重要。
 > 如果跳过图片下载，生成的用例可能遗漏图中描述的分支逻辑和交互细节。
+
+> **Step 3b 完成检查点（进入 3c 前必须确认）：**
+> - `corpus/selected-corpus.md` 已存在，且包含所有选定章节各自的 `<!-- SOURCE -->` 注释头 ✓
+> - 文件内容包含原始代码块、JSON 示例、表格等，**未被摘要替代** ✓
 
 #### 3c. 生成场景结构
 

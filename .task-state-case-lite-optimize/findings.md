@@ -1,0 +1,80 @@
+# Findings
+
+<!-- Append research notes and discoveries below this line. -->
+
+## 2026-05-19 — Session 分析：case-lite 实际表现问题
+
+**数据来源**：  
+Session `61a2bfdb` (`/Users/gaotu/.claude/projects/-Users-gaotu-Projects-testCases/`)，2026-05-19，5.5MB，最新一次 case-lite 完整执行记录。  
+分析方式：grep 关键词 + Python 提取 assistant thinking。
+
+---
+
+### 问题1（P0）：corpus 阶段擅自改写/省略文档原文
+
+**现象**：模型在 Step 3b 调用 `get_document_blocks` 拿到原始文本后，写入 `selected-corpus.md` 时对内容做了摘要式改写，把接口参数表格和 JSON 示例压缩成文字描述，而非逐字保留。
+
+**Thinking 原文佐证**：
+> "I chose to summarize it in the corpus file instead of preserving the verbatim blocks. I should update the document to include the full code blocks as they were returned."
+
+**用户反馈**：直接指出"你为什么没有写入 selected-corpus.md（extData JSON串）？"，被迫发出纠正指令"语料文档生成阶段不允许省略和改写"后才触发重新生成。
+
+**根因**：SKILL.md Step 3b 只说"将所有选定章节内容拼接为 selected-corpus.md"，没有**明确禁止**改写/摘要，模型自主启动 token 压缩行为。
+
+**修复**：在 Step 3b 加硬性约束块，明确"原文写入，禁止摘要/精简/改写"。
+
+---
+
+### 问题2（P1）：corpus 落盘时机晚，无中间检查点
+
+**现象**：`selected-corpus.md` 在所有章节全部拉取完、补充信息也收集完之后才一次性写入，而不是每章拉取后立即追加落盘。
+
+**影响**：  
+1. 多章节拉取中途失败时，所有内容丢失，无断点续跑能力  
+2. 模型在内存中"持有"多章节内容，等到写盘时更容易做二次处理（加剧问题1）
+
+**修复**：Step 3b 改为每完成一个章节的 `get_document_blocks` 调用后**立即追加写入** `selected-corpus.md`。
+
+---
+
+### 问题3（P1）：图片下载与 corpus 关联逻辑不完整
+
+**现象**：SKILL.md Step 3b 描述了调用 `download_image_blocks`，但未说明：  
+1. 下载失败时如何处理  
+2. 下载成功后图片内容如何写入 corpus
+
+**影响**：实际执行中图片处理步骤被跳过或格式不一致。
+
+**修复**：明确格式规范——成功插入 `[📷 图片: {上下文描述}]`，失败写 `[📷 图片下载失败: block_id={id}]`，不阻塞后续流程。
+
+---
+
+### 问题4（P2）：选章结果缺乏标准记录格式
+
+**现象**：Step 2a 只说"记录选择：保存用户选定的章节及其 position range"，无落盘格式规定。
+
+**影响**：Step 3b 依赖 position range 调用 `get_document_blocks`，缺乏标准格式导致恢复困难。
+
+**修复**：在 `chapters/{docKey}-chapters.md` 末尾追加 `## 用户选章结果` section，每行格式：`- 章节标题 | pos:{start}-{end} | docKey:{docKey}`
+
+---
+
+### 问题5（P2）：Step 3b 与 Step 3c 边界缺失检查点
+
+**现象**：3b（拉取语料）和 3c（生成场景结构）之间没有"corpus 已落盘"的显式检查点。
+
+**影响**：模型可能在 corpus 未完整落盘的情况下直接进入 3c，生成质量依赖内存而非文件。
+
+**修复**：3b 末尾插入检查点，要求确认 `corpus/selected-corpus.md` 存在且包含所有选章的 `<!-- SOURCE -->` 注释头。
+
+---
+
+### 优先级汇总
+
+| # | 问题 | 优先级 | 修复难度 |
+|---|------|--------|---------|
+| 1 | corpus 改写/省略 | **P0** | 低（加约束文本） |
+| 2 | corpus 落盘时机晚 | P1 | 中（改流程描述） |
+| 3 | 图片落盘格式不完整 | P1 | 低（补格式规范） |
+| 4 | 选章记录无标准格式 | P2 | 低（加格式规范） |
+| 5 | 3b/3c 边界检查点缺失 | P2 | 低（加检查点描述） |
