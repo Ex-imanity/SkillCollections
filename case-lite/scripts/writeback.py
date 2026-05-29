@@ -135,9 +135,9 @@ def parse_full_md(text: str) -> list[dict[str, Any]]:
         if in_precond:
             continue
 
-        # 收集执行步骤行（编号列表）
+        # 收集执行步骤行（编号列表或 bullet）
         if in_steps and current_point is not None:
-            if re.match(r"^\d+\.", line):
+            if re.match(r"^\d+\.", line) or line.startswith("- "):
                 step_lines.append(line)
             continue
 

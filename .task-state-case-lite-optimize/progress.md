@@ -28,3 +28,27 @@
 - darwin results.tsv 已追加记录
 - 备份：/Users/gaotu/.claude/skills/case-lite/SKILL.md.bak.20260519-0928
 - 剩余未修复：P2 选章记录无标准格式（findings.md 问题4）
+
+## 2026-05-29 11:54 — 状态恢复检查
+
+- 使用 context-resilient-task 恢复 `.task-state-case-lite-optimize/`
+- MRS Tier 0 校验通过；Tier 1 缺少 `architecture.md`、`decisions.md`
+- `task_state.md` 为权威源，显示 Round 2 已完成、Active Todos 为空、下一步仍为 darwin 基线评分文案
+- 实际 `case-lite/SKILL.md` 与 `/Users/gaotu/.cc-switch/skills/case-lite/SKILL.md` 内容一致，已包含 Step 2 选章记录格式和 Step 3b corpus 原文/立即落盘/图片/检查点约束
+- 当前源码工作区 `git status --short` 为空
+
+## 2026-05-29 12:06 — 写回脚本 bullet 解析缺陷确认
+
+- 读取 `/Users/gaotu/Projects/testCases/case-lite-output/gaokao-ai-qa-restriction/full.md`，确认执行步骤区域存在 20 行 `- ` bullet
+- 读取对应 `writeback/node-tree.json`，确认执行步骤节点不包含 bullet，也不包含样本文案“今年高考有哪些采分点”“第一次：2026年6月8日10:00”
+- 定位根因：`/Users/gaotu/.cc-switch/skills/case-lite/scripts/writeback.py` 第 138-142 行只收集编号步骤，预期结果解析第 144-148 行才支持 bullet
+- 已将该问题记录到 `findings.md`，并把 `task_state.md` Active Todos 更新为写回脚本缺陷修复
+
+## 2026-05-29 12:12 — 写回脚本 bullet 解析修复完成
+
+- 仅修改当前仓库 `case-lite/scripts/writeback.py`，未修改 `.cc-switch` 安装目录
+- 新增 `case-lite/tests/test_writeback.py`，覆盖执行步骤中编号行后包含 `- ` bullet 的解析
+- 先运行新增测试确认失败，再将执行步骤收集条件改为支持编号列表或 `- ` bullet
+- 验证新增测试和 `case-lite/tests` discovery 通过
+- 使用真实样本 `/Users/gaotu/Projects/testCases/case-lite-output/gaokao-ai-qa-restriction/full.md` dry-run 验证，解析后执行步骤包含 20 行 bullet，且包含样本文案“今年高考有哪些采分点”“第一次：2026年6月8日10:00”
+- `context-resilient-task/tests` discovery 有 1 个既有环境相关失败：仓库根目录存在 `.task-state-case-lite-optimize`，导致 `test_returns_empty_when_none_exist` 不满足“无 MRS”假设；与本次 writeback 改动无关

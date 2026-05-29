@@ -1,7 +1,7 @@
 # Task State
 
-**Last Updated:** 2026-05-19 09:10:17
-**Updated By:** user (init)
+**Last Updated:** 2026-05-29 12:12:24
+**Updated By:** Codex
 
 ## Goal
 优化 case-lite skill：分析现有问题，设计并实施改进方案，提升用例生成质量与稳定性
@@ -13,10 +13,10 @@ active
 _(none)_
 
 ## Current Phase
-Phase 2: darwin 基线评分
+Phase 4: 写回脚本缺陷修复完成
 
 ## Next Action
-对 case-lite SKILL.md 按 darwin 8 维度评分，重点评估 corpus 改写约束缺失问题
+如需继续优化，进行下一轮 case-lite 质量评估或同步安装目录
 
 ## Completed Items
 - [x] 分析 case-lite 现有 skill 内容与结构（2026-05-19，见 findings.md）
@@ -24,6 +24,7 @@ Phase 2: darwin 基线评分
 - [x] darwin 基线评分：62.3/100（2026-05-19）
 - [x] Round 1 改进：Step 3b corpus 约束重写，评分 62.3→75.0（2026-05-19）
 - [x] Round 2 改进：Step 2a 选章记录格式标准化，评分 75.0→76.5（2026-05-19）
+- [x] 修复 `case-lite/scripts/writeback.py` 执行步骤 bullet 解析缺失，并添加回归测试（2026-05-29）
 
 ## Open Questions
 _(none)_

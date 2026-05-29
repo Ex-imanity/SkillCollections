@@ -78,3 +78,26 @@ Session `61a2bfdb` (`/Users/gaotu/.claude/projects/-Users-gaotu-Projects-testCas
 | 3 | 图片落盘格式不完整 | P1 | 低（补格式规范） |
 | 4 | 选章记录无标准格式 | P2 | 低（加格式规范） |
 | 5 | 3b/3c 边界检查点缺失 | P2 | 低（加检查点描述） |
+
+## 2026-05-29 — 写回脚本缺陷确认：执行步骤 bullet 被丢弃
+
+**数据来源**：
+- `/Users/gaotu/Projects/testCases/case-lite-output/gaokao-ai-qa-restriction/full.md`
+- `/Users/gaotu/Projects/testCases/case-lite-output/gaokao-ai-qa-restriction/writeback/node-tree.json`
+- `/Users/gaotu/.cc-switch/skills/case-lite/scripts/writeback.py`
+
+---
+
+### 问题6（P1）：执行步骤 section 中的无序列表 bullet 未写回
+
+**现象**：`full.md` 的 `#### 执行步骤` 中存在编号步骤下的子 bullet，例如第 55 行“分别输入以下含敏感词提问并发送”后有 3 条 `- "..."` 子项。但生成的 `node-tree.json` 只保留了父编号步骤，子 bullet 未进入执行步骤节点。
+
+**复现证据**：
+- `full.md` 执行步骤区域共有 20 行 `- ` bullet
+- 解析后的执行步骤文本中不包含 `- `，也不包含样本文案“今年高考有哪些采分点”“第一次：2026年6月8日10:00”
+
+**根因**：`writeback.py` 第 138-142 行只收集 `re.match(r"^\d+\.", line)` 的编号步骤；执行步骤里的 `- ` 子列表命中 `continue` 后被静默跳过。相对地，第 144-148 行的预期结果解析同时支持编号列表和 `- ` bullet。
+
+**影响**：包含“分别输入以下...”这类批量输入、参数枚举、分时段枚举的执行步骤会丢失关键测试数据，搬山节点呈现为不完整步骤。
+
+**建议修复**：执行步骤解析与预期结果保持一致，支持 `- ` bullet；同时添加回归测试，确保编号步骤下的子 bullet 被保留。
