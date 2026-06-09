@@ -61,10 +61,14 @@ testCaseDetail(caseId)
 
 > **搬山 MCP 端点**：`https://tech.baijia.com/mcp-server/banshan/mcp`（JSON-RPC 2.0）
 
-返回的节点树结构：
-- 根节点：场景（`resource: ["场景"]`）
-- 二级节点：测试点（`resource: ["测试点"]`）
-- 三级节点：执行步骤、预期结果
+返回的节点树结构（四级串联）：
+- 深度 0：场景（`resource: ["场景"]`）
+- 深度 1：测试点（`resource: ["测试点", "UI"/"逻辑"]`）
+- 深度 2：前置条件（`resource: ["前置条件"]`，text = 前置条件内容）
+- 深度 3：执行步骤（`resource: ["执行步骤"]`，text = 所有步骤合并多行，是前置条件的子节点）
+- 深度 4：预期结果（`resource: ["预期结果"]`，text = 所有结果合并多行，是执行步骤的子节点）
+
+> **注意**：执行步骤和预期结果的 text 字段是将所有编号步骤/结果合并为一个多行字符串，不是每条步骤单独一个子节点。
 
 将内容整理为可读摘要展示给用户：
 
@@ -140,24 +144,46 @@ testCaseDetail(caseId)
 
 ### Step 5：dry-run 验证
 
-**必须先执行 dry-run，不可跳过**：
+**必须先执行 dry-run，不可跳过**。用以下 Python 片段解析 full.md 并统计节点数：
 
-```bash
-python3 {writeback.py路径} case-lite-output/{slug}/full.md \
-  --case-id {targetCaseId} --dry-run
+```python
+import re
+from pathlib import Path
+
+def dry_run(md_path):
+    lines = Path(md_path).read_text(encoding="utf-8").splitlines()
+    scenes, points = 0, 0
+    cur_has_steps = False
+    warnings = []
+    point_title = ""
+    for line in lines:
+        if re.match(r"^## 场景\d+[：:]", line):
+            scenes += 1
+        elif re.match(r"^### 测试点\d+\.\d+[：:]", line):
+            if points > 0 and not cur_has_steps:
+                warnings.append(f"测试点「{point_title}」缺少执行步骤")
+            points += 1
+            point_title = line.strip()
+            cur_has_steps = False
+        elif re.match(r"^#### 执行步骤", line):
+            cur_has_steps = True
+    if points > 0 and not cur_has_steps:
+        warnings.append(f"测试点「{point_title}」缺少执行步骤")
+    print(f"{scenes} 个场景，{points} 个测试点")
+    for w in warnings:
+        print(f"⚠ {w}")
+    if not warnings:
+        print("✓ 无警告")
+
+dry_run("case-lite-output/{slug}/full.md")
 ```
 
-检查：
-- 场景/测试点数与 full.md 一致
-- 无格式警告（未识别的 `##`/`###` 标题）
-- 无测试点缺失执行步骤的警告
-
-如有警告，先修复 full.md 再继续。
+检查：场景/测试点数与 full.md 一致，无测试点缺失执行步骤的警告。如有警告，先修复 full.md 再继续。
 
 dry-run 通过后，展示摘要并**等待用户明确确认后才能执行写回**：
 
 ```
-dry-run 通过：N 个场景，N 个测试点，N 个节点，无警告。
+dry-run 通过：N 个场景，N 个测试点，无警告。
 
 写回目标：case XXXXX（[替换原内容 / 追加到现有 N 个场景之后]）
 
@@ -168,73 +194,131 @@ dry-run 通过：N 个场景，N 个测试点，N 个节点，无警告。
 
 ### Step 6：写回搬山 [HITL]
 
+写回使用内联 Python 脚本直接调用搬山 MCP，不依赖 writeback.py。核心解析函数：
+
+```python
+import json, re, urllib.request
+from pathlib import Path
+
+MCP_ENDPOINT = "https://tech.baijia.com/mcp-server/banshan/mcp"
+
+def mcp_call(method, args):
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": method, "arguments": args}}
+    data = json.dumps(payload, ensure_ascii=False).encode()
+    req = urllib.request.Request(MCP_ENDPOINT, data=data,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        return json.loads(resp.read())
+
+def parse_full_md(md_text, ui_points=None):
+    """解析 full.md，输出节点树（前置条件串联在测试点与执行步骤之间）"""
+    if ui_points is None:
+        ui_points = set()
+    lines = md_text.splitlines()
+    node_tree, cur_scene, cur_point, cur_section = [], None, None, None
+    precond_lines, steps_lines, results_lines = [], [], []
+    scene_idx, point_idx = 0, 0
+
+    def flush_point():
+        if cur_point is None:
+            return
+        precond_text = "\n".join(precond_lines).strip()
+        steps_text   = "\n".join(steps_lines).strip()
+        results_text = "\n".join(results_lines).strip()
+        if steps_text:
+            steps_node = {"data": {"text": steps_text, "resource": ["执行步骤"], "sourceDesc": "ai"}, "children": []}
+            if results_text:
+                steps_node["children"].append(
+                    {"data": {"text": results_text, "resource": ["预期结果"], "sourceDesc": "ai"}, "children": []})
+            if precond_text:
+                cur_point["children"].append(
+                    {"data": {"text": precond_text, "resource": ["前置条件"], "sourceDesc": "ai"}, "children": [steps_node]})
+            else:
+                cur_point["children"].append(steps_node)
+
+    for line in lines:
+        m = re.match(r"^## 场景\d+[：:](.+)", line)
+        if m:
+            flush_point()
+            cur_scene = {"data": {"text": m.group(1).strip(), "resource": ["场景"], "sourceDesc": "ai"}, "children": []}
+            node_tree.append(cur_scene)
+            scene_idx += 1; point_idx = 0
+            cur_point = cur_section = None
+            precond_lines = steps_lines = results_lines = []
+            continue
+        m = re.match(r"^### 测试点\d+\.\d+[：:](.+)", line)
+        if m and cur_scene is not None:
+            flush_point()
+            point_idx += 1
+            label = "UI" if (scene_idx, point_idx) in ui_points else "逻辑"
+            cur_point = {"data": {"text": m.group(1).strip(), "resource": ["测试点", label], "sourceDesc": "ai"}, "children": []}
+            cur_scene["children"].append(cur_point)
+            cur_section = None
+            precond_lines = steps_lines = results_lines = []
+            continue
+        if re.match(r"^#### 前置条件", line): cur_section = "precond"; continue
+        if re.match(r"^#### 执行步骤", line): cur_section = "steps"; continue
+        if re.match(r"^#### 预期结果", line): cur_section = "results"; continue
+        stripped = line.strip()
+        if not stripped or stripped == "---": continue
+        if cur_section == "precond": precond_lines.append(stripped)
+        elif cur_section == "steps": steps_lines.append(stripped)
+        elif cur_section == "results": results_lines.append(stripped)
+
+    flush_point()
+    return node_tree
+```
+
 **根据写回模式执行不同操作**：
 
 #### 模式 A：替换原 case
 
 ```python
-# 1. 获取原 case 所有根节点 ID
-nodes = testCaseDetail(sourceCaseId)
-root_ids = [n["id"] for n in nodes]
+# 1. 获取原 case 所有场景节点 ID（注意是 s["data"]["id"]，不是 s["id"]）
+r = mcp_call("testCaseDetail", {"caseId": str(CASE_ID)})
+root = json.loads(r["result"]["content"][0]["text"])["data"]["caseContent"]
+if isinstance(root, str): root = json.loads(root)
+scene_ids = [(s["data"]["id"], s["data"]["text"]) for s in root["root"]["children"]]
 
 # 2. 依次删除（deleteNode 会级联删除子节点）
-for node_id in root_ids:
-    deleteNode(nodeId=node_id)
+for node_id, title in scene_ids:
+    mcp_call("deleteNode", {"caseId": CASE_ID, "nodeId": node_id, "modifier": "case-lite"})
 
-# 3. 写回
-python3 writeback.py full.md --case-id {sourceCaseId} --modifier case-lite
+# 3. 解析并写回
+node_tree = parse_full_md(Path("full.md").read_text(encoding="utf-8"), ui_points=UI_POINTS)
+mcp_call("batchAddNode", {"caseId": CASE_ID, "modifier": "case-lite", "nodeTreeList": node_tree})
 ```
 
 > **注意**：deleteNode 操作不可逆，执行前务必确认。
 
 #### 模式 B：追加到目标 case
 
-1. 查询目标 case 当前场景数（`testCaseDetail(targetCaseId)` 统计根节点数）
-2. 用 `sed` 将 full.md 中的场景编号偏移：
+不需要删除节点，也不需要调整场景编号，直接追加：
 
-```bash
-# 假设目标 case 已有 16 个场景，本次追加 6 个场景（编号 17-22）
-sed \
-  -e 's/^## 场景6：/## 场景22：/' \
-  -e 's/^## 场景5：/## 场景21：/' \
-  -e 's/^## 场景4：/## 场景20：/' \
-  -e 's/^## 场景3：/## 场景19：/' \
-  -e 's/^## 场景2：/## 场景18：/' \
-  -e 's/^## 场景1：/## 场景17：/' \
-  full.md > /tmp/append.md
-```
+```python
+# 1. 查询目标 case 当前场景数（仅用于日志展示）
+r = mcp_call("testCaseDetail", {"caseId": str(TARGET_CASE_ID)})
+root = json.loads(r["result"]["content"][0]["text"])["data"]["caseContent"]
+if isinstance(root, str): root = json.loads(root)
+current_count = len(root["root"]["children"])
+print(f"当前已有 {current_count} 个场景")
 
-> **注意**：sed 替换必须从大编号到小编号，防止多次替换冲突。
-
-3. dry-run 验证 `/tmp/append.md`
-4. 写回（不需要 deleteNode，直接追加）：
-
-```bash
-python3 writeback.py /tmp/append.md --case-id {targetCaseId} --modifier case-lite
+# 2. 解析并追加（full.md 场景编号从1开始即可，不需要偏移）
+node_tree = parse_full_md(Path("full.md").read_text(encoding="utf-8"), ui_points=UI_POINTS)
+mcp_call("batchAddNode", {"caseId": TARGET_CASE_ID, "modifier": "case-lite", "nodeTreeList": node_tree})
 ```
 
 ### Step 7：打 UI / 逻辑 标签（可选）[HITL]
 
-写回完成后，询问用户是否需要打 UI / 逻辑 标签：
+写回时已在 `parse_full_md` 的 `ui_points` 参数中注入标签，**写回完成即已打标**，无需额外步骤。
 
-```
-写回完成。是否需要为测试点打 UI / 逻辑 标签？（方便在搬山按类型筛选）
-```
+写回前需整理出 `UI_POINTS` 集合：
 
-**注意**：打标签会整体重建用例节点（删除旧节点 + 重建），适合**替换模式**；追加模式若只打部分场景的标签，需手动调整脚本的 CASE_ID 和 UI_POINTS。
+- 格式：`{(场景序号, 场景内测试点序号), ...}`，1-based，相对于 full.md 文件内位置
+- 依据：展示类（按钮状态、页面渲染、动效）→ `"UI"`；交互逻辑、接口调用、状态流转 → `"逻辑"`
 
-如需打标签，使用 `tag_nodes_template.py`：
-
-1. 根据 `structure.md` 的 `**UI**` / `**逻辑**` 分组，整理出 `UI_POINTS` 集合（(场景序号, 场景内测试点序号)，1-based）
-2. 复制模板并填写配置：
-   ```bash
-   cp $(find ~/.claude/skills -name "tag_nodes_template.py") \
-      case-lite-output/{slug}/tag_nodes.py
-   ```
-   修改 `CASE_ID`、`FULL_MD_PATH`、`UI_POINTS`
-3. 执行：`python3 case-lite-output/{slug}/tag_nodes.py`
-
-脚本自动完成：获取旧节点 → deleteNode → 重建带标签节点树 → batchAddNode → 抽查验证
+如需重新打标（已写回后才发现标签有误），使用模式 A 全量重建。
 
 ---
 
@@ -244,9 +328,7 @@ python3 writeback.py /tmp/append.md --case-id {targetCaseId} --modifier case-lit
 case-lite-output/{slug}/
 ├── structure.md        ← 场景结构（用户审核）
 ├── full.md             ← 完整用例（用户审核）
-└── writeback/
-    ├── node-tree.json  ← writeback.py 生成的节点树
-    └── writeback-log.json
+└── writeback.py        ← 写回脚本（含 parse_full_md + mcp_call）
 ```
 
 `slug` 由 case 名称或功能名生成，如 `app-common-flow`。
@@ -261,10 +343,12 @@ case-lite-output/{slug}/
 |------|------|------|
 | 场景标题 | `## 场景1：标题` | `## 场景一：标题` |
 | 测试点标题 | `### 测试点1.1：标题` | `### 1.1 标题` |
+| 前置条件标题 | `#### 前置条件` | 写入步骤中 / 省略 |
 | 步骤标题 | `#### 执行步骤` | `### 执行步骤` |
 | 结果标题 | `#### 预期结果` | `**预期结果**` |
-| 前置条件 | `#### 前置条件` | 写入步骤中（会被解析器跳过） |
 | 步骤格式 | `1. 操作内容` | `- 操作内容` |
+
+> 前置条件会被解析为独立节点，串联在测试点与执行步骤之间，**不可省略**。
 
 ---
 
@@ -273,15 +357,9 @@ case-lite-output/{slug}/
 | 工具 | 用途 | 必需 |
 |------|------|------|
 | Banshan MCP | 获取原用例内容、写回节点 | 是 |
-| `scripts/writeback.py` | full.md 解析 + HTTP 写回搬山 | 是（共用 case-lite 的脚本） |
 | 飞书 MCP | 不需要 | 否 |
 
-`writeback.py` 位于 case-lite skill 的 `scripts/` 目录下，本 skill 直接复用，无需单独安装。
-
-定位命令：
-```bash
-find ~/.claude/skills -name "writeback.py" 2>/dev/null
-```
+写回逻辑通过 Step 6 中的内联 Python 脚本直接调用搬山 MCP，**不依赖 writeback.py**。
 
 ---
 
