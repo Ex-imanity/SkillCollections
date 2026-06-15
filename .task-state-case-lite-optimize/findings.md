@@ -101,3 +101,28 @@ Session `61a2bfdb` (`/Users/gaotu/.claude/projects/-Users-gaotu-Projects-testCas
 **影响**：包含“分别输入以下...”这类批量输入、参数枚举、分时段枚举的执行步骤会丢失关键测试数据，搬山节点呈现为不完整步骤。
 
 **建议修复**：执行步骤解析与预期结果保持一致，支持 `- ` bullet；同时添加回归测试，确保编号步骤下的子 bullet 被保留。
+
+## 2026-06-15 — 子文档发现能力接入 case-lite
+
+**数据来源**：
+- `/Users/gaotu/PycharmProjects/CaseMCP/FeishuMCP` 最新提交 `dfe7a9c5246cca569c49af9577a51d6fc4af19ea`
+- `src/tools/document/get_child_documents.py`
+- `Test/test_get_child_documents.py`
+
+---
+
+### 发现：feishu-docx-blocks 已支持 wiki/docx-in-wiki 直接子文档列表
+
+新工具名为 `get_child_documents`，支持传入 wiki URL 或位于知识库中的 docx URL。返回 `parent`、`children`、`pagination`，其中 child 包含 `title`、`url`、`node_token`、`obj_token`、`obj_type`、`has_child`、`parse_hint`。
+
+**关键能力**：
+- `fetch_all=true` 可拉取所有分页
+- `include_non_docx=false` 可只保留 docx 子文档
+- 普通 docx 不在知识库节点树中时返回成功但 `children=[]`
+- `has_child` 可用于递归继续展开更下级子文档
+
+**case-lite 接入策略**：
+- 在章节浏览前新增 Step 1a：对用户原始链接调用 `get_child_documents(fetch_all=true, include_non_docx=false)`
+- 对 `has_child == true` 的子文档递归调用同工具，用 `node_token` 或 `url` 去重
+- 只读取元数据，不读取正文；必须先展示给用户并等待用户确认纳入
+- 用户确认的子文档默认继承父文档类型标签，作为同类文档进入 Step 2 章节浏览

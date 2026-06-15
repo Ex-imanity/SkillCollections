@@ -52,3 +52,13 @@
 - 验证新增测试和 `case-lite/tests` discovery 通过
 - 使用真实样本 `/Users/gaotu/Projects/testCases/case-lite-output/gaokao-ai-qa-restriction/full.md` dry-run 验证，解析后执行步骤包含 20 行 bullet，且包含样本文案“今年高考有哪些采分点”“第一次：2026年6月8日10:00”
 - `context-resilient-task/tests` discovery 有 1 个既有环境相关失败：仓库根目录存在 `.task-state-case-lite-optimize`，导致 `test_returns_empty_when_none_exist` 不满足“无 MRS”假设；与本次 writeback 改动无关
+
+## 2026-06-15 20:25 — wiki 子文档递归发现流程接入完成
+
+- 参考 `/Users/gaotu/PycharmProjects/CaseMCP/FeishuMCP` 最新提交 `dfe7a9c5246cca569c49af9577a51d6fc4af19ea`，确认新工具 `get_child_documents` 的参数和返回字段
+- 更新 `case-lite/SKILL.md`：新增 Step 1a，要求在章节浏览前对用户原始飞书链接调用 `get_child_documents(fetch_all=true, include_non_docx=false)`，对 `has_child == true` 的子文档递归展开
+- 明确新流程只收集子文档元数据，不读取正文；必须展示发现树并等待用户确认纳入后，才作为同类文档进入 Step 2
+- 更新 `case-lite/references/feishu-tools-guide.md`：补充 `get_child_documents` 使用方法、递归规则、去重规则和普通 docx 降级说明
+- 更新 `case-lite/README.md`：用户侧流程说明会自动发现知识库子文档并询问是否纳入
+- 新增 `case-lite/tests/test_skill_contract.py` 作为文档契约测试，防止递归子文档发现流程被误删
+- 验证 `python -m unittest case-lite/tests/test_skill_contract.py` 和 `python -m unittest discover -s case-lite/tests` 均通过

@@ -19,7 +19,7 @@ description: 小需求测试用例生成 skill。用户提供飞书文档链接 
 
 ### 飞书文档工具（必需）
 
-尝试调用 `parse_document_id` 或 `extract_document_structure`。如果工具不存在，提示用户在 Claude Code MCP 配置中添加：
+尝试调用 `get_child_documents`、`parse_document_id` 或 `extract_document_structure`。如果工具不存在，提示用户在 Claude Code MCP 配置中添加：
 
 ```json
 {
@@ -34,6 +34,7 @@ description: 小需求测试用例生成 skill。用户提供飞书文档链接 
 
 > 默认应用凭证已内置，无需配置 `FEISHU_APP_ID/SECRET`。首次调用工具时会自动弹出浏览器完成飞书授权。
 > 如需使用自建飞书应用，可在 env 中覆盖 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。
+> `get_child_documents` 依赖 `feishu-docx-blocks` 最新版及 `wiki:node:retrieve` 权限。若该工具缺失，提示用户重启 MCP / 重新授权 / 确认 `uvx feishu-docx-blocks@latest` 已生效；无法立即升级时，可降级为仅处理用户已粘贴的文档链接。
 
 ### 搬山测试平台工具（推荐）
 
@@ -59,6 +60,7 @@ description: 小需求测试用例生成 skill。用户提供飞书文档链接 
 case-lite-output/{slug}/
 ├── chapters/
 │   └── {docKey}-chapters.md    ← 章节树展示（供用户选章）
+│   └── child-documents.md      ← 子文档发现结果与用户纳入选择
 ├── corpus/
 │   ├── selected-corpus.md      ← 用户选定章节的拼接语料
 │   └── extra-context.md        ← 用户补充信息（含 Review 阶段追加内容）
@@ -117,14 +119,52 @@ case-lite-output/{slug}/
 - `corpus/extra-context.md`
 - `style-ref/reference-cases.md`
 - `review.md`
+- `chapters/child-documents.md`
 
 初始化内容可使用简短占位说明，后续步骤再覆盖或追加。
+
+#### 1a. 递归发现 wiki 子文档 [HITL]
+
+在进入章节浏览前，必须先对用户提供的每个飞书链接尝试发现子文档：
+
+1. **调用子文档工具**：对每个原始链接调用：
+   ```
+   get_child_documents(url="{url}", fetch_all=true, include_non_docx=false)
+   ```
+   只保留 `obj_type == "docx"` 的子文档。普通 docx 不在知识库节点树中时，工具会返回空 `children`，这是正常情况。
+2. **递归展开**：如果返回的子文档 `has_child == true`，继续对该子文档的 `url` 调用 `get_child_documents(fetch_all=true, include_non_docx=false)`，直到没有更下级子文档。递归过程中用 `node_token`（无则用 `url`）去重，避免重复或循环。
+3. **只收集链接和元数据**：本步骤只读取 `title`、`url`、`obj_token`、`obj_type`、`has_child` 等元数据，不读取正文内容，不调用 `get_document_blocks`。
+4. **展示发现结果并等待用户确认纳入**：如果发现任意子文档，将其按层级列给用户，并说明“默认作为父文档的同类文档纳入”。用户可以选择全部纳入、按编号纳入、全部跳过，或指定个别子文档改为其他类型。
+
+展示格式示例：
+
+```markdown
+检测到「后端技术方案」下存在子文档：
+
+1. 后端技术方案 / 接口设计
+   - 类型：默认同父文档（后端）
+   - 链接：https://xxx.feishu.cn/wiki/CHILD1
+2. 后端技术方案 / 接口设计 / 错误码说明
+   - 类型：默认同父文档（后端）
+   - 链接：https://xxx.feishu.cn/wiki/CHILD2
+
+是否将这些子文档作为同类文档一起读取？
+- 回复“全部纳入”
+- 回复编号，如“1,2”
+- 回复“跳过”
+- 如需改类型，可回复“1=后端, 2=需求”
+```
+
+5. **扩展文档列表**：用户确认纳入的子文档加入后续 Step 2 的文档列表；默认继承父文档的文档类型标签（需求 / 前端 / 后端 / 客户端 / 算法等），除非用户显式改类型。
+6. **落盘记录**：将完整发现树、用户确认纳入的子文档、继承/覆盖后的文档类型写入 `chapters/child-documents.md`。如果没有发现子文档，也写明“未发现可纳入的 docx 子文档”。
+
+> **关键约束**：发现子文档不等于自动读取内容。必须经过用户确认纳入后，才进入 Step 2 的章节浏览与选章。
 
 ### Step 2：章节浏览与选择 [HITL]
 
 #### 2a. 逐文档浏览章节并完成选章
 
-对每个文档依次执行：
+对 Step 1 和 Step 1a 确认后的文档列表依次执行：
 
 1. **解析文档 ID**：调用 `parse_document_id(url)` 获取 document_id
 2. **获取章节树**：调用 `extract_document_structure(document_id, max_level=4, output_format="json")`
@@ -569,7 +609,7 @@ MCP 端点可通过环境变量 `BANSHAN_MCP_ENDPOINT` 覆盖。
 | 测试点用 `###` + N.M 编号 | `### 测试点1.1：标题` | `### 1.1 标题`、`### 测试点1：标题` |
 | 冒号分隔（半角或全角均可） | `场景1：标题` 或 `场景1:标题` | `场景1 标题`（无冒号） |
 | 步骤/结果标题用 `####` | `#### 执行步骤` | `### 执行步骤`、`**执行步骤**` |
-| 步骤/结果内容用编号列表 | `1. 操作内容` | `- 操作内容`（步骤不支持 `-`） |
+| 步骤/结果内容用编号列表；编号步骤下可用 `-` 子项列举输入数据 | `1. 分别输入以下内容：` + `- 输入A` | 纯 bullet 作为主步骤，缺少编号父步骤 |
 | 每个测试点必须有执行步骤 | 先 `#### 执行步骤` 再 `#### 预期结果` | 只有预期结果无执行步骤（结果会被丢弃） |
 | 测试点之间不用分割线 | 直接换行进入下一个 `###` | `---` 分割线可能干扰解析 |
 | 不生成前置条件 section | 将前置条件融入执行步骤第一步 | `**前置条件**` 内容会被解析器跳过，不写入搬山 |

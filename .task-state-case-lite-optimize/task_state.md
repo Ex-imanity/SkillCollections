@@ -1,6 +1,6 @@
 # Task State
 
-**Last Updated:** 2026-05-29 12:12:24
+**Last Updated:** 2026-06-15 20:25:37
 **Updated By:** Codex
 
 ## Goal
@@ -13,7 +13,7 @@ active
 _(none)_
 
 ## Current Phase
-Phase 4: 写回脚本缺陷修复完成
+Phase 5: wiki 子文档递归发现优化完成
 
 ## Next Action
 如需继续优化，进行下一轮 case-lite 质量评估或同步安装目录
@@ -25,6 +25,7 @@ Phase 4: 写回脚本缺陷修复完成
 - [x] Round 1 改进：Step 3b corpus 约束重写，评分 62.3→75.0（2026-05-19）
 - [x] Round 2 改进：Step 2a 选章记录格式标准化，评分 75.0→76.5（2026-05-19）
 - [x] 修复 `case-lite/scripts/writeback.py` 执行步骤 bullet 解析缺失，并添加回归测试（2026-05-29）
+- [x] 优化 case-lite 文档获取流程：新增 `get_child_documents` 递归发现 wiki/docx-in-wiki 子文档，用户确认后作为同类文档纳入章节浏览（2026-06-15）
 
 ## Open Questions
 _(none)_

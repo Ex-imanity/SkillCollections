@@ -2,6 +2,37 @@
 
 本文件供 case-lite skill 在 Step 2（章节浏览）和 Step 3（语料拉取）阶段参考。
 
+## 0. 发现 wiki/docx-in-wiki 子文档
+
+在解析正文前，先用 `get_child_documents` 检查用户给出的飞书链接是否是知识库节点，或是否属于知识库节点树。
+
+```
+get_child_documents(
+  url = "https://xxx.feishu.cn/wiki/TOKEN",
+  fetch_all = true,
+  include_non_docx = false
+)
+```
+
+参数要点：
+- `url`：支持 `/wiki/TOKEN` 和位于知识库中的 `/docx/TOKEN`
+- `fetch_all=true`：拉取所有分页，避免漏掉同级子文档
+- `include_non_docx=false`：case-lite 只读取可解析为文档正文的 docx 子文档，跳过 sheet/file/bitable 等非文档节点
+
+返回内容：
+- `parent`：父节点信息
+- `children`：直接子节点列表，每项包含 `title`、`url`、`node_token`、`obj_token`、`obj_type`、`has_child`
+- `parse_hint.document_id`：当子节点为 docx 时，后续可作为 document_id 使用
+
+递归规则：
+1. 对用户原始链接调用 `get_child_documents(fetch_all=true, include_non_docx=false)`
+2. 对返回中 `has_child == true` 的子文档继续调用同一工具
+3. 使用 `node_token` 去重；没有 `node_token` 时用 `url` 去重，避免循环
+4. 本阶段只收集标题、链接、类型等元数据，不读取正文
+5. 将发现树展示给用户，等待用户确认纳入后，再把入选子文档加入 Step 2 文档列表
+
+普通 docx 如果不在知识库节点树中，工具会返回成功但 `children=[]`，可直接继续处理该文档本身。
+
 ## 1. 解析文档链接 → document_id
 
 用户提供的飞书链接通常有两种格式：
