@@ -15,30 +15,60 @@ description: 小需求测试用例生成 skill。用户提供飞书文档链接 
 
 ## 环境要求
 
-**进入 Step 1 之前，必须先检查以下 MCP 工具是否可用。** 如果不可用，引导用户安装后再继续。
+**进入 Step 1 之前，先做轻量 MCP 可用性检查。** 如果工具都可用，直接进入 Step 1，不要展开安装流程；只有依赖缺失、版本过旧或用户明确要求安装时，才进入“首次使用依赖向导”。这是渐进式披露：普通用例生成不应该被完整安装链路打断。
+
+### 首次使用依赖向导（仅在缺依赖时）
+
+优先使用内置脚本输出诊断报告：
+
+```bash
+python case-lite/scripts/setup_mcp.py --agent claude-code
+python case-lite/scripts/setup_mcp.py --agent codex
+```
+
+根据当前 Agent 选择 `claude-code` 或 `codex`。若无法判断 Agent 类型，先询问用户。
+
+诊断报告展示后，必须询问用户是否同意自动写入全局 MCP 配置。用户同意后，再运行：
+
+```bash
+python case-lite/scripts/setup_mcp.py --agent <claude-code|codex> --fix
+```
+
+`setup_mcp.py` 会在写入前再次确认，写入前备份原配置，并只写缺失/过期的 MCP server。它只支持 Claude Code / Codex 的全局配置；其他 Agent 继续展示手动配置提示。写入注意：
+
+- **配置路径不确定时不要盲写**：若报告提示同时存在 `~/.claude/.claude.json` 与 `~/.claude.json`（旧版 cc-switch 可能覆盖生效路径），先和用户确认哪个是生效路径，再用 `--config <路径>` 指定；`--fix --yes` 在路径不确定时会拒绝写入。
+- **默认不覆盖已有 `feishu-docx-blocks`**：已配置时脚本默认保留，仅在用户确认升级或显式加 `--replace-feishu` 时才替换（例如从源码安装切换到 `uvx@latest`）。
+- **Claude Code 写入前请退出 Claude Code**，避免运行中并发写回覆盖本次修改。
+
+> **凭证安全**：不要在 skill 中写入默认凭证，也不要在对话或日志中输出 `FEISHU_APP_SECRET` 明文。`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 由用户从内部文档获取，并通过环境变量或脚本交互输入提供。默认凭证文档：`https://gaotuedu.feishu.cn/wiki/CNBZwz8rwiew8dkXHt1cRIAAn8g#share-DrNhdQPiToYWMXxyC6nciHlknJh`
+>
+> 完整安装说明仅在需要时读取：[references/install-mcp.md](references/install-mcp.md)。
 
 ### 飞书文档工具（必需）
 
-尝试调用 `get_child_documents`、`parse_document_id` 或 `extract_document_structure`。如果工具不存在，提示用户在 Claude Code MCP 配置中添加：
+尝试调用 `get_child_documents`、`parse_document_id` 或 `extract_document_structure`。如果工具不存在或缺少 `get_child_documents`，进入首次使用依赖向导；如果已经配置但不是 `feishu-docx-blocks@latest`，询问用户是否升级。
 
 ```json
 {
   "mcpServers": {
     "feishu-docx-blocks": {
       "command": "uvx",
-      "args": ["feishu-docx-blocks@latest"]
+      "args": ["feishu-docx-blocks@latest"],
+      "env": {
+        "FEISHU_APP_ID": "<用户提供>",
+        "FEISHU_APP_SECRET": "<用户提供>"
+      }
     }
   }
 }
 ```
 
-> 默认应用凭证已内置，无需配置 `FEISHU_APP_ID/SECRET`。首次调用工具时会自动弹出浏览器完成飞书授权。
-> 如需使用自建飞书应用，可在 env 中覆盖 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。
+> 首次调用工具或授权过期时，`feishu-docx-blocks` 会自动拉起浏览器完成飞书授权。
 > `get_child_documents` 依赖 `feishu-docx-blocks` 最新版及 `wiki:node:retrieve` 权限。若该工具缺失，提示用户重启 MCP / 重新授权 / 确认 `uvx feishu-docx-blocks@latest` 已生效；无法立即升级时，可降级为仅处理用户已粘贴的文档链接。
 
 ### 搬山测试平台工具（推荐）
 
-尝试调用 `testCaseDetail`。如果工具不存在，提示用户添加：
+尝试调用 `testCaseDetail`。如果工具不存在，进入首次使用依赖向导，或提示用户手动添加：
 
 ```json
 {

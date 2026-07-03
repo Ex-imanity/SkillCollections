@@ -126,3 +126,83 @@ Session `61a2bfdb` (`/Users/gaotu/.claude/projects/-Users-gaotu-Projects-testCas
 - 对 `has_child == true` 的子文档递归调用同工具，用 `node_token` 或 `url` 去重
 - 只读取元数据，不读取正文；必须先展示给用户并等待用户确认纳入
 - 用户确认的子文档默认继承父文档类型标签，作为同类文档进入 Step 2 章节浏览
+
+## 2026-07-01 — 首次使用依赖安装与 MCP 配置优化设计
+
+**数据来源**：
+- 用户提供截图：标准化本地工作流分发，目标包括一键检查 uv/Python/MCP 配置、安装或更新 `feishu-docx-blocks`、检查 Banshan MCP 连通性、输出诊断报告
+- 飞书文档 `Case-lite skill使用说明` 的“安装”章节（wiki token `CNBZwz8rwiew8dkXHt1cRIAAn8g`，docx token `SpPsdDalSo7CU4xop1pc8OjSnM9`）
+- 用户确认点（2026-07-01）：主要面向 Claude Code 与 Codex；默认全局 MCP 配置但需征求用户同意；已有 `feishu-docx-blocks` 默认询问升级；Banshan URL 固定；飞书授权维持 `feishu-docx-blocks` 自身逻辑
+
+---
+
+### 发现：当前 case-lite 环境检查只提示安装，首次使用门槛仍高
+
+当前 `case-lite/SKILL.md` 在进入 Step 1 前要求检查 feishu-docx-blocks 和 Banshan MCP 是否可用，但环境不满足时主要给出手动配置片段。对首次使用者来说，仍需要理解 Agent 类型、MCP 配置路径、uvx、全局/项目配置、飞书应用凭证、重启 MCP 等细节。
+
+### 安装章节关键信息
+
+- skill 安装方式：`/skill-install https://github.com/Ex-imanity/SkillCollections`、手动复制、或 cc-switch 技能仓库导入
+- Claude Code MCP 配置：
+  - 用户级配置存在新旧差异：新版默认 `~/.claude/.claude.json`，旧版 cc-switch 可能覆盖为 `~/.claude.json`
+  - 项目级配置为项目根目录 `.mcp.json`
+  - feishu-docx-blocks 推荐 `uvx feishu-docx-blocks@latest`
+- Codex MCP 配置：
+  - 全局配置在 `~/.codex/config.toml`
+  - 可用 `codex mcp add feishu-docx-blocks --env ... -- uvx feishu-docx-blocks@latest`
+- Banshan MCP 固定 URL：`https://tech.baijia.com/mcp-server/banshan/mcp`
+
+### 已确认设计边界
+
+- 目标 Agent：优先支持 Claude Code 与 Codex；其他 Agent 继续输出手动提示，不做自动配置
+- 配置目标：默认全局 MCP 配置，但写入前必须询问用户意见
+- 已有 `feishu-docx-blocks`：默认询问是否升级到 `@latest`，不静默覆盖
+- 飞书授权：由 `feishu-docx-blocks` 现有逻辑负责，过期时会自动拉起浏览器授权；case-lite 不额外接管
+- 凭证安全：`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 不写入 skill 明文。默认值让用户去内部文档链接自行获取；脚本支持环境变量或交互输入，避免命令行参数和日志泄露 secret
+- 渐进式披露：非首次使用不展示完整安装链路；仅当依赖缺失或版本不满足时加载安装文档/运行 setup 流程
+
+### 建议实现形态
+
+- `case-lite/SKILL.md`：保留轻量环境检查入口和“缺依赖时进入首次使用依赖向导”的决策流程
+- `case-lite/references/install-mcp.md`：存放 Claude Code / Codex 手动配置、自动配置说明、风险与降级方案
+- `case-lite/scripts/setup_mcp.py`：提供确定性诊断与可选修复能力：
+  - `--check` 输出诊断报告
+  - `--agent claude-code|codex`
+  - `--target global`
+  - `--fix` 在用户确认后写配置
+  - 从环境变量或交互输入读取 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`
+  - 写配置前备份，merge 而不是覆盖
+
+### Review 重点
+
+- 是否存在明文 `FEISHU_APP_SECRET` 或默认凭证落入 skill / README / 测试快照
+- 自动配置是否必须经过用户确认，尤其是全局配置写入
+- Claude Code 配置路径是否兼容 `~/.claude/.claude.json` 与 `~/.claude.json`
+- Codex TOML 写入是否 merge 而非破坏已有配置
+- 已配置但缺 `get_child_documents` 或非 `@latest` 时，是否只建议/询问升级
+- 普通 case-lite 流程是否仍保持轻量，不强制每次执行完整安装诊断
+
+## 2026-07-01 — Phase 6 Review 复核结果（待 codex 复核）
+
+**背景**：用户要求基于 MRS 与最新改动，review codex 已完成的 Phase 6（首次使用依赖安装 + MCP 自动配置）是否合理，重点关注 Claude Code MCP 配置路径问题。
+
+**结论**：方向正确、落地扎实、无安全红线。已用飞书文档 `安装` 章节（docx `SpPsdDalSo7CU4xop1pc8OjSnM9`，H4 `ClaudeCode配置` position 20-30）核对：配置内容（`type:stdio`、env 结构、Codex `[mcp_servers.*.env]` 拆表、Banshan `Banshan`/`banshan` 大小写不对称）均忠实还原文档。凭证安全验证通过：全仓库 grep 不到真实 secret（`cli_a9ca99bc8778dcc1` / `drRCI...`），仓库为**公开** GitHub，不内嵌凭证的决策正确。
+
+**发现与已实施修复（本次改动）**：
+
+| # | 严重度 | 问题 | 修复 |
+|---|--------|------|------|
+| F1 | 高 | Claude Code 路径检测靠“哪个文件存在”静默猜测，与文档“需确认自己的路径”矛盾；旧 cc-switch 用户若两路径都存在会写到失效文件（静默失败），且零测试 | `detect_claude_code_config` 改为返回 `ClaudeCodeConfigChoice(path, candidates, ambiguous, note)`；两路径同存判为 ambiguous，报告列出候选 + cc-switch PR，`--fix --yes` 拒绝(exit 3)、交互让用户选或用 `--config` 指定；补 4 个路径检测测试 |
+| F2 | 中 | `--fix` 无条件重写 feishu+Banshan，覆盖源码安装/自定义 feishu，违反“不静默覆盖”边界 | merge/apply 增加 `write_feishu`/`write_banshan` 开关；默认仅写缺失项，已有 feishu 默认保留，需 `--replace-feishu` 或交互确认才替换；写入前打印“将写入/将保留”摘要；补 no-clobber 测试 |
+| F3 | 中 | 整体重写 `~/.claude.json`（含大量其它状态）有并发覆盖风险，备份含明文 secret | 改原子写（临时文件 + `os.replace`）；config 与备份 chmod 0o600；claude-code 写入前提示退出 CC；`install-mcp.md` 补充 `claude mcp add-json` 官方 CLI 方案；备份为空时不再生成空 `.bak` |
+| F4 | 低/中 | 诊断只读环境变量，已配置用户会误报“未提供/需要补充” | 新增 `resolve_creds`：优先 env，其次读现有配置(`read_claude_code_creds`/`read_codex_creds`)；报告标注凭证来源；补读取测试 |
+| F5 | 低 | 路径检测/凭证读取无测试；`test_report_redacts_secret` 弱断言；Codex TOML 纯字符串解析；无连通性说明 | analyze/读取 Codex 改用 `tomllib`（读侧，写侧仍字符串并文档化）；弱断言改为验证 uv 缺失区块 + 凭证来源；报告与 install-mcp.md 补“OK≠连通、需实际调用工具验证”说明 |
+
+**未改动的取舍（F6，用户已拍板维持现状）**：因公开仓库，凭证只留在内部文档，首次使用需用户自行 export，接受该残余摩擦。
+
+**验证**：`python -m unittest discover -s case-lite/tests` 全绿（新增至 21 用例）；`/tmp` 临时配置烟测确认：(A) codex 源码安装 feishu + 缺 Banshan，`--fix --yes` 只加 Banshan、保留源码 feishu；(B) claude-code 两路径同存 + `--fix --yes` 返回 exit 3 拒绝写入。未触碰任何真实全局配置。
+
+**交给 codex 复核的重点**：
+- `_strip_toml_table` 写侧仍是手写字符串裁剪（读侧已换 tomllib），复杂 TOML（多行数组、行内注释）是否仍有边角风险
+- ambiguity 交互选择后 re-analyze 的路径是否需要同样做 F4 凭证读取（当前 resolve_creds 用的是初始 config_path）
+- `--replace-feishu` 是否应同时提供“只刷新 env 凭证而不改 command/args”的更细粒度选项

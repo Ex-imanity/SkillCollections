@@ -17,38 +17,33 @@ git clone https://github.com/Ex-imanity/SkillCollections.git
 cp -r SkillCollections/case-lite ~/.cc-switch/skills/case-lite
 ```
 
-### 2. 配置飞书文档 MCP（必需）
+### 2. 配置依赖 MCP（首次使用）
 
-在 Claude Code 的 MCP 配置中添加（`~/.claude/settings.json` 或项目级 `.claude/settings.json`）：
+case-lite 依赖两个 MCP：
 
-```json
-{
-  "mcpServers": {
-    "feishu-docx-blocks": {
-      "command": "uvx",
-      "args": ["feishu-docx-blocks@latest"]
-    }
-  }
-}
+- `feishu-docx-blocks`：读取飞书文档、图片和 wiki 子文档
+- `Banshan`：通过 caseId 获取参考用例
+
+首次使用时，建议先让 Agent 运行依赖诊断：
+
+```bash
+python case-lite/scripts/setup_mcp.py --agent claude-code
+python case-lite/scripts/setup_mcp.py --agent codex
 ```
 
-> 默认应用凭证已内置，无需额外配置。重启 Claude Code 后，首次调用工具时会自动弹出浏览器完成飞书授权。
-> 需要先安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)：`curl -LsSf https://astral.sh/uv/install.sh | sh`
+如果诊断报告显示依赖缺失，在你同意后可自动写入 Claude Code / Codex 的全局 MCP 配置：
 
-### 3. 配置搬山 MCP（推荐）
-
-```json
-{
-  "mcpServers": {
-    "Banshan": {
-      "type": "streamable-http",
-      "url": "https://tech.baijia.com/mcp-server/banshan/mcp"
-    }
-  }
-}
+```bash
+python case-lite/scripts/setup_mcp.py --agent <claude-code|codex> --fix
 ```
 
-> 用于通过 caseId 获取参考用例。未配置不影响核心流程，写回功能由内置脚本直接完成。
+脚本会备份并 merge 现有配置，不覆盖其他 MCP。写入后需要重启 Agent / MCP 会话。
+
+`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 不随 skill 分发。请从公司内部文档获取默认值，并通过环境变量或脚本交互输入提供：
+
+https://gaotuedu.feishu.cn/wiki/CNBZwz8rwiew8dkXHt1cRIAAn8g#share-DrNhdQPiToYWMXxyC6nciHlknJh
+
+手动配置细节见 [references/install-mcp.md](references/install-mcp.md)。
 
 ## 使用流程
 
