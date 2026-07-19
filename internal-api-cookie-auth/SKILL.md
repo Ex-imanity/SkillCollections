@@ -1,6 +1,6 @@
 ---
 name: internal-api-cookie-auth
-description: Handle Cookie authentication for supported internal API calls without asking users to manually paste session Cookies. Use this skill whenever a script, service, or API debugging task targets Internal AD/UOS, Athena, or Compass and lacks a Cookie, reports a session expiry, returns HTTP 401, or may have failed because of authentication. Use it proactively before hardcoding a Cookie or asking the user to export one. Treat HTTP 403 as a possible authorization failure, not automatic evidence that a Cookie refresh will solve it.
+description: Handle Cookie authentication for internal HTTPS API calls without asking users to manually paste session Cookies. Use this skill whenever a script, service, or API debugging task lacks a Cookie, reports a session expiry, redirects to cas.baijia.com or test-cas.baijia.com, returns HTTP 401, returns a CAS-style JSON code 700, or may have failed because of authentication. Use it proactively before hardcoding a Cookie or asking the user to export one. Only probe an unknown host after the user has authorized a real read-only network test; treat HTTP 403 as a possible authorization failure, not automatic evidence that a Cookie refresh will solve it.
 ---
 
 # Internal API Cookie Authentication
@@ -12,38 +12,59 @@ is needed, then pass it to the target script through a protected file or process
 environment. This avoids copying session Cookies into commands, source files, or
 chat output while preserving the user's existing authentication choices.
 
-## Scope
+## Scope And Trust Boundary
 
-Use the bundled tool only for these HTTPS hosts:
+These HTTPS hosts have built-in CAS service configuration:
 
 - `internal-ad.gaotu100.com` and `test-internal-ad.gaotu100.com`
 - `athena.baijia.com` and `test-athena.baijia.com`
 - `dis.baijia.com` and `test-dis.baijia.com`
 
+Other internal HTTPS hosts are supported only by one of these evidence-based
+paths:
+
+1. The user or repository configuration provides an explicit HTTPS
+   `--cas-service-url`.
+2. A user-authorized, read-only `--discover-cas` probe receives a redirect to
+   the CAS host matching the target environment and includes one HTTPS
+   `service` parameter.
+
+The probe sends no Cookie, follows no redirect, and accepts only
+`https://cas.baijia.com/cas/login` for production targets or
+`https://test-cas.baijia.com/cas/login` for `test-` targets. A redirect to any
+other login host is not evidence that this Skill may send credentials there.
+
 The default dependency path is `/Users/gaotu/Projects/baijia-cookie`. Override
 it with `BAIJIA_COOKIE_TOOL_DIR` or `--cookie-tool-dir` when the local checkout
-is elsewhere. Do not send the user's credentials to unrelated URLs.
+is elsewhere.
 
 ## Authentication Decision
 
 1. Reuse an explicit Cookie, configured Cookie file, or the target program's
    documented Cookie environment variable first.
-2. When no Cookie exists, or a safe read request returns `401`, fetch a fresh
-   Cookie using `scripts/fetch_cookie.py`.
-3. A `403` can mean the account lacks a role or permission. Fetch once only if
+2. During dry-run, mock, unit-test, or static-development work, do not issue a
+   network probe just to discover authentication. Preserve the script's normal
+   dry-run boundary.
+3. When the user authorizes a real read-only test, attempt it without a Cookie.
+   A `302/303/307/308` to trusted CAS can be discovered automatically. HTTP
+   `401` and a JSON `code:700` show that authentication is needed, but do not by
+   themselves reveal a CAS service URL; use a separately authorized safe probe,
+   explicit `--cas-service-url`, or the browser fallback.
+4. A `403` can mean the account lacks a role or permission. Fetch once only if
    there was no valid Cookie; if a fresh Cookie still receives `403`, stop and
    report an authorization problem instead of looping.
-4. Retry automatically only for idempotent reads (`GET`, `HEAD`) after a fresh
+5. Retry automatically only for idempotent reads (`GET`, `HEAD`) after a fresh
    Cookie. Do not silently retry side-effecting calls such as publish, offline,
    create, update, or delete; confirm the operation is idempotent or ask before
    repeating it.
 
 ## Fetch a Cookie
 
-Run the bundled script from the installed Skill directory. It accepts a username
-via `--username` or `SITE_USERNAME`; it reads `SITE_PASSWORD` when supplied and
-otherwise prompts in an interactive terminal. It never accepts a password as a
-command-line argument.
+Run the bundled script from the installed Skill directory only after the user
+has authorized the authentication attempt. It accepts a username via `--username`
+or `SITE_USERNAME`; it reads `SITE_PASSWORD` when supplied and otherwise prompts
+in an interactive terminal. It never accepts a password as a command-line
+argument.
 
 ```bash
 COOKIE_FILE="$(mktemp)"
@@ -52,6 +73,22 @@ python <skill-root>/scripts/fetch_cookie.py \
   --output "$COOKIE_FILE" \
   --username your-account
 ```
+
+For an unknown host whose safe read-only URL has been authorized, let the helper
+derive the service URL from a trusted CAS redirect:
+
+```bash
+python <skill-root>/scripts/fetch_cookie.py \
+  --url https://internal-service.example.com/api/status \
+  --discover-cas \
+  --output "$COOKIE_FILE" \
+  --username your-account
+```
+
+For a write operation, do not use the write endpoint as an authentication probe.
+Ask for or locate a safe read-only probe URL first. If discovery finds no trusted
+CAS redirect, stop and request an explicit `--cas-service-url` rather than
+guessing a login route.
 
 The output file has mode `0600` and contains only the Cookie header value. Pass
 it to programs that support `--cookie-file`, then remove it as soon as the
@@ -85,8 +122,9 @@ fetch flow. Keep the Cookie in memory or a protected file; do not print it.
 - Missing Node.js or cookie-tool checkout: report the missing dependency and
   the expected path. Do not invent a browser, SSO, or password-based fallback.
 - Login failure: surface the tool's sanitized error; do not expose credentials.
-- Unsupported host: stop. Extend the host allowlist only after confirming the
-  site uses the approved CAS flow.
+- Unknown host without a trusted CAS redirect: stop and request an explicit
+  `--cas-service-url` or browser fallback. Do not guess from a `401`, `700`,
+  HTML login page, or an untrusted redirect.
 - Fresh Cookie with `403`: report that authentication succeeded but the account
   may lack authorization; do not repeatedly refresh the session.
 

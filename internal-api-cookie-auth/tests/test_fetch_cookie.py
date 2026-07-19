@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.error import HTTPError
 from unittest import mock
 
 
@@ -63,10 +64,62 @@ class FetchCookieTest(unittest.TestCase):
             self.assertEqual(0o600, stat.S_IMODE(os.stat(output).st_mode))
 
     @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
-    def test_rejects_a_host_outside_the_supported_internal_sites(self):
+    def test_allows_an_unknown_https_target_to_be_probed(self):
         fetch_cookie = load_module()
-        with self.assertRaisesRegex(ValueError, "不受支持"):
-            fetch_cookie.validate_target_url("https://example.com")
+
+        self.assertEqual("https://service.example.com/api/status", fetch_cookie.validate_target_url("https://service.example.com/api/status"))
+
+    @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
+    def test_discovers_service_url_from_a_trusted_cas_redirect(self):
+        fetch_cookie = load_module()
+        target = "https://service.example.com/api/status"
+        service_url = "https://service.example.com/auth/login/cas"
+        redirect = (
+            "https://cas.baijia.com/cas/login?service="
+            "https%3A%2F%2Fservice.example.com%2Fauth%2Flogin%2Fcas"
+        )
+        opener = SimpleNamespace(open=mock.Mock(side_effect=HTTPError(target, 302, "Found", {"Location": redirect}, None)))
+
+        discovered = fetch_cookie.discover_cas_service(target, timeout=30.0, opener=opener)
+
+        self.assertEqual(service_url, discovered)
+
+    @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
+    def test_rejects_a_redirect_to_an_untrusted_login_host(self):
+        fetch_cookie = load_module()
+        target = "https://service.example.com/api/status"
+        redirect = "https://login.example.com/cas/login?service=https%3A%2F%2Fservice.example.com%2Fauth%2Flogin%2Fcas"
+        opener = SimpleNamespace(open=mock.Mock(side_effect=HTTPError(target, 302, "Found", {"Location": redirect}, None)))
+
+        with self.assertRaisesRegex(ValueError, "可信 CAS"):
+            fetch_cookie.discover_cas_service(target, timeout=30.0, opener=opener)
+
+    @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
+    def test_passes_discovered_service_url_to_the_cookie_tool(self):
+        fetch_cookie = load_module()
+        runner = mock.Mock(
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout='{"cookieHeader": "SESSION=fresh"}',
+                stderr="",
+            )
+        )
+
+        fetch_cookie.fetch_cookie(
+            url="https://service.example.com/api/status",
+            username="operator",
+            password="secret",
+            password_env="SITE_PASSWORD",
+            cookie_tool_dir="/opt/baijia-cookie",
+            timeout=30.0,
+            cas_service_url="https://service.example.com/auth/login/cas",
+            runner=runner,
+        )
+
+        self.assertEqual(
+            ["--cas-service-url", "https://service.example.com/auth/login/cas"],
+            runner.call_args.args[0][-2:],
+        )
 
 
 if __name__ == "__main__":

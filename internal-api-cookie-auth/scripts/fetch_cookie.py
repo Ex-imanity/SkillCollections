@@ -8,15 +8,17 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, Tuple
-from urllib.parse import urlparse
+from typing import Callable, Optional, Tuple
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 DEFAULT_USERNAME_ENV = "SITE_USERNAME"
 DEFAULT_PASSWORD_ENV = "SITE_PASSWORD"
 DEFAULT_TOOL_DIR_ENV = "BAIJIA_COOKIE_TOOL_DIR"
 DEFAULT_TOOL_DIR = "/Users/gaotu/Projects/baijia-cookie"
-SUPPORTED_HOSTS = {
+BUILT_IN_HOSTS = {
     "internal-ad.gaotu100.com",
     "test-internal-ad.gaotu100.com",
     "athena.baijia.com",
@@ -24,17 +26,34 @@ SUPPORTED_HOSTS = {
     "dis.baijia.com",
     "test-dis.baijia.com",
 }
+REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+
+
+class NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch a supported internal site's Cookie into a protected file.",
+        description="Fetch an internal HTTPS site's Cookie into a protected file.",
     )
-    parser.add_argument("--url", required=True, help="supported internal HTTPS URL")
+    parser.add_argument("--url", required=True, help="internal HTTPS URL")
     parser.add_argument("--output", required=True, help="destination Cookie file, written with mode 0600")
     parser.add_argument("--username", default="", help=f"CAS username; env fallback: {DEFAULT_USERNAME_ENV}")
     parser.add_argument("--username-env", default=DEFAULT_USERNAME_ENV)
     parser.add_argument("--password-env", default=DEFAULT_PASSWORD_ENV)
+    authentication = parser.add_mutually_exclusive_group()
+    authentication.add_argument(
+        "--cas-service-url",
+        default="",
+        help="explicit HTTPS CAS service URL for a host outside the built-in list",
+    )
+    authentication.add_argument(
+        "--discover-cas",
+        action="store_true",
+        help="probe an authorized read-only URL once to discover a trusted CAS redirect",
+    )
     parser.add_argument(
         "--cookie-tool-dir",
         default=os.environ.get(DEFAULT_TOOL_DIR_ENV, DEFAULT_TOOL_DIR),
@@ -48,9 +67,48 @@ def validate_target_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname:
         raise ValueError("--url 必须是 HTTPS URL")
-    if parsed.hostname.lower() not in SUPPORTED_HOSTS:
-        raise ValueError(f"不受支持的目标主机：{parsed.hostname}")
     return url
+
+
+def is_built_in_host(url: str) -> bool:
+    return urlparse(url).hostname.lower() in BUILT_IN_HOSTS
+
+
+def expected_cas_host(target_url: str) -> str:
+    hostname = urlparse(target_url).hostname.lower()
+    return "test-cas.baijia.com" if hostname.startswith("test-") else "cas.baijia.com"
+
+
+def discover_cas_service(url: str, timeout: float, opener=None) -> str:
+    target_url = validate_target_url(url)
+    active_opener = opener or build_opener(NoRedirectHandler())
+    request = Request(target_url, headers={"accept": "application/json, text/plain, */*"})
+    try:
+        response = active_opener.open(request, timeout=timeout)
+    except HTTPError as exc:
+        response = exc
+
+    status = getattr(response, "status", response.getcode())
+    if status not in REDIRECT_STATUS_CODES:
+        raise ValueError(f"无 Cookie 探测未发现 CAS 重定向（HTTP {status}）")
+    location = response.headers.get("Location")
+    if not location:
+        raise ValueError("CAS 重定向缺少 Location 响应头")
+
+    login_url = urlparse(urljoin(target_url, location))
+    expected_host = expected_cas_host(target_url)
+    if login_url.scheme != "https" or login_url.hostname.lower() != expected_host:
+        raise ValueError(f"重定向未指向可信 CAS 主机 {expected_host}")
+    if login_url.path != "/cas/login":
+        raise ValueError("可信 CAS 重定向不是 /cas/login 路径")
+
+    services = parse_qs(login_url.query).get("service", [])
+    if len(services) != 1:
+        raise ValueError("可信 CAS 重定向缺少唯一 service 参数")
+    service_url = urlparse(services[0])
+    if service_url.scheme != "https" or not service_url.hostname:
+        raise ValueError("CAS service 参数必须是 HTTPS URL")
+    return service_url.geturl()
 
 
 def resolve_credentials(
@@ -78,6 +136,7 @@ def fetch_cookie(
     password_env: str,
     cookie_tool_dir: str,
     timeout: float,
+    cas_service_url: Optional[str] = None,
     runner=subprocess.run,
 ) -> str:
     target_url = validate_target_url(url)
@@ -91,6 +150,8 @@ def fetch_cookie(
         "--password-env",
         password_env,
     ]
+    if cas_service_url:
+        command.extend(["--cas-service-url", cas_service_url])
     environment = os.environ.copy()
     environment[password_env] = password
     try:
@@ -139,7 +200,12 @@ def write_cookie_file(path: Path, cookie: str) -> None:
 def main() -> int:
     args = parse_args()
     try:
-        validate_target_url(args.url)
+        target_url = validate_target_url(args.url)
+        cas_service_url = args.cas_service_url
+        if args.discover_cas:
+            cas_service_url = discover_cas_service(target_url, args.timeout)
+        elif not is_built_in_host(target_url) and not cas_service_url:
+            raise RuntimeError("未知主机需要 --discover-cas 或 --cas-service-url")
         username, password = resolve_credentials(
             args.username,
             args.username_env,
@@ -151,12 +217,13 @@ def main() -> int:
         if not password:
             raise RuntimeError(f"请设置 {args.password_env} 或在交互终端输入密码")
         cookie = fetch_cookie(
-            args.url,
+            target_url,
             username,
             password,
             args.password_env,
             args.cookie_tool_dir,
             args.timeout,
+            cas_service_url or None,
         )
         output = Path(args.output)
         write_cookie_file(output, cookie)
