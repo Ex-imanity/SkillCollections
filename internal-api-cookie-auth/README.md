@@ -41,6 +41,36 @@ python /Users/gaotu/Projects/FeedbackEntrance/scripts/batch_qapair_status.py \
 rm -f "$COOKIE_FILE"
 ```
 
+## 从 curl 命令封装认证调用
+
+浏览器「复制为 cURL」得到的命令自带一段会话 Cookie。不要硬编码它。封装形式不固定
+——可以是一条命令、一个 bash 函数，或代码库里的 Python 客户端；关键是遵循原则:
+
+- **识别认证**:`-b` 里的 `SESSION` / `JSESSIONID` / `cas_name` / `CAS_AC_CURRENT_ROLE`
+  / `uid` 表示这是 CAS 认证请求。粘贴的 Cookie 只作证据,绝不复用。
+- **处理 Cookie**:用 `scripts/fetch_cookie.py` 取新 Cookie,置于内存或 `0600` 文件,
+  整体作为 `Cookie` 头,绝不打印。bash:`curl -H "Cookie: $(cat "$COOKIE_FILE")" ...`。
+- **最小封装**:只转发接口真正需要的头——通常就是 Cookie 加上带 JSON body 时的
+  `content-type`。其余(`origin` / `referer` / `priority` / `sec-*` / `accept-language`
+  / `user-agent` / 身份头 `uid`)一律丢弃,失败再逐个加回。(实测 `test-mi` 只需
+  Cookie + `content-type`,`b_client` / `accept` / `uid` 都非必需。)
+- **副作用先问**:`GET` / `HEAD` 可直接重放;`POST` / `PUT` / `PATCH` / `DELETE` 等
+  可能改动数据的请求,重放前**必须**先向用户确认,不自动重试。
+
+参考实现(可选):`scripts/call_api.py` 已内置以上原则——默认仅转发 `content-type`
+(`--keep-header` 加回其他头),`--confirm-write` 前拒绝发送非 `GET`/`HEAD` 方法,
+仅对读请求自动刷新重试一次。
+
+```bash
+# 读请求(GET/HEAD,或确认后的只读 POST 如 /list):
+python scripts/call_api.py --curl-file request.curl --discover-cas --username your-account
+# 有副作用的方法,仅在用户确认可安全重放后:
+python scripts/call_api.py --curl-file request.curl --discover-cas --username your-account --confirm-write
+```
+
+内置主机可省略 `--discover-cas`;已知服务入口改用 `--cas-service-url`。响应体打印到
+标准输出,主机 / 状态码 / 转发与丢弃的头名打印到标准错误,Cookie 不出现在任何一处。
+
 ## 其他 CAS 站点
 
 除 Internal AD / UOS、Athena、Compass 外，其他内部 HTTPS 站点也可以使用，但不再依赖
@@ -71,5 +101,8 @@ Cookie 文件。
 - Athena：生产和 `test-` 测试环境
 - Compass：生产和 `test-` 测试环境
 
-`401` 或 JSON `code:700` 只表示可能需要认证，不能单独证明 CAS 服务地址。`403` 还可能
+多数高途内部接口在未登录时返回 HTTP `200`/`401` 且响应体为
+`{"code":700,"data":"https://<cas>/cas/login?service=..."}`，`--discover-cas` 会从
+`data` 的 `service` 参数自动得到服务地址。若只是裸 `401`、HTML 登录页，或 `data`
+不指向可信 CAS，则无法自动推断，需显式 `--cas-service-url` 或浏览器回退。`403` 还可能
 代表账号没有权限；即使获取了新 Cookie 后仍返回 `403`，也不应循环刷新或重试写操作。

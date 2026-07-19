@@ -1,6 +1,6 @@
 ---
 name: internal-api-cookie-auth
-description: Handle Cookie authentication for internal HTTPS API calls without asking users to manually paste session Cookies. Use this skill whenever a script, service, or API debugging task lacks a Cookie, reports a session expiry, redirects to cas.baijia.com or test-cas.baijia.com, returns HTTP 401, returns a CAS-style JSON code 700, or may have failed because of authentication. Use it proactively before hardcoding a Cookie or asking the user to export one. Only probe an unknown host after the user has authorized a real read-only network test; treat HTTP 403 as a possible authorization failure, not automatic evidence that a Cookie refresh will solve it.
+description: Handle Cookie authentication for internal HTTPS API calls without asking users to manually paste session Cookies. Use this skill whenever a script, service, or API debugging task lacks a Cookie, reports a session expiry, redirects to cas.baijia.com or test-cas.baijia.com, returns HTTP 401, returns a CAS-style JSON code 700, or may have failed because of authentication. Also use it when the user pastes a browser "copy as cURL" command for an internal host (gaotu100.com, baijia.com) and wants it turned into a repeatable, authenticated API call: it teaches how to wrap the request in any form (one-off command, bash, or Python) with a fresh Cookie and minimal headers, rather than reusing the pasted Cookie, and to confirm before replaying side-effecting POST/PUT/PATCH/DELETE calls. Use it proactively before hardcoding a Cookie or asking the user to export one. Only probe an unknown host after the user has authorized a real read-only network test; treat HTTP 403 as a possible authorization failure, not automatic evidence that a Cookie refresh will solve it.
 ---
 
 # Internal API Cookie Authentication
@@ -46,9 +46,13 @@ is elsewhere.
    network probe just to discover authentication. Preserve the script's normal
    dry-run boundary.
 3. When the user authorizes a real read-only test, attempt it without a Cookie.
-   A `302/303/307/308` to trusted CAS can be discovered automatically. HTTP
-   `401` and a JSON `code:700` show that authentication is needed, but do not by
-   themselves reveal a CAS service URL; use a separately authorized safe probe,
+   The service URL can be discovered automatically from either a `302/303/307/308`
+   redirect to trusted CAS, or a JSON body `{"code":700,"data":"<cas login url>"}`
+   returned with HTTP `200`/`401`. Most gaotu internal APIs use the JSON form:
+   the `data` field is the full `https://<cas-host>/cas/login?service=...` URL, and
+   the `service` parameter is the value the cookie tool needs. A bare HTTP `401`
+   with no body, or a `code:700` whose `data` is not a trusted-CAS login URL, does
+   not reveal a service URL; fall back to a separately authorized safe probe,
    explicit `--cas-service-url`, or the browser fallback.
 4. A `403` can mean the account lacks a role or permission. Fetch once only if
    there was no valid Cookie; if a fresh Cookie still receives `403`, stop and
@@ -104,6 +108,54 @@ For new Python scripts, prefer a local helper that follows the same precedence:
 explicit Cookie, Cookie file, documented environment variable, then this CAS
 fetch flow. Keep the Cookie in memory or a protected file; do not print it.
 
+## From a curl Command to an Authenticated Call
+
+When the user pastes a browser "copy as cURL" command, do not hardcode its
+Cookie. Recognize it as an authenticated internal request and wrap it. The output
+form is up to the situation — a one-off command, a small bash function, a Python
+client in the user's codebase, or the bundled `scripts/call_api.py` reference.
+Whatever the form, follow these principles.
+
+1. Recognize the auth. The CAS session cookies (`SESSION`, `JSESSIONID`,
+   `cas_name`, `CAS_AC_CURRENT_ROLE`, `uid`) in the `-b`/`Cookie` value mark the
+   request as CAS-authenticated. Treat the pasted Cookie as evidence only; never
+   reuse it — it will expire and must not be committed.
+2. Handle the Cookie, not the paste. Obtain a fresh Cookie for the target host
+   with `scripts/fetch_cookie.py` (use `--discover-cas` for a non-built-in host,
+   or `--cas-service-url`). Keep it in memory or a `0600` file, set it as the
+   whole `Cookie` header, and never print or log it. In bash:
+   `curl -H "Cookie: $(cat "$COOKIE_FILE")" ...`; in Python, read the file or
+   import `fetch_cookie`.
+3. Keep the wrapper minimal. Forward only what the endpoint needs — usually just
+   the Cookie plus `content-type` when there is a JSON body. Drop everything else
+   the browser attached: `origin`, `referer`, `priority`, `sec-ch-*`,
+   `sec-fetch-*`, `accept-language`, `user-agent`, and identity headers like
+   `uid` (the Cookie already carries identity). Start minimal and add a header
+   back only if the call fails without it. (Measured example: `test-mi` needs
+   only the Cookie + `content-type`; `b_client`, `accept`, `uid` are all
+   unnecessary.)
+4. Gate side effects. Replay `GET`/`HEAD` freely. For any method that can mutate
+   state — `POST`, `PUT`, `PATCH`, `DELETE` — you MUST confirm with the user
+   before sending, even the first time, because a pasted `POST` may create,
+   update, or delete. A `POST` that is plainly a read (a `/list`, `/query`,
+   `/search`, or `/detail` call) is lower risk but still confirm if unsure. Do
+   not auto-retry a side-effecting call.
+
+Reference implementation (optional): `scripts/call_api.py` embodies the above —
+minimal allowlist headers (`--keep-header` to add more), a `--confirm-write`
+gate that refuses to send a non-`GET`/`HEAD` method until the user confirms, and
+one auth-refresh retry for reads only. It prints the response body to stdout and
+the host/status/header decisions to stderr; the Cookie never appears in either.
+
+```bash
+# read (GET/HEAD or a clearly read-only POST like /list, after confirming):
+python <skill-root>/scripts/call_api.py --curl-file request.curl \
+  --discover-cas --username your-account
+# side-effecting method, only after the user confirms it is safe to replay:
+python <skill-root>/scripts/call_api.py --curl-file request.curl \
+  --discover-cas --username your-account --confirm-write
+```
+
 ## Credential and Logging Rules
 
 - Do not add a `--password` option. Prompt with `getpass` or read a named
@@ -122,9 +174,10 @@ fetch flow. Keep the Cookie in memory or a protected file; do not print it.
 - Missing Node.js or cookie-tool checkout: report the missing dependency and
   the expected path. Do not invent a browser, SSO, or password-based fallback.
 - Login failure: surface the tool's sanitized error; do not expose credentials.
-- Unknown host without a trusted CAS redirect: stop and request an explicit
-  `--cas-service-url` or browser fallback. Do not guess from a `401`, `700`,
-  HTML login page, or an untrusted redirect.
+- Unknown host with no trusted CAS redirect and no `code:700` `data` pointing at
+  a trusted CAS login URL: stop and request an explicit `--cas-service-url` or
+  browser fallback. Do not guess from a bare `401`, an HTML login page, or an
+  untrusted redirect/`data` value.
 - Fresh Cookie with `403`: report that authentication succeeded but the account
   may lack authorization; do not repeatedly refresh the session.
 

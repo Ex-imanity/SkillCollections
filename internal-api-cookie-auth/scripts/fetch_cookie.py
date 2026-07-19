@@ -79,25 +79,23 @@ def expected_cas_host(target_url: str) -> str:
     return "test-cas.baijia.com" if hostname.startswith("test-") else "cas.baijia.com"
 
 
-def discover_cas_service(url: str, timeout: float, opener=None) -> str:
-    target_url = validate_target_url(url)
-    active_opener = opener or build_opener(NoRedirectHandler())
-    request = Request(target_url, headers={"accept": "application/json, text/plain, */*"})
+def _read_body(response, limit: int = 65536) -> str:
+    reader = getattr(response, "read", None)
+    if not callable(reader):
+        return ""
     try:
-        response = active_opener.open(request, timeout=timeout)
-    except HTTPError as exc:
-        response = exc
+        raw = reader(limit)
+    except (TypeError, ValueError):
+        raw = reader()
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", "replace")
+    return raw or ""
 
-    status = getattr(response, "status", response.getcode())
-    if status not in REDIRECT_STATUS_CODES:
-        raise ValueError(f"无 Cookie 探测未发现 CAS 重定向（HTTP {status}）")
-    location = response.headers.get("Location")
-    if not location:
-        raise ValueError("CAS 重定向缺少 Location 响应头")
 
-    login_url = urlparse(urljoin(target_url, location))
+def _service_from_cas_login(login_url_value: str, target_url: str) -> str:
+    login_url = urlparse(urljoin(target_url, login_url_value))
     expected_host = expected_cas_host(target_url)
-    if login_url.scheme != "https" or login_url.hostname.lower() != expected_host:
+    if login_url.scheme != "https" or (login_url.hostname or "").lower() != expected_host:
         raise ValueError(f"重定向未指向可信 CAS 主机 {expected_host}")
     if login_url.path != "/cas/login":
         raise ValueError("可信 CAS 重定向不是 /cas/login 路径")
@@ -109,6 +107,54 @@ def discover_cas_service(url: str, timeout: float, opener=None) -> str:
     if service_url.scheme != "https" or not service_url.hostname:
         raise ValueError("CAS service 参数必须是 HTTPS URL")
     return service_url.geturl()
+
+
+def _service_from_json_body(body: str, target_url: str) -> Optional[str]:
+    """Extract a CAS service URL from a gaotu ``{"code":700,"data":"..."}`` body.
+
+    Unauthenticated internal APIs frequently answer with HTTP 200/401 and a JSON
+    envelope whose ``data`` field is the full ``.../cas/login?service=...`` URL,
+    rather than issuing an HTTP redirect. ``data`` is validated through the same
+    trusted-CAS checks as a ``Location`` redirect before it is trusted.
+    """
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("code") != 700:
+        return None
+    data = payload.get("data")
+    if not isinstance(data, str) or not data:
+        return None
+    return _service_from_cas_login(data, target_url)
+
+
+def discover_cas_service(url: str, timeout: float, opener=None) -> str:
+    target_url = validate_target_url(url)
+    active_opener = opener or build_opener(NoRedirectHandler())
+    request = Request(target_url, headers={"accept": "application/json, text/plain, */*"})
+    try:
+        response = active_opener.open(request, timeout=timeout)
+    except HTTPError as exc:
+        response = exc
+
+    status = getattr(response, "status", None)
+    if status is None:
+        getcode = getattr(response, "getcode", None)
+        status = getcode() if callable(getcode) else 0
+
+    if status in REDIRECT_STATUS_CODES:
+        location = response.headers.get("Location")
+        if not location:
+            raise ValueError("CAS 重定向缺少 Location 响应头")
+        return _service_from_cas_login(location, target_url)
+
+    service = _service_from_json_body(_read_body(response), target_url)
+    if service:
+        return service
+    raise ValueError(
+        f"无 Cookie 探测未发现可信 CAS 重定向或 code:700 服务地址（HTTP {status}）"
+    )
 
 
 def resolve_credentials(

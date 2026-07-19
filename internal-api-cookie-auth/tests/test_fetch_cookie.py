@@ -85,6 +85,37 @@ class FetchCookieTest(unittest.TestCase):
         self.assertEqual(service_url, discovered)
 
     @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
+    def test_discovers_service_url_from_a_code_700_json_body(self):
+        fetch_cookie = load_module()
+        target = "https://test-mi.gaotu100.com/course-center/b/course/list"
+        service_url = "https://test-mi.gaotu100.com/course-center/b/course/list"
+        body = (
+            '{"code":700,"data":"https://test-cas.baijia.com/cas/login?service='
+            'https%3A%2F%2Ftest-mi.gaotu100.com%2Fcourse-center%2Fb%2Fcourse%2Flist",'
+            '"msg":"no auth"}'
+        )
+        response = SimpleNamespace(status=200, headers={}, read=lambda *a: body.encode("utf-8"))
+        opener = SimpleNamespace(open=mock.Mock(return_value=response))
+
+        discovered = fetch_cookie.discover_cas_service(target, timeout=30.0, opener=opener)
+
+        self.assertEqual(service_url, discovered)
+
+    @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
+    def test_rejects_a_code_700_body_pointing_at_an_untrusted_host(self):
+        fetch_cookie = load_module()
+        target = "https://test-mi.gaotu100.com/course-center/b/course/list"
+        body = (
+            '{"code":700,"data":"https://login.evil.com/cas/login?service='
+            'https%3A%2F%2Ftest-mi.gaotu100.com%2Fx"}'
+        )
+        response = SimpleNamespace(status=200, headers={}, read=lambda *a: body.encode("utf-8"))
+        opener = SimpleNamespace(open=mock.Mock(return_value=response))
+
+        with self.assertRaisesRegex(ValueError, "可信 CAS"):
+            fetch_cookie.discover_cas_service(target, timeout=30.0, opener=opener)
+
+    @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
     def test_rejects_a_redirect_to_an_untrusted_login_host(self):
         fetch_cookie = load_module()
         target = "https://service.example.com/api/status"
