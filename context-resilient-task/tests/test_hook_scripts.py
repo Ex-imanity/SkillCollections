@@ -224,6 +224,30 @@ class HookScriptsTest(unittest.TestCase):
             ["new name.py", "other file.py", "added.py"],
         )
 
+    # -- cross-platform command hardening (Windows support) ------------------
+    def test_scripts_accept_tag_arg(self):
+        # argparse must accept --tag; otherwise a hook command exits 2, which on
+        # a Stop hook would BLOCK the session. Regression guard.
+        project = self.work_root / "project"
+        project.mkdir()
+        self.init_mrs(project / ".task-state", goal="tag arg")
+        for name in ("restore_context.py", "precompact_digest.py", "gate_check.py"):
+            result = self.run_script(name, "--hook", "test", "--tag", "crt-auto-hook:Test", cwd=project)
+            self.assertEqual(result.returncode, 0, f"{name} rejected --tag: {result.stderr}")
+
+    def test_build_command_is_portable(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import install_hooks  # noqa: WPS433
+        cmd = install_hooks.build_command("Stop", "gate_check.py")
+        # No shell-specific operators (would break across sh/PowerShell/cmd).
+        for bad in ("2>/dev/null", "2>NUL", "; exit 0", "#"):
+            self.assertNotIn(bad, cmd, f"command should not contain {bad!r}: {cmd}")
+        # Detection token travels as a --tag arg.
+        self.assertIn("--tag crt-auto-hook:Stop", cmd)
+        # Interpreter is a bare launcher, not a quoted first token (PowerShell trap).
+        self.assertFalse(cmd.startswith('"'), cmd)
+        self.assertTrue(cmd.split(" ", 1)[0] in ("python", "python3"), cmd)
+
 
 if __name__ == "__main__":
     unittest.main()

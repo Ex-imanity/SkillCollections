@@ -22,13 +22,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-# Stable token embedded in each command so we can find/replace/remove our own
-# hooks regardless of the interpreter path or install location.
+# Stable token embedded in each command (as a --tag arg) so we can
+# find/replace/remove our own hooks regardless of interpreter or install path.
 TOKEN = "crt-auto-hook:"
 
 # event -> script filename
@@ -39,15 +40,26 @@ EVENT_SCRIPTS = {
 }
 
 
+def launcher() -> str:
+    """Interpreter name to invoke, chosen for cross-shell portability.
+
+    A bare name (not the quoted absolute sys.executable) is used on purpose:
+    PowerShell — a possible Windows hook shell — treats a quoted first token as
+    a string literal, not a command. A bare launcher runs correctly in sh, Git
+    Bash, PowerShell, and cmd. The scripts are stdlib-only, so any Python 3.8+
+    on PATH runs them.
+    """
+    return "python" if os.name == "nt" else "python3"
+
+
 def build_command(event: str, script: str) -> str:
-    py = sys.executable or "python3"
     script_path = SCRIPT_DIR / script
     hook_arg = event.lower()
-    # 2>/dev/null keeps stderr out of the transcript; `; exit 0` guarantees the
-    # hook is non-blocking; the trailing comment is our detection token.
-    return (
-        f'"{py}" "{script_path}" --hook {hook_arg} 2>/dev/null; exit 0  # {TOKEN}{event}'
-    )
+    # No shell operators (no `2>/dev/null`, `; exit 0`, or `#` comment): the
+    # scripts already always exit 0 in --hook mode and emit nothing on stderr,
+    # so the command is a plain, portable invocation. The --tag arg carries our
+    # detection token and is ignored by the scripts.
+    return f'{launcher()} "{script_path}" --hook {hook_arg} --tag {TOKEN}{event}'
 
 
 def is_ours(command: str) -> bool:

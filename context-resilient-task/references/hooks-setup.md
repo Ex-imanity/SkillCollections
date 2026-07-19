@@ -36,14 +36,39 @@ python3 "$SKILL/scripts/install_hooks.py" --uninstall
 
 The installer:
 - **merges** into existing `settings.json` (keeps your other keys and hooks);
-- is **idempotent** (re-running never duplicates);
+- is **idempotent** (re-running never duplicates), and **atomic** (writes via a
+  temp file, so a crash never leaves a truncated `settings.json`);
 - **refuses** to touch invalid JSON (never clobbers a broken file);
-- hard-codes the current Python interpreter (`sys.executable`) and absolute
-  script paths, and tags each command with `# crt-auto-hook:<Event>` so
-  `--uninstall` can find exactly its own entries.
+- writes a **shell-portable** command: a bare launcher (`python3` on POSIX,
+  `python` on Windows) + the absolute script path, with a `--tag
+  crt-auto-hook:<Event>` marker so `--uninstall` removes exactly its own entries
+  (and only those, even when a group also holds one of your hooks).
 
 > After moving or reinstalling the skill, re-run the installer so the absolute
 > paths point at the new location (re-running is safe — it refreshes in place).
+
+### Cross-platform notes
+
+The generated command deliberately contains **no shell operators** (`2>/dev/null`,
+`; exit 0`, `#` comments), so the same string runs under every shell Claude Code
+might use:
+
+| OS | Hook shell | Works because |
+|----|------------|---------------|
+| macOS / Linux | `sh -c` | plain `python3 "…"` invocation |
+| Windows (Git Bash present) | Git Bash (POSIX) | same as above |
+| Windows (no Git Bash) | PowerShell | bare launcher is a command, not a quoted string; script path is a quoted arg |
+
+Requirements / gotchas:
+- **`python3` (POSIX) / `python` (Windows) must be on PATH** in the non-interactive
+  shell. The scripts are stdlib-only, so any Python ≥ 3.8 works — it need not be
+  the interpreter that ran the installer.
+- Non-blocking is guaranteed by the **scripts** (they always exit 0 in `--hook`
+  mode and print nothing to stderr), not by shell tricks — so dropping the
+  operators is safe on the `Stop` hook.
+- Windows without Git Bash: if hooks misbehave under PowerShell, install Git for
+  Windows and set `CLAUDE_CODE_GIT_BASH_PATH` in `~/.claude/settings.json` to
+  route hooks through Git Bash.
 
 ## Codex, Gemini CLI, and other agents
 
