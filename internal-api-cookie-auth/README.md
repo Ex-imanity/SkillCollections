@@ -85,8 +85,9 @@ python scripts/fetch_cookie.py \
   --username your-account
 ```
 
-该探测不携带 Cookie，也不跟随跳转。只有响应跳转到与环境匹配的
-`cas.baijia.com` 或 `test-cas.baijia.com`，且包含 HTTPS `service` 参数时，工具才会
+该探测不携带 Cookie，也不跟随跳转。只有取到可信 CAS 信号——`302/303/307/308` 跳转，
+或(高途常见)响应体 `{"code":700,"data":"<cas 登录 url>"}`——其 CAS 主机与环境匹配
+(`cas.baijia.com` 或 `test-cas.baijia.com`)且带唯一 HTTPS `service` 参数时,工具才会
 继续登录。若已知 CAS 服务地址，也可改用 `--cas-service-url https://.../auth/login/cas`。
 
 不要把上架、下架、创建、更新、删除等写接口作为探测地址。先选择健康检查、详情查询或
