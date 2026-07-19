@@ -37,6 +37,10 @@
 │   ├── SKILL.md
 │   ├── examples/
 │   └── references/
+├── internal-api-cookie-auth/
+│   ├── SKILL.md
+│   ├── scripts/
+│   └── tests/
 └── docs/
     └── plans/
 ```
@@ -49,6 +53,7 @@
 | `case-lite` | 小需求测试用例生成流程，从飞书文档选章到生成用例，再可选写回搬山 | 单一功能点、1-2 篇文档、无需模块拆分的小需求用例生成 | 依赖飞书文档 MCP；搬山 MCP 推荐配置；所有阶段产物必须落盘到 `case-lite-output/{slug}/`，章节选择和补充信息确认是人工检查点 |
 | `context-resilient-task` | 上下文弹性任务管理，用磁盘上的 MRS 文件恢复长期任务状态 | 多阶段开发、跨会话继续、`/clear` 后恢复、避免 agent 忘记待办或编造状态 | `task_state.md` 是 source of truth，必须原地更新；`progress.md` 和 `decisions.md` 只追加；缺少 Tier 0 文件时应先初始化 MRS |
 | `dify-dsl-generator` | 生成、重构或评审 Dify workflow/chatflow/agent DSL | 把业务需求、后端接口、规则系统或已有 YAML 转为可导入的 Dify DSL | 先冻结输入输出和应用形态，再写 YAML；优先复用 `references/` 和已有示例中的验证模式；输出前检查节点类型、变量路径、edge 和结构化输出 |
+| `internal-api-cookie-auth` | 为受支持内部 API 获取短期 CAS Cookie，并规范认证失败后的处理 | Internal AD/UOS、Athena、Compass 的接口开发与排障，Cookie 缺失或 HTTP 401 | 仅限允许的内部域名；不输出或持久化凭证；403 视为可能的权限问题，禁止盲目重试写操作 |
 
 ## 各 Skill 简介
 

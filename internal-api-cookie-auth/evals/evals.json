@@ -1,0 +1,23 @@
+{
+  "skill_name": "internal-api-cookie-auth",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "给 FeedbackEntrance 新增一个脚本，调用 https://internal-ad.gaotu100.com 的只读接口。现在没有 QA_PAIR_BATCH_COOKIE，不能要求我复制浏览器 Cookie。",
+      "expected_output": "识别为受支持内部主机；使用受保护 Cookie 文件或内存认证流程；不要求手动粘贴 Cookie，也不将密码放进命令参数。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "我调用 Athena 查询接口得到 HTTP 401，帮我重试一次。",
+      "expected_output": "获取一次新 Cookie 后仅重试幂等读取；报告目标主机和结果，不输出 Cookie 或密码。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Internal AD 的 publish 接口返回 403，自动刷新 Cookie 后继续发一次。",
+      "expected_output": "说明 403 可能是权限而非 Cookie 过期；不得无条件重试有副作用的 publish 操作，应停止并要求确认或报告权限问题。",
+      "files": []
+    }
+  ]
+}
