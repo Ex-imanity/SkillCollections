@@ -1,6 +1,6 @@
 ---
 name: internal-api-cookie-auth
-description: Handle Cookie authentication for internal HTTPS API calls without asking users to manually paste session Cookies. Use this skill whenever a script, service, or API debugging task lacks a Cookie, reports a session expiry, redirects to cas.baijia.com or test-cas.baijia.com, returns HTTP 401, returns a CAS-style JSON code 700, or may have failed because of authentication. Also use it when the user pastes a browser "copy as cURL" command for an internal host (gaotu100.com, baijia.com) and wants it turned into a repeatable, authenticated API call: it teaches how to wrap the request in any form (one-off command, bash, or Python) with a fresh Cookie and minimal headers, rather than reusing the pasted Cookie, and to confirm before replaying side-effecting POST/PUT/PATCH/DELETE calls. Use it proactively before hardcoding a Cookie or asking the user to export one. Only probe an unknown host after the user has authorized a real read-only network test; treat HTTP 403 as a possible authorization failure, not automatic evidence that a Cookie refresh will solve it.
+description: Handle Cookie (CAS) authentication for internal HTTPS API calls without asking users to manually paste session Cookies. Use this skill whenever a script, service, or API debugging task lacks a Cookie, reports a session expiry, redirects to cas.baijia.com or test-cas.baijia.com, returns HTTP 401, returns a CAS-style JSON code 700, or may have failed because of authentication. Also use it when the user pastes a browser "copy as cURL" command for an internal host (gaotu100.com, baijia.com): it teaches how to wrap the request in any form (command, bash, or Python) with a fresh Cookie and minimal headers instead of the pasted Cookie, and to confirm before replaying side-effecting POST/PUT/PATCH/DELETE calls. Use it before hardcoding a Cookie. Only probe an unknown host after the user authorizes a real read-only test; treat HTTP 403 as a possible authorization failure, not evidence that a Cookie refresh will help.
 ---
 
 # Internal API Cookie Authentication
@@ -25,14 +25,17 @@ paths:
 
 1. The user or repository configuration provides an explicit HTTPS
    `--cas-service-url`.
-2. A user-authorized, read-only `--discover-cas` probe receives a redirect to
-   the CAS host matching the target environment and includes one HTTPS
-   `service` parameter.
+2. A user-authorized, read-only `--discover-cas` probe gets back a trusted-CAS
+   signal — either a `302/303/307/308` redirect, or (the common gaotu case) a
+   JSON body `{"code":700,"data":"<cas login url>"}` — whose CAS host matches the
+   target environment and carries one HTTPS `service` parameter.
 
-The probe sends no Cookie, follows no redirect, and accepts only
-`https://cas.baijia.com/cas/login` for production targets or
-`https://test-cas.baijia.com/cas/login` for `test-` targets. A redirect to any
-other login host is not evidence that this Skill may send credentials there.
+The probe sends no Cookie and follows no redirect. It accepts a `service` only
+from `https://cas.baijia.com/cas/login` for production targets or
+`https://test-cas.baijia.com/cas/login` for `test-` targets, whether that login
+URL arrives as a redirect `Location` header or as the `data` field of a
+`code:700` body. A signal pointing at any other login host is not evidence that
+this Skill may send credentials there.
 
 The default dependency path is `/Users/gaotu/Projects/baijia-cookie`. Override
 it with `BAIJIA_COOKIE_TOOL_DIR` or `--cookie-tool-dir` when the local checkout
@@ -79,7 +82,7 @@ python <skill-root>/scripts/fetch_cookie.py \
 ```
 
 For an unknown host whose safe read-only URL has been authorized, let the helper
-derive the service URL from a trusted CAS redirect:
+derive the service URL from a trusted CAS redirect or `code:700` JSON body:
 
 ```bash
 python <skill-root>/scripts/fetch_cookie.py \
@@ -91,8 +94,8 @@ python <skill-root>/scripts/fetch_cookie.py \
 
 For a write operation, do not use the write endpoint as an authentication probe.
 Ask for or locate a safe read-only probe URL first. If discovery finds no trusted
-CAS redirect, stop and request an explicit `--cas-service-url` rather than
-guessing a login route.
+CAS signal (neither a redirect nor a `code:700` `data` login URL), stop and
+request an explicit `--cas-service-url` rather than guessing a login route.
 
 The output file has mode `0600` and contains only the Cookie header value. Pass
 it to programs that support `--cookie-file`, then remove it as soon as the
@@ -134,12 +137,14 @@ Whatever the form, follow these principles.
    back only if the call fails without it. (Measured example: `test-mi` needs
    only the Cookie + `content-type`; `b_client`, `accept`, `uid` are all
    unnecessary.)
-4. Gate side effects. Replay `GET`/`HEAD` freely. For any method that can mutate
-   state — `POST`, `PUT`, `PATCH`, `DELETE` — you MUST confirm with the user
-   before sending, even the first time, because a pasted `POST` may create,
-   update, or delete. A `POST` that is plainly a read (a `/list`, `/query`,
-   `/search`, or `/detail` call) is lower risk but still confirm if unsure. Do
-   not auto-retry a side-effecting call.
+4. Gate side effects. Replay `GET`/`HEAD` freely. A `POST` that is plainly a read
+   (a `/list`, `/query`, `/search`, or `/detail` call) is lower risk but still
+   confirm if unsure. Do not auto-retry a side-effecting call.
+
+> 🔴 CHECKPOINT — 🛑 STOP before replaying any `POST`/`PUT`/`PATCH`/`DELETE`.
+> Get explicit user confirmation that the request is safe to replay, because a
+> pasted write may create, update, or delete. Never send or auto-retry a
+> side-effecting call without it (`call_api.py` enforces this via `--confirm-write`).
 
 Reference implementation (optional): `scripts/call_api.py` embodies the above —
 minimal allowlist headers (`--keep-header` to add more), a `--confirm-write`
@@ -180,6 +185,22 @@ python <skill-root>/scripts/call_api.py --curl-file request.curl \
   untrusted redirect/`data` value.
 - Fresh Cookie with `403`: report that authentication succeeded but the account
   may lack authorization; do not repeatedly refresh the session.
+
+## Do Not (Anti-patterns)
+
+- Do not reuse, hardcode, or commit a pasted or browser-exported Cookie — it
+  expires and leaks the session.
+- Do not guess a CAS service URL from a bare `401`, an HTML login page, or an
+  untrusted redirect / `code:700` `data`; require `--cas-service-url` or the
+  browser fallback instead.
+- Do not replay a `POST`/`PUT`/`PATCH`/`DELETE` without explicit user
+  confirmation, and never auto-retry a side-effecting call.
+- Do not forward browser-noise headers by default; keep the wrapper minimal
+  (Cookie + `content-type`), adding others back only when a call fails without them.
+- Do not add a `--password` flag or place credentials or Cookies in argv, URLs,
+  logs, errors, tests, or chat; pass a password only via the child-process env.
+- Do not loop-refresh the session on a `403`; treat it as a likely authorization
+  gap, not a stale Cookie.
 
 ## Completion Report
 
