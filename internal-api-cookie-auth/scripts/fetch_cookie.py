@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Fetch a supported internal site's Cookie header into a mode-0600 file."""
+"""Fetch a supported internal site's Cookie header into a mode-0600 file.
+
+Self-contained: authentication runs through the bundled ``cas_login`` module
+(Python standard library only), so the Skill needs no external Node.js tool and
+no hardcoded checkout path.
+"""
 
 import argparse
 import getpass
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Callable, Optional, Tuple
@@ -13,19 +17,12 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cas_login  # noqa: E402
+
 
 DEFAULT_USERNAME_ENV = "SITE_USERNAME"
 DEFAULT_PASSWORD_ENV = "SITE_PASSWORD"
-DEFAULT_TOOL_DIR_ENV = "BAIJIA_COOKIE_TOOL_DIR"
-DEFAULT_TOOL_DIR = "/Users/gaotu/Projects/baijia-cookie"
-BUILT_IN_HOSTS = {
-    "internal-ad.gaotu100.com",
-    "test-internal-ad.gaotu100.com",
-    "athena.baijia.com",
-    "test-athena.baijia.com",
-    "dis.baijia.com",
-    "test-dis.baijia.com",
-}
 REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 
 
@@ -54,11 +51,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="probe an authorized read-only URL once to discover a trusted CAS redirect",
     )
-    parser.add_argument(
-        "--cookie-tool-dir",
-        default=os.environ.get(DEFAULT_TOOL_DIR_ENV, DEFAULT_TOOL_DIR),
-        help=f"baijia-cookie directory; env fallback: {DEFAULT_TOOL_DIR_ENV}",
-    )
     parser.add_argument("--timeout", type=float, default=30.0, help="login timeout in seconds")
     return parser.parse_args()
 
@@ -71,7 +63,7 @@ def validate_target_url(url: str) -> str:
 
 
 def is_built_in_host(url: str) -> bool:
-    return urlparse(url).hostname.lower() in BUILT_IN_HOSTS
+    return cas_login.has_builtin_service(url)
 
 
 def expected_cas_host(target_url: str) -> str:
@@ -175,56 +167,35 @@ def resolve_credentials(
     return resolved_username, password
 
 
+def password_for_target(target_url: str, username: str, password: str) -> str:
+    """Test hosts (``test-`` prefix) default the password to the username."""
+    if password:
+        return password
+    if (urlparse(target_url).hostname or "").lower().startswith("test-"):
+        return username
+    return password
+
+
 def fetch_cookie(
     url: str,
     username: str,
     password: str,
-    password_env: str,
-    cookie_tool_dir: str,
     timeout: float,
     cas_service_url: Optional[str] = None,
-    runner=subprocess.run,
+    opener=None,
 ) -> str:
+    """Log in via the bundled cas_login module and return the Cookie header."""
     target_url = validate_target_url(url)
-    command = [
-        "node",
-        "bin/get-site-cookie.mjs",
-        "--url",
+    cookie = cas_login.login(
         target_url,
-        "--username",
         username,
-        "--password-env",
-        password_env,
-    ]
-    if cas_service_url:
-        command.extend(["--cas-service-url", cas_service_url])
-    environment = os.environ.copy()
-    environment[password_env] = password
-    try:
-        result = runner(
-            command,
-            cwd=cookie_tool_dir,
-            env=environment,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError("无法运行 Cookie 工具：请安装 Node.js 并检查 --cookie-tool-dir") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"Cookie 获取超时（{timeout:g} 秒）") from exc
-
-    if result.returncode != 0:
-        detail = result.stderr.strip()
-        suffix = f": {detail[:500]}" if detail else ""
-        raise RuntimeError(f"Cookie 获取失败（退出码 {result.returncode}）{suffix}")
-    try:
-        cookie = json.loads(result.stdout).get("cookieHeader", "").strip()
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("Cookie 工具未返回有效 JSON") from exc
+        password,
+        cas_service_url=cas_service_url,
+        opener=opener,
+        timeout=timeout,
+    ).strip()
     if not cookie:
-        raise RuntimeError("Cookie 工具未返回 cookieHeader")
+        raise RuntimeError("CAS 登录未下发 Cookie")
     return cookie
 
 
@@ -260,14 +231,13 @@ def main() -> int:
         )
         if not username:
             raise RuntimeError(f"请使用 --username 或设置 {args.username_env}")
+        password = password_for_target(target_url, username, password)
         if not password:
             raise RuntimeError(f"请设置 {args.password_env} 或在交互终端输入密码")
         cookie = fetch_cookie(
             target_url,
             username,
             password,
-            args.password_env,
-            args.cookie_tool_dir,
             args.timeout,
             cas_service_url or None,
         )

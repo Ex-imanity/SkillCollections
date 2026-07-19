@@ -25,32 +25,27 @@ class FetchCookieTest(unittest.TestCase):
         self.assertTrue(SCRIPT_PATH.is_file())
 
     @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
-    def test_fetches_cookie_without_passing_password_as_a_command_argument(self):
+    def test_fetch_cookie_delegates_to_cas_login(self):
         fetch_cookie = load_module()
-        runner = mock.Mock(
-            return_value=SimpleNamespace(
-                returncode=0,
-                stdout='{"cookieHeader": "SESSION=fresh; ROLE=operator"}',
-                stderr="",
+        with mock.patch.object(fetch_cookie.cas_login, "login", return_value="SESSION=fresh; ROLE=operator") as login:
+            cookie = fetch_cookie.fetch_cookie(
+                url="https://internal-ad.gaotu100.com/welcome",
+                username="operator",
+                password="secret",
+                timeout=30.0,
             )
-        )
-
-        cookie = fetch_cookie.fetch_cookie(
-            url="https://internal-ad.gaotu100.com/welcome",
-            username="operator",
-            password="secret",
-            password_env="SITE_PASSWORD",
-            cookie_tool_dir="/opt/baijia-cookie",
-            timeout=30.0,
-            runner=runner,
-        )
 
         self.assertEqual("SESSION=fresh; ROLE=operator", cookie)
-        command = runner.call_args.args[0]
-        environment = runner.call_args.kwargs["env"]
-        self.assertNotIn("secret", command)
-        self.assertEqual("secret", environment["SITE_PASSWORD"])
-        self.assertEqual("/opt/baijia-cookie", runner.call_args.kwargs["cwd"])
+        self.assertEqual("https://internal-ad.gaotu100.com/welcome", login.call_args.args[0])
+        self.assertEqual("operator", login.call_args.args[1])
+
+    @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
+    def test_password_defaults_to_username_on_test_hosts(self):
+        fetch_cookie = load_module()
+
+        self.assertEqual("me", fetch_cookie.password_for_target("https://test-mi.gaotu100.com/x", "me", ""))
+        self.assertEqual("", fetch_cookie.password_for_target("https://mi.gaotu100.com/x", "me", ""))
+        self.assertEqual("kept", fetch_cookie.password_for_target("https://test-mi.gaotu100.com/x", "me", "kept"))
 
     @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
     def test_writes_cookie_to_a_mode_0600_file(self):
@@ -126,30 +121,20 @@ class FetchCookieTest(unittest.TestCase):
             fetch_cookie.discover_cas_service(target, timeout=30.0, opener=opener)
 
     @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
-    def test_passes_discovered_service_url_to_the_cookie_tool(self):
+    def test_passes_discovered_service_url_through_to_cas_login(self):
         fetch_cookie = load_module()
-        runner = mock.Mock(
-            return_value=SimpleNamespace(
-                returncode=0,
-                stdout='{"cookieHeader": "SESSION=fresh"}',
-                stderr="",
+        with mock.patch.object(fetch_cookie.cas_login, "login", return_value="SESSION=fresh") as login:
+            fetch_cookie.fetch_cookie(
+                url="https://service.example.com/api/status",
+                username="operator",
+                password="secret",
+                timeout=30.0,
+                cas_service_url="https://service.example.com/auth/login/cas",
             )
-        )
-
-        fetch_cookie.fetch_cookie(
-            url="https://service.example.com/api/status",
-            username="operator",
-            password="secret",
-            password_env="SITE_PASSWORD",
-            cookie_tool_dir="/opt/baijia-cookie",
-            timeout=30.0,
-            cas_service_url="https://service.example.com/auth/login/cas",
-            runner=runner,
-        )
 
         self.assertEqual(
-            ["--cas-service-url", "https://service.example.com/auth/login/cas"],
-            runner.call_args.args[0][-2:],
+            "https://service.example.com/auth/login/cas",
+            login.call_args.kwargs["cas_service_url"],
         )
 
 

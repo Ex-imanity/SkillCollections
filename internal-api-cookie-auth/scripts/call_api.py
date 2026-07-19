@@ -18,7 +18,6 @@ Principles it enforces:
 
 import argparse
 import json
-import os
 import shlex
 import sys
 from pathlib import Path
@@ -180,14 +179,13 @@ def obtain_cookie(args: argparse.Namespace, target_url: str) -> str:
     )
     if not username:
         raise RuntimeError(f"请使用 --username 或设置 {args.username_env}")
+    password = fetch_cookie.password_for_target(target_url, username, password)
     if not password:
         raise RuntimeError(f"请设置 {args.password_env} 或在交互终端输入密码")
     return fetch_cookie.fetch_cookie(
         target_url,
         username,
         password,
-        args.password_env,
-        args.cookie_tool_dir,
         args.timeout,
         cas_service_url or None,
     )
@@ -216,11 +214,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     authentication = parser.add_mutually_exclusive_group()
     authentication.add_argument("--cas-service-url", default="", help="explicit HTTPS CAS service URL")
     authentication.add_argument("--discover-cas", action="store_true", help="probe once for a trusted CAS redirect or code:700 service URL")
-    parser.add_argument(
-        "--cookie-tool-dir",
-        default=os.environ.get(fetch_cookie.DEFAULT_TOOL_DIR_ENV, fetch_cookie.DEFAULT_TOOL_DIR),
-        help=f"baijia-cookie directory; env fallback: {fetch_cookie.DEFAULT_TOOL_DIR_ENV}",
-    )
     parser.add_argument("--keep-header", action="append", default=[], metavar="NAME", help="force-forward a header otherwise dropped")
     parser.add_argument("--drop-header", action="append", default=[], metavar="NAME", help="drop an additional header")
     parser.add_argument("--confirm-write", action="store_true", help="required to send a side-effecting method (non GET/HEAD); confirm with the user first")

@@ -7,10 +7,12 @@ description: Handle Cookie (CAS) authentication for internal HTTPS API calls wit
 
 ## Purpose
 
-Obtain a short-lived Cookie from the local `baijia-cookie` CAS tool only when it
-is needed, then pass it to the target script through a protected file or process
-environment. This avoids copying session Cookies into commands, source files, or
-chat output while preserving the user's existing authentication choices.
+Obtain a short-lived Cookie through the bundled, self-contained CAS login script
+(`scripts/cas_login.py`, Python standard library only — no Node.js, no external
+checkout, no hardcoded path) only when it is needed, then pass it to the target
+script through a protected file or process environment. This avoids copying
+session Cookies into commands, source files, or chat output while preserving the
+user's existing authentication choices.
 
 ## Scope And Trust Boundary
 
@@ -37,9 +39,9 @@ URL arrives as a redirect `Location` header or as the `data` field of a
 `code:700` body. A signal pointing at any other login host is not evidence that
 this Skill may send credentials there.
 
-The default dependency path is `/Users/gaotu/Projects/baijia-cookie`. Override
-it with `BAIJIA_COOKIE_TOOL_DIR` or `--cookie-tool-dir` when the local checkout
-is elsewhere.
+Built-in service entries (Internal AD / UOS, Athena, Compass) are resolved by
+`scripts/cas_login.py` with no configuration. `test-` hosts default the password
+to the username; production hosts require `SITE_PASSWORD`.
 
 ## Authentication Decision
 
@@ -102,8 +104,7 @@ it to programs that support `--cookie-file`, then remove it as soon as the
 operation is complete:
 
 ```bash
-python scripts/batch_qapair_status.py offline --ids-file qapair_ids.txt \
-  --cookie-file "$COOKIE_FILE" --execute
+python /path/to/your-project/api_client.py --cookie-file "$COOKIE_FILE" --execute
 rm -f "$COOKIE_FILE"
 ```
 
@@ -176,9 +177,9 @@ python <skill-root>/scripts/call_api.py --curl-file request.curl \
 
 ## Failure Handling
 
-- Missing Node.js or cookie-tool checkout: report the missing dependency and
-  the expected path. Do not invent a browser, SSO, or password-based fallback.
-- Login failure: surface the tool's sanitized error; do not expose credentials.
+- Login failure (bad account/password, CAS did not return the expected fields):
+  surface the script's sanitized error; do not expose credentials. Do not invent
+  a browser, SSO, or alternate password source.
 - Unknown host with no trusted CAS redirect and no `code:700` `data` pointing at
   a trusted CAS login URL: stop and request an explicit `--cas-service-url` or
   browser fallback. Do not guess from a bare `401`, an HTML login page, or an

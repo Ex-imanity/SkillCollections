@@ -1,25 +1,15 @@
 # 内部接口 Cookie 认证
 
 这个 Skill 用于开发和排查调用内部 HTTP 接口的脚本，无需手动导出或粘贴会话 Cookie。
-它会调用本机的 `baijia-cookie` 工具获取新的 CAS Cookie，并将其写入权限为 `0600`
-的文件。内置站点可以直接登录；其他内部站点必须先由一次已获用户授权的只读请求证明其
-确实跳转到可信 CAS，才会提交登录凭证。
+它通过内置的 `scripts/cas_login.py` 完成 CAS 登录、获取新的 Cookie，并写入权限为
+`0600` 的文件。内置站点可以直接登录；其他内部站点必须先由一次已获用户授权的只读请求
+证明其确实跳转到可信 CAS，才会提交登录凭证。
 
 ## 依赖
 
-Cookie 工具的默认目录：
-
-```text
-/Users/gaotu/Projects/baijia-cookie
-```
-
-目录不同可通过环境变量覆盖：
-
-```bash
-export BAIJIA_COOKIE_TOOL_DIR=/path/to/baijia-cookie
-```
-
-该目录需要已安装 Node.js 依赖。
+无外部依赖：纯 Python 标准库，无需 Node.js，无需外部工具目录，无硬编码路径，可独立分发。
+凭证通过 `SITE_USERNAME` / `SITE_PASSWORD` 环境变量或交互式提示提供；`test-` 测试主机
+在未设密码时默认用账号名作为密码。
 
 ## 手动使用
 
@@ -33,11 +23,11 @@ python scripts/fetch_cookie.py \
   --username your-account
 ```
 
-随后将 Cookie 文件传给支持 `--cookie-file` 的脚本：
+随后将 Cookie 文件传给支持 `--cookie-file` 的目标脚本，用完即删：
 
 ```bash
-python /Users/gaotu/Projects/FeedbackEntrance/scripts/batch_qapair_status.py \
-  offline --ids-file qapair_ids.txt --cookie-file "$COOKIE_FILE" --execute
+python /path/to/your-project/api_client.py \
+  --cookie-file "$COOKIE_FILE" --execute
 rm -f "$COOKIE_FILE"
 ```
 
