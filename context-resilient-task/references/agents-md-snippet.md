@@ -42,3 +42,23 @@ This snippet ensures all agents (Claude Code, Codex, etc.) follow the same MRS u
 - 已完成的任务归档到 `.task-state/archive/<slug>-completed/`
 
 完整规则见项目内的 `references/multi-task-workflow.md`（如已安装 context-resilient-task skill）。
+
+## 自动上下文恢复（非 Claude Code agent）
+
+Claude Code 通过 hooks 自动恢复；其他 agent（Codex、Gemini CLI 等）用以下脚本达到同样效果。`<skill-root>` 为 context-resilient-task skill 的安装路径，脚本无第三方依赖、只读、无 MRS 时静默。
+
+- **会话开始 / `/clear` 后 —— 必须先恢复**：运行
+  `python <skill-root>/scripts/restore_context.py`
+  读取它打印的 "Reconstructed Task State"，据此重建目标、待办、下一步；不要凭记忆继续。
+- **结束前 —— 自检漂移**：运行
+  `python <skill-root>/scripts/gate_check.py`
+  若提示 snapshot 落后于工作区，先更新 `snapshot.md` 并在 `progress.md` 追加记录再结束。
+- **上下文将被压缩前（可选）**：运行
+  `python <skill-root>/scripts/precompact_digest.py`
+  把关键状态打印到对话中，帮助摘要保留要点。
+
+以上"会话开始运行脚本"是给模型的指令（guidance），依赖模型遵守，无需 agent 原生 hook 支持，任何 agent 通用。
+
+Codex 较新版本支持原生命令 hook（如 `SessionStart`），可直接执行 `restore_context.py` 实现强制触发；配置路径与各事件输出格式随版本变化，接入前请查当前 Codex 文档（非托管 hook 需先信任/审核）。**不要**用 `~/.codex/config.toml` 的 `notify`：它仅在 `agent-turn-complete`（回合结束后）触发，且以 JSON 参数传入，脚本无法据此在会话开始恢复。
+
+Claude Code 用户改用一键安装：`python <skill-root>/scripts/install_hooks.py`（详见 `references/hooks-setup.md`）。

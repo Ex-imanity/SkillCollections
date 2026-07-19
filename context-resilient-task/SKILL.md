@@ -193,9 +193,37 @@ python <skill-root>/scripts/list_mrs.py --json  # JSON for agents
 python <skill-root>/scripts/generate_snapshot.py .task-state
 python <skill-root>/scripts/generate_snapshot.py .task-state --project-root .  # explicit source scan root
 python <skill-root>/scripts/generate_snapshot.py --archive .task-state  # also archive
+
+# Auto-hook scripts (read-only, non-blocking, silent when no MRS) — see Automatic Hooks below
+python <skill-root>/scripts/restore_context.py     # rehydrate task state (session start / after /clear)
+python <skill-root>/scripts/precompact_digest.py   # survival digest before compaction
+python <skill-root>/scripts/gate_check.py          # remind to flush state if the tree drifted
+python <skill-root>/scripts/install_hooks.py       # wire the above into Claude Code settings.json
 ```
 
 All scripts read templates from `assets/` so the rendered MRS files always match the documented schema. When the snapshot target is `.task-state` or `.task-state-<slug>`, `generate_snapshot.py` scans that directory's parent project for recently modified source files unless `--project-root` is provided.
+
+## Automatic Hooks (optional)
+
+Reading the MRS still depends on *remembering to*. The auto-hooks make an agent
+rehydrate, flush, and self-check the MRS at the right moments unprompted. All are
+read-only, non-blocking (exit 0), and **silent when no `.task-state/` exists**, so
+a single global install is safe for every project.
+
+| Event | Script | Effect |
+|-------|--------|--------|
+| Session start / after `/clear` | `restore_context.py` | Prints "Reconstructed Task State" so a fresh context starts oriented |
+| Before compaction | `precompact_digest.py` | Surfaces a survival digest the summarizer should keep |
+| End of turn (`Stop`) | `gate_check.py` | Reminds (never blocks) when the tree drifted past the last snapshot |
+
+**Claude Code:** `python <skill-root>/scripts/install_hooks.py` (add `--project` to
+scope to one repo, `--uninstall` to remove, `--dry-run` to preview). Merges into
+`settings.json`, idempotent, refuses invalid JSON.
+
+**Codex / Gemini / other agents:** wire the same scripts via `AGENTS.md` — see the
+auto-recovery block in [references/agents-md-snippet.md](references/agents-md-snippet.md).
+
+Full details: [references/hooks-setup.md](references/hooks-setup.md).
 
 ## Codex / Multi-Agent Compatibility
 
