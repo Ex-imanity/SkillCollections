@@ -59,6 +59,6 @@ Claude Code 通过 hooks 自动恢复；其他 agent（Codex、Gemini CLI 等）
 
 以上"会话开始运行脚本"是给模型的指令（guidance），依赖模型遵守，无需 agent 原生 hook 支持，任何 agent 通用。
 
-Codex 较新版本支持原生命令 hook（如 `SessionStart`），可直接执行 `restore_context.py` 实现强制触发；配置路径与各事件输出格式随版本变化，接入前请查当前 Codex 文档（非托管 hook 需先信任/审核）。**不要**用 `~/.codex/config.toml` 的 `notify`：它仅在 `agent-turn-complete`（回合结束后）触发，且以 JSON 参数传入，脚本无法据此在会话开始恢复。
+Codex 用户可运行 `python <skill-root>/scripts/install_hooks.py --codex`，将 `SessionStart`、`PreCompact`、`Stop` 安装到当前项目 `.codex/hooks.json`，实现强制触发（新增定义需信任/审核）。**不要**用 `~/.codex/config.toml` 的 `notify`：它仅在 `agent-turn-complete`（回合结束后）触发，且无法在会话开始恢复。
 
 Claude Code 用户改用一键安装：`python <skill-root>/scripts/install_hooks.py`（详见 `references/hooks-setup.md`）。

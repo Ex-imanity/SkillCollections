@@ -332,9 +332,24 @@ python <skill-root>/scripts/install_hooks.py --uninstall
 
 > 移动或重装 skill 后请重跑安装器,让内嵌的绝对脚本路径指向新位置(重跑安全,会原地刷新)。
 
-### 其他 Agent(Codex / Gemini 等)
+### Codex —— 一键安装
 
-它们通过指令文件接同一批脚本:把 [`references/agents-md-snippet.md`](references/agents-md-snippet.md) 里的**自动上下文恢复**段落复制进项目 `AGENTS.md`(或 `GEMINI.md`),指示 agent 在**会话开始**跑 `restore_context.py`、**结束前**跑 `gate_check.py`。Codex 较新版本也支持原生 `SessionStart` hook(接入前查当前 Codex 文档);**不要**用 `notify`(它只在回合结束后触发)。
+```bash
+# 写入当前项目 ./.codex/hooks.json
+python <skill-root>/scripts/install_hooks.py --codex
+
+# 预览(不写入) / 卸载本 skill 安装的 hooks
+python <skill-root>/scripts/install_hooks.py --codex --dry-run
+python <skill-root>/scripts/install_hooks.py --codex --uninstall
+```
+
+安装器会合并现有 `.codex/hooks.json`、保持幂等、原子写入，并只卸载带
+`crt-auto-hook:<Event>` 标记的自身条目。它安装 `SessionStart`、`PreCompact` 和
+`Stop` 三个原生 hook；Codex 会在首次执行前要求信任/审核新增定义。
+
+### 其他 Agent(Gemini 等)
+
+它们通过指令文件接同一批脚本:把 [`references/agents-md-snippet.md`](references/agents-md-snippet.md) 里的**自动上下文恢复**段落复制进项目 `AGENTS.md`(或 `GEMINI.md`),指示 agent 在**会话开始**跑 `restore_context.py`、**结束前**跑 `gate_check.py`。Codex 请使用上面的原生安装器；**不要**用 `notify`(它只在回合结束后触发)。
 
 ### 跨平台
 
@@ -470,7 +485,7 @@ skill 读取 `task_state.md`，从 `Active Todos` 和 `Next Action` 中还原工
 | [`scripts/restore_context.py`](scripts/restore_context.py) | 自动 hook:会话开始/`/clear` 后重建任务状态 |
 | [`scripts/precompact_digest.py`](scripts/precompact_digest.py) | 自动 hook:压缩前打印生存摘要 |
 | [`scripts/gate_check.py`](scripts/gate_check.py) | 自动 hook:结束前漂移提醒(非阻塞) |
-| [`scripts/install_hooks.py`](scripts/install_hooks.py) | 把上述 hook 安装进 Claude Code settings.json |
+| [`scripts/install_hooks.py`](scripts/install_hooks.py) | 安装 Claude Code 或 Codex 的上述 hook |
 
 ---
 

@@ -198,7 +198,8 @@ python <skill-root>/scripts/generate_snapshot.py --archive .task-state  # also a
 python <skill-root>/scripts/restore_context.py     # rehydrate task state (session start / after /clear)
 python <skill-root>/scripts/precompact_digest.py   # survival digest before compaction
 python <skill-root>/scripts/gate_check.py          # remind to flush state if the tree drifted
-python <skill-root>/scripts/install_hooks.py       # wire the above into Claude Code settings.json
+python <skill-root>/scripts/install_hooks.py       # install into Claude Code settings.json
+python <skill-root>/scripts/install_hooks.py --codex  # install into .codex/hooks.json
 ```
 
 All scripts read templates from `assets/` so the rendered MRS files always match the documented schema. When the snapshot target is `.task-state` or `.task-state-<slug>`, `generate_snapshot.py` scans that directory's parent project for recently modified source files unless `--project-root` is provided.
@@ -219,6 +220,11 @@ a single global install is safe for every project.
 **Claude Code:** `python <skill-root>/scripts/install_hooks.py` (add `--project` to
 scope to one repo, `--uninstall` to remove, `--dry-run` to preview). Merges into
 `settings.json`, idempotent, refuses invalid JSON.
+
+**Codex:** `python <skill-root>/scripts/install_hooks.py --codex` installs the
+same three hooks into the current project's `.codex/hooks.json`. Add `--dry-run`
+to preview or `--uninstall` to remove only these hooks. Codex will request trust
+approval for new hook definitions.
 
 **Codex / Gemini / other agents:** wire the same scripts via `AGENTS.md` — see the
 auto-recovery block in [references/agents-md-snippet.md](references/agents-md-snippet.md).

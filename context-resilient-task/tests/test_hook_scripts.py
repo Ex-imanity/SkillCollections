@@ -170,6 +170,39 @@ class HookScriptsTest(unittest.TestCase):
         data = json.loads(settings.read_text(encoding="utf-8"))
         self.assertEqual(data["hooks"], {"Stop": [{"hooks": [{"type": "command", "command": "echo hi"}]}]})
 
+    def test_install_codex_project_merges_and_is_idempotent(self):
+        project = self.work_root / "codex-project"
+        hooks_file = project / ".codex" / "hooks.json"
+        hooks_file.parent.mkdir(parents=True)
+        hooks_file.write_text(
+            json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo user"}]}]}}),
+            encoding="utf-8",
+        )
+
+        self.run_script("install_hooks.py", "--codex", cwd=project)
+        self.run_script("install_hooks.py", "--codex", cwd=project)
+
+        data = json.loads(hooks_file.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(data["hooks"]), ["PreCompact", "SessionStart", "Stop"])
+        self.assertEqual(len(data["hooks"]["SessionStart"]), 1)
+        self.assertEqual(len(data["hooks"]["Stop"]), 2)
+        commands = [hook["command"] for group in data["hooks"]["SessionStart"] for hook in group["hooks"]]
+        self.assertEqual(len([command for command in commands if "crt-auto-hook:SessionStart" in command]), 1)
+        self.assertIn("restore_context.py", commands[0])
+
+    def test_uninstall_codex_preserves_user_hooks(self):
+        project = self.work_root / "codex-project"
+        project.mkdir()
+        self.run_script("install_hooks.py", "--codex", cwd=project)
+        hooks_file = project / ".codex" / "hooks.json"
+        data = json.loads(hooks_file.read_text(encoding="utf-8"))
+        data["hooks"]["Stop"].insert(0, {"hooks": [{"type": "command", "command": "echo user"}]})
+        hooks_file.write_text(json.dumps(data), encoding="utf-8")
+        self.run_script("install_hooks.py", "--codex", "--uninstall", cwd=project)
+
+        data = json.loads(hooks_file.read_text(encoding="utf-8"))
+        self.assertEqual(data["hooks"], {"Stop": [{"hooks": [{"type": "command", "command": "echo user"}]}]})
+
     def test_install_refuses_invalid_json(self):
         settings = self.work_root / "settings.json"
         settings.write_text("not json{", encoding="utf-8")

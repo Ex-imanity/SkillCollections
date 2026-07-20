@@ -70,7 +70,28 @@ Requirements / gotchas:
   Windows and set `CLAUDE_CODE_GIT_BASH_PATH` in `~/.claude/settings.json` to
   route hooks through Git Bash.
 
-## Codex, Gemini CLI, and other agents
+## Codex
+
+Codex reads project-native hooks from `.codex/hooks.json`. Use the same installer
+with `--codex`:
+
+```bash
+SKILL=~/.codex/skills/context-resilient-task
+
+# Project-scoped (Codex hook definitions are project-local)
+python3 "$SKILL/scripts/install_hooks.py" --codex
+
+# Preview without writing / remove only this skill's hooks
+python3 "$SKILL/scripts/install_hooks.py" --codex --dry-run
+python3 "$SKILL/scripts/install_hooks.py" --codex --uninstall
+```
+
+The installer merges into an existing `.codex/hooks.json`, is idempotent, and
+uses atomic writes. It installs `SessionStart`, `PreCompact`, and `Stop`; Codex
+will request trust approval before executing newly added definitions. Moving the
+skill requires re-running the installer so the embedded absolute paths refresh.
+
+## Gemini CLI and other agents
 
 The scripts are plain, dependency-free Python that only read the MRS and print to
 stdout, so any agent that can run a shell command and read the output is
@@ -84,18 +105,9 @@ project's `AGENTS.md` (or `GEMINI.md`). It instructs the agent to run
 ending**. This is guidance the model follows, not enforced execution — but it
 needs no agent-specific hook support and degrades gracefully.
 
-**Codex native hooks (optional enhancement).** Recent Codex builds support their
-own command hooks (e.g. `SessionStart`) that can run `restore_context.py`
-directly, giving enforced execution instead of guidance. The exact config path
-and each event's required output contract change between Codex versions — check
-the current Codex docs before wiring them, and note that non-managed hooks
-require a trust/review step. Do **not** use Codex's `notify` program for this: it
-fires only on `agent-turn-complete` (post-turn) and passes a JSON argument these
-scripts don't parse, so it cannot restore context at session start.
-
-> Verified via a Codex self-review of these scripts (2026-07): the scripts are
-> stdlib-only and agent-agnostic; the `notify`-at-session-start approach is not
-> feasible; AGENTS.md guidance and native `SessionStart` hooks are.
+Codex users should use the native installer above. Do **not** use Codex's
+`notify` program for this: it fires only on `agent-turn-complete` (post-turn)
+and cannot restore context at session start.
 
 ## Design choices
 

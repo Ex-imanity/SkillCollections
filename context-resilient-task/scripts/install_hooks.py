@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Install / remove the context-resilient-task auto-hooks in a Claude Code settings.json.
+"""Install / remove the context-resilient-task auto-hooks for Claude Code or Codex.
 
 Registers three non-blocking hooks that call this skill's own scripts:
   SessionStart -> restore_context.py    (rehydrate task state from the MRS)
   PreCompact   -> precompact_digest.py  (surface survival digest before compaction)
   Stop         -> gate_check.py         (remind to flush state if the tree drifted)
 
-All three no-op silently when no `.task-state/` exists, so a global install is
-safe for every project. Only Claude Code reads settings.json; other agents wire
-the same scripts via AGENTS.md (see references/agents-md-snippet.md).
+All three no-op silently when no `.task-state/` exists. Claude Code uses
+settings.json; Codex uses a project-local .codex/hooks.json.
 
 Usage:
     python install_hooks.py                 # install into ~/.claude/settings.json (global)
     python install_hooks.py --project       # install into ./.claude/settings.json
     python install_hooks.py --settings PATH # install into an explicit file
+    python install_hooks.py --codex          # install into ./.codex/hooks.json
+    python install_hooks.py --codex --dry-run
+    python install_hooks.py --codex --uninstall
     python install_hooks.py --uninstall     # remove our hooks (respects the same target flags)
     python install_hooks.py --dry-run       # print the resulting JSON, write nothing
 """
@@ -69,9 +71,15 @@ def is_ours(command: str) -> bool:
 def resolve_target(args: argparse.Namespace) -> Path:
     if args.settings:
         return Path(args.settings).expanduser().resolve()
+    if args.codex:
+        return (Path.cwd() / ".codex" / "hooks.json").resolve()
     if args.project:
         return (Path.cwd() / ".claude" / "settings.json").resolve()
     return (Path.home() / ".claude" / "settings.json").resolve()
+
+
+def target_name(args: argparse.Namespace) -> str:
+    return "Codex" if args.codex else "Claude Code"
 
 
 def load_settings(path: Path) -> dict:
@@ -132,6 +140,7 @@ def add_ours(hooks: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Install context-resilient-task auto-hooks")
     scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--codex", action="store_true", help="Target ./.codex/hooks.json")
     scope.add_argument("--project", action="store_true", help="Target ./.claude/settings.json")
     scope.add_argument("--global", dest="global_", action="store_true", help="Target ~/.claude/settings.json (default)")
     parser.add_argument("--settings", default=None, help="Explicit settings.json path")
@@ -156,7 +165,7 @@ def main() -> int:
     rendered = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
 
     if args.dry_run:
-        print(f"# {action} (dry-run) -> {target}\n")
+        print(f"# {action} {target_name(args)} hooks (dry-run) -> {target}\n")
         print(rendered)
         return 0
 
@@ -165,7 +174,7 @@ def main() -> int:
     tmp = target.with_name(target.name + ".crt-tmp")
     tmp.write_text(rendered, encoding="utf-8")
     tmp.replace(target)
-    print(f"{action} context-resilient-task auto-hooks -> {target}")
+    print(f"{action} context-resilient-task {target_name(args)} hooks -> {target}")
     if not args.uninstall:
         for event, script in EVENT_SCRIPTS.items():
             print(f"  {event:<13} -> {script}")

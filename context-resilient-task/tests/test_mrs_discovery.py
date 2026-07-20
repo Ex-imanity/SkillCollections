@@ -1,5 +1,6 @@
 import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,10 +13,7 @@ from _mrs_discovery import find_mrs_dirs
 
 class FindMrsDirsTest(unittest.TestCase):
     def setUp(self):
-        self.root = SKILL_ROOT.parent / ".test-discovery"
-        if self.root.exists():
-            shutil.rmtree(self.root)
-        self.root.mkdir()
+        self.root = Path(tempfile.mkdtemp(prefix="crt-discovery-test-")).resolve()
 
     def tearDown(self):
         if self.root.exists():
