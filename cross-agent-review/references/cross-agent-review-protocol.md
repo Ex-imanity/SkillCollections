@@ -1,0 +1,102 @@
+# Cross-Agent Review Protocol (CLI-mechanized)
+
+> **Bundled copy note (SkillCollections):** in this skill bundle the adapters live under `scripts/` (run `python -m scripts.<module>` from the skill dir) and the reference docs under `references/`. Historical evidence citations below (raw session paths, play-book file:line, test counts) point at the source play-book repo and are advisory provenance, not bundle paths.
+
+
+Status: **validated repo-staged (both direct adapters verified; pressure A/B and user viewer review passed; real-skill auto-trigger observed; balanced trigger rate and adapter closure re-review pending)**. NOT an installed skill. Install remains blocked until the current closure gates are reviewed (`docs/checks/2026-07-22-cross-agent-review-eval-matrix.md`).
+
+This protocol adds **mechanical CLI enforcement** on top of the validated, agent-agnostic checklist `references/codex-primary-claudecode-review-loop.md`. It does not restate that checklist's roles, stop conditions, or failure modes — read it first as the base protocol. Here we add: how the two host agents actually call each other, how readiness/credentials/cost/rounds are enforced, and how failures fail closed.
+
+## Direction map
+
+| Direction | Mechanism | Owner |
+|---|---|---|
+| Codex → ClaudeCode | `python -m scripts.codex_to_claude` wrapping `claude -p` | this repo (locally tested) |
+| ClaudeCode → Codex | `python -m scripts.claude_to_codex` wrapping `codex exec --sandbox read-only` | this repo (locally tested); official Codex plugin is an OPTIONAL fallback (see `references/claude-to-codex-mapping.md`) |
+
+Portability: the skill depends only on the `claude` and `codex` CLIs — NOT on the official Codex plugin. The plugin is an optional convenience path; the primary/distributable route is the repo-owned `claude_to_codex` adapter, so the skill still works for users who never installed the plugin.
+
+Task-state portability: the protocol does **not** require the `context-resilient-task` skill. It requires the primary to preserve durable continuity, review rounds, cost provenance, and closure. The `.task-state/cross-agent-review/...` locations below are project conventions passed through CLI arguments, not imports or runtime coupling; callers may use equivalent durable paths or another MRS implementation.
+
+Guarantee boundary: mechanical guarantees now apply to BOTH directions. Each repo adapter enforces fail-closed behavior, a concurrency-safe round cap (one exclusive marker lock spans check through commit; failed calls consume no round), redaction, and result-based readiness; the reviewer is physically read-only (`--permission-mode plan` plus fixed `Read,Grep,Glob` for claude, hardcoded `--sandbox read-only` for codex — none are caller-tunable). Codex success additionally requires real `thread.started.thread_id` and `turn.completed.usage` provenance. Missing USD is recorded as `total_cost_usd: null`, never a fabricated 0. The primary still verifies every returned finding.
+
+Continuity: exactly one primary/continuity owner at a time (owns MRS + fixes + closure). The reviewer is read-only and returns evidence-cited findings; it must not silently edit MRS or the reviewed artifact.
+
+## Readiness contract (both directions)
+
+Readiness = a **real minimal result envelope**, never `claude auth status`.
+
+- For `claude -p`: ready iff `exit_code == 0 && is_error == false && api_error_status == null`.
+- `claude auth status` is explicitly rejected as a readiness signal: on this machine it reports `firstParty/oauth` while the live credential is actually supplied by the `~/.claude/settings.json` proxy env block. Auth status is not just insufficient — it is misleading about which credential path is live. Keep the endpoint and token redacted in repository artifacts. (Evidence: `Review/ByClaudeCode/2026-07-21-cross-agent-review-skill-feasibility-review.md` P1-B.)
+
+Historical note: the 2026-07-21 403 was caused by a corrupted `claude` npm install and was cleared by reinstall. A distinct 2026-07-24 boundary remains: `claude -p` succeeds from the unsandboxed ClaudeCode main session but a Codex-launched subprocess can still receive a pre-model 403 even when the configured proxy env is explicitly supplied. Treat each execution context's real result envelope as authoritative.
+
+## Credential rule (verify-then-fallback)
+
+The Codex→ClaudeCode adapter, before invoking the model:
+
+1. **Verify** `~/.claude/settings.json` has non-empty `env.ANTHROPIC_BASE_URL` and `env.ANTHROPIC_AUTH_TOKEN` → use that configured source (`settings-env`).
+2. **Fallback**: only if either configured value is missing, require both values from the explicit subprocess env (`explicit-inject`).
+3. If neither is available → `missing` → **fail closed**, do not call the model.
+
+Never log the token. Never run `claude auth login/logout`.
+
+## Safety envelope
+
+- **Least privilege**: `--permission-mode plan` + fixed `--allowedTools 'Read,Grep,Glob'`. The public API and CLI expose no tool-permission override. If a diff requires commands, persist the diff as a readable artifact before opening the gate.
+- **Fresh session per gate**: every gate starts a new reviewer session. A re-review is a second fresh gate for the same artifact; its request file must explicitly include the prior findings and new evidence. The adapter exposes no resume/session override, so hidden context cannot cross artifact boundaries.
+- **Round cap** (cost is treated as real): max 1 review + at most 1 re-review per artifact. One exclusive marker lock spans cap check, paid call, durable persistence, and commit; the commit rechecks the cap under that lock. A failed/blocked model call, cost-log failure, or output-persistence failure consumes no round. Beyond cap → fail closed. A tampered/malformed marker fails closed (`invalid_marker`) without reset; recovery = delete the shared per-artifact marker file.
+- **Marker recovery**: all artifact counters at one `--marker-path` live in a shared single marker file. A damaged marker fails closed for every artifact in that file and is never reset automatically. Preserve it for diagnosis, then delete the marker file manually to recover; the next readiness-qualified review attempt recreates it.
+- **Cost/latency audit**: record provider-reported `total_cost_usd` + wall time per gate (`log_cost`); absent USD is `null`, not zero. Rationale: a trivial proxied call reported ~$0.55 (parent review P2-B).
+- **Bounded execution**: the adapter enforces a wall-time timeout. Pass `--max-budget-usd` only after the user sets a per-call amount; do not invent a monetary cap.
+- **Fail closed**: any non-success writes a durable handoff (`fail_closed`) for a human to continue in an interactive ClaudeCode session. Never fabricate reviewer output.
+- **Durable success**: a verified, non-empty reviewer result is written as Markdown with only gate/session/cost metadata. The raw result envelope is not persisted.
+- **No recursion**: the reviewer prompt forbids calling the other agent back; the plugin review gate stays disabled by default.
+
+## Codex → ClaudeCode invocation contract
+
+Canonical adapter form:
+
+```bash
+python -m scripts.codex_to_claude \
+  --request-file Review/ForClaudeCode/YYYY-MM-DD-review-request.md \
+  --add-dir <repo-root> \
+  --handoff-dir Review/ForClaudeCode \
+  --marker-path .task-state/cross-agent-review/rounds.json \
+  --gate-id <stable-gate-id> \
+  --artifact-key <stable-artifact-key> \
+  --cost-log .task-state/cross-agent-review/cost.jsonl \
+  --output Review/ByClaudeCode/YYYY-MM-DD-review.md \
+  --timeout-seconds 600 \
+  --max-budget-usd <user-approved-per-call-budget>
+```
+
+Run `python -m scripts.codex_to_claude --help` for all options. The adapter assembles `claude -p --output-format json --permission-mode plan --allowedTools Read,Grep,Glob`; these permissions cannot be widened by the caller.
+
+Must be passed explicitly (the reviewer starts blind — no MRS/context auto-discovery): target artifact paths, review questions, evidence/acceptance criteria, readable dirs (`--add-dir`), output language. Judge readiness on a non-empty success envelope. Any runner exception, timeout, invalid envelope/provenance, auth failure, setup/cost/persistence I/O failure, damaged round marker, or cap refusal returns non-zero and makes a best effort to write a redacted durable handoff; if handoff persistence itself fails, the structured result records `handoff_error`.
+
+Use `tools/cross_agent_review/codex_to_claude.py::review_gate(...)` which applies readiness → round-cap reservation → stdin invoke → classify → cost-log → fail-closed in order. A readiness failure never consumes a round. The request prompt is passed through stdin rather than argv, so long or flag-like prompt text cannot become a CLI option.
+
+## ClaudeCode → Codex invocation contract
+
+Primary path: the repo-owned direct adapter `python -m scripts.claude_to_codex` wrapping `codex exec --sandbox read-only --json --output-last-message`. It enforces the same guards as the codex→claude adapter (fail-closed, round cap with commit-on-success, redaction, result-based readiness, hardcoded read-only) and parses the `--json` stream for real `thread_id`/token-usage provenance. No official-plugin dependency, so the skill is distributable and avoids the plugin's restricted-sandbox stalls observed 2026-07-22/-24.
+
+Optional fallback (only if the plugin is already installed): full mapping in `references/claude-to-codex-mapping.md`. Summary: code defects → `/codex:review`; plan/approach/design review MUST default to `/codex:adversarial-review`; `/codex:rescue` only for exceptional non-diff investigation, output advisory; session handoff → `/codex:transfer`. A plugin job launched read-only has `write=false`; require full review text in the job result, then persist it with job/thread provenance. Do NOT reimplement the plugin broker.
+
+## First-use honesty
+
+Distinguish, in any check doc:
+
+- `CLI-path verified (manual probe)` — a reviewer envelope succeeded from a controlled probe.
+- `adapter end-to-end first-use (pending/passed)` — the adapter drove a real review gate start-to-finish under a primary turn.
+
+Do not merge these into one "bidirectional first-use passed" claim.
+
+## Evidence basis
+
+- `Review/ByClaudeCode/2026-07-21-cross-agent-review-skill-feasibility-review.md`
+- `Review/ForCodex/2026-07-24-plugin-independence-closure.md`
+- `skills/cross-agent-review-workspace/iteration-2/eval2-direct-reverse/closure-review.md`
+- `references/codex-primary-claudecode-review-loop.md` (base checklist)
+- `tools/cross_agent_review/{codex_to_claude,claude_to_codex}.py` + both adapter test modules
+- Optional plugin mapping backed by `/Users/gaotu/.claude/plugins/cache/openai-codex/codex/1.0.6/commands/`

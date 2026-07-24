@@ -33,6 +33,11 @@
 │   ├── references/
 │   ├── scripts/
 │   └── tests/
+├── cross-agent-review/
+│   ├── README.md
+│   ├── SKILL.md
+│   ├── references/
+│   └── scripts/
 ├── dify-dsl-generator/
 │   ├── SKILL.md
 │   ├── examples/
@@ -52,6 +57,7 @@
 | `case-design-strategy-skill` | 测试用例设计策略层，用于补强覆盖度、评审场景和设计边界/异常/权限/埋点等测试点 | 需求用例评审、覆盖度补充、事件埋点校验、跨端一致性风险分析 | 它不是端到端用例生成器；如果已经进入 `case-lite` 主流程，只在自检或覆盖度评审阶段借用其策略，不覆盖 `case-lite` 的产物格式和写回规则 |
 | `case-lite` | 小需求测试用例生成流程，从飞书文档选章到生成用例，再可选写回搬山 | 单一功能点、1-2 篇文档、无需模块拆分的小需求用例生成 | 依赖飞书文档 MCP；搬山 MCP 推荐配置；所有阶段产物必须落盘到 `case-lite-output/{slug}/`，章节选择和补充信息确认是人工检查点 |
 | `context-resilient-task` | 上下文弹性任务管理，用磁盘上的 MRS 文件恢复长期任务状态 | 多阶段开发、跨会话继续、`/clear` 后恢复、避免 agent 忘记待办或编造状态 | `task_state.md` 是 source of truth，必须原地更新；`progress.md` 和 `decisions.md` 只追加；缺少 Tier 0 文件时应先初始化 MRS |
+| `cross-agent-review` | 本机 Codex 与 ClaudeCode 互相做只读评审的双向 skill，primary 保连续性、reviewer 只读返回带证据的 verdict | 跨代理评审 handoff：Codex 写、ClaudeCode 审，或反向；计划/代码互审、防作者自漏 | 只依赖本机 `claude`+`codex` CLI（官方 plugin 仅可选 fallback）；reviewer 物理只读、fail-closed、并发 round-cap、脱敏；readiness 看真实信封不看 auth status；不用于单 agent 自审或普通 code review |
 | `dify-dsl-generator` | 生成、重构或评审 Dify workflow/chatflow/agent DSL | 把业务需求、后端接口、规则系统或已有 YAML 转为可导入的 Dify DSL | 先冻结输入输出和应用形态，再写 YAML；优先复用 `references/` 和已有示例中的验证模式；输出前检查节点类型、变量路径、edge 和结构化输出 |
 | `internal-api-cookie-auth` | 为受支持内部 API 获取短期 CAS Cookie，并规范认证失败后的处理 | Internal AD/UOS、Athena、Compass 的接口开发与排障，Cookie 缺失或 HTTP 401 | 仅限允许的内部域名；不输出或持久化凭证；403 视为可能的权限问题，禁止盲目重试写操作 |
 
@@ -97,6 +103,22 @@
 - `findings.md` / `progress.md` / `decisions.md`：发现、执行日志和稳定决策。
 
 注意：不要依赖聊天记录恢复任务；恢复时应从 `.task-state/` 或 `.task-state-<slug>/` 读取事实。多任务并行时使用不同的 MRS 目录隔离状态。
+
+### cross-agent-review
+
+`cross-agent-review` 让本机两个 AI CLI agent（Codex 与 ClaudeCode）互相做只读评审：任一 agent 作为 primary 产出计划/代码，调用另一个 agent 做带证据的只读 review，primary 保留连续性与修复责任。双向对称、去插件依赖，只依赖本机 `claude` 和 `codex` 两个 CLI。
+
+两个方向都由仓内直连适配器实现（`scripts/codex_to_claude.py` 走 `claude -p`；`scripts/claude_to_codex.py` 走 `codex exec --sandbox read-only`），官方 Codex plugin 仅作可选 fallback。
+
+核心保证：
+
+- readiness 由真实结果信封判定，绝不用 `claude auth status`；reviewer 物理只读（plan 模式 + 固定 `Read,Grep,Glob` / codex 硬编码 read-only sandbox）。
+- 并发安全的硬性 round cap（marker 锁），仅成功 review 后计数，失败调用不吃轮次；任何非成功 fail closed 到脱敏 durable handoff。
+- codex 反向成功需真实 `thread_id`+`usage`，缺 USD 记 `null` 不伪造 0；只持久化经校验的非空 reviewer 输出。
+
+验证：适配器 `124 passed`、6 安全 finding 闭环、双向端到端 PASS、压力 A/B uplift、真 skill 自动触发 9/10 正 + 10/10 负（0 误触发）。
+
+注意：不用于单 agent 自审、普通 code review 或认证排障；每个 review gate 需显式传入 request/artifact key/可读目录/输出路径/超时/用户批准的单次预算。
 
 ### dify-dsl-generator
 
