@@ -1,6 +1,6 @@
 # Task State
 
-**Last Updated:** 2026-07-25 23:05:00
+**Last Updated:** 2026-07-25 23:12:00
 **Updated By:** Codex
 
 ## Goal
@@ -16,7 +16,7 @@ active
 Phase 8: PyPI publication
 
 ## Next Action
-Publish the verified `feishu-docx-blocks` 3.4.0 release to PyPI, then install it and run the final case-lite selection workflow.
+Restore PyPI upload authorization for `feishu-docx-blocks`, then retry the verified 3.4.0 upload and run the final installed-MCP case-lite selection workflow.
 
 ## Completed Items
 - Native Drive Markdown file token and wiki URL resolution
@@ -33,6 +33,7 @@ Publish the verified `feishu-docx-blocks` 3.4.0 release to PyPI, then install it
 ## Open Questions
 - The verified browser OAuth credentials and tokens are stored only in the user-level MCP configuration, never in either Git worktree.
 - Existing MCP processes were restarted and a fresh user-level token was verified in a new process. Release installation must still replace legacy server instances with the published version.
+- The existing PyPI API token has the expected `__token__`/`pypi-` shape but PyPI rejected the 3.4.0 upload with HTTP 403. The token is expired, revoked, or lacks ownership/maintainer permission for this project; no distribution was published.
 
 ## Artifacts
 - plan.md (created at init)
