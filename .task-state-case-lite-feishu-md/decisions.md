@@ -1,33 +1,17 @@
 # Decisions
 
-<!--
-Append-only log of stable conclusions and design decisions.
+## 2026-07-25: MCP authentication ownership
 
-Rules:
-- New entries go at the BOTTOM of the file.
-- Never edit or remove past entries (except to fix typos).
-- This file is the destination for "Latest Stable Conclusions" content.
-  NEVER append such content to task_state.md.
-- Required when: multi-session, multi-agent, or >10 phases. Optional otherwise.
+Application credentials and OAuth tokens belong in the user-level `~/.config/feishu-docx-blocks/.env`, not in either source repository. The MCP's `env` configuration remains an allowed higher-priority source for app credentials.
 
-Entry shape (copy below the "## Entries" marker):
+## 2026-07-25: Live feature acceptance evidence
 
-  ## YYYY-MM-DD: <short title>
-  - **Decision:** <what was decided>
-  - **Reason:** <why>
-  - **Source:** <session id, artifact reference, or user confirmation>
--->
+The release gate requires a real Drive Markdown file to pass Wiki resolution, raw download, UTF-8 decoding, heading selection, and original-content return through the MCP. The supplied `GRvdwOlXRiQXxFkdcA1cIY3Xnbh` file met that gate after browser OAuth.
 
-## Entries
+## 2026-07-25: Precise-input boundary for native Markdown
 
-<!-- Append new entries below this line. -->
-## 2026-07-25: Native Markdown integration boundary
+The Drive API must download a Markdown file into MCP process memory to parse headings because it has no range endpoint. This does not authorize the model to receive the body: directory mode returns only IDs, titles, levels, paths, and line ranges. Original Markdown is returned only for the user-selected IDs.
 
-- Decision: expose native Drive Markdown through a new `get_markdown_file_sections` MCP tool rather than extending `parse_document_id` or parsing files in case-lite.
-- Rationale: the MCP owns Feishu authentication, Wiki resolution, Drive download and deterministic parsing. case-lite stays responsible for human selection and artifact orchestration.
-- Compatibility: non-file Wiki nodes explicitly fall back to the existing Docx route; no Docx API or media behavior is overloaded for Markdown.
+## 2026-07-25: Shared token-file process isolation
 
-## 2026-07-25: Section parser scope
-
-- Decision: support UTF-8 ATX headings outside backtick/tilde fenced code blocks, with one-based inclusive line ranges.
-- Rationale: this matches the provided real Drive Markdown and avoids false sections from code samples while keeping selected content byte-for-byte equivalent apart from a trailing newline.
+Multiple old MCP processes can overwrite the single user-level token file. Release verification must run after those processes use the released MCP version or are stopped/restarted; never rely on a token that another server can silently replace.

@@ -1,6 +1,6 @@
 # Plan
 
-**Last Updated:** 2026-07-25 22:05:00
+**Last Updated:** 2026-07-25 22:35:00
 **Goal:** Enable case-lite to read native Feishu Drive Markdown files and select sections through an updated feishu-docx-blocks MCP, then publish the verified MCP release.
 
 ## Phase 1: Design and implementation contract
@@ -35,8 +35,8 @@
 - TODO
 
 ## Phase 6: real provided file validation
-**Status:** in_progress
-**Description:** The supplied file was fetched read-only through lark-cli and validated against the MCP parser (39 sections). Direct MCP download remains pending local OAuth credentials.
+**Status:** completed
+**Description:** Browser OAuth was completed with `drive:file:download`. A fresh MCP process resolved the supplied Wiki URL to its native Drive file, downloaded UTF-8 Markdown, and returned selected original Markdown content.
 **Deliverables:**
 - TODO
 
@@ -47,7 +47,7 @@
 - TODO
 
 ## Phase 8: PyPI publication
-**Status:** in_progress
+**Status:** pending
 **Description:** The 3.4.0 wheel is built, Twine-checked, and clean-installed. Publish remains gated on cross-agent review.
 **Deliverables:**
 - TODO

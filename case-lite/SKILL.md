@@ -197,8 +197,8 @@ case-lite-output/{slug}/
 对 Step 1 和 Step 1a 确认后的文档列表依次先进行**类型分流**，同一任务中允许同时包含原生 Markdown 和 Docx：
 
 1. **原生 Markdown 分流**：
-   - `/file/TOKEN` URL：调用 `get_markdown_file_sections(url="{url}", max_level=4)`。
-   - `/wiki/TOKEN` URL：先调用同一工具。若其成功返回，则该 Wiki 节点底层是原生 Markdown `file`，继续使用此分流；若返回“不是原生飞书 Markdown 文件”，才进入下方 Docx 分流。
+   - `/file/TOKEN` URL：调用 `get_markdown_file_sections(url="{url}", max_level=4, preview_chars=0)`；首轮只返回章节元数据，不能读取正文。
+   - `/wiki/TOKEN` URL：先以 `preview_chars=0` 调用同一工具。若其成功返回，则该 Wiki 节点底层是原生 Markdown `file`，继续使用此分流；若返回“不是原生飞书 Markdown 文件”，才进入下方 Docx 分流。
    - **不要**对原生 Markdown 调用 `parse_document_id`、`extract_document_structure` 或 `get_document_blocks`。
 2. **Docx 分流**：调用 `parse_document_id(url)` 获取 `document_id`，再调用 `extract_document_structure(document_id, max_level=4, output_format="json")`。
 3. **处理无章节的文档**：若对应工具返回空章节列表（Markdown 指代码围栏外没有 ATX 标题；Docx 指没有 H1-H4），告知用户并让其选择：

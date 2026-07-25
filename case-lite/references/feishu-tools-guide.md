@@ -9,11 +9,12 @@
 ```
 get_markdown_file_sections(
   url = "https://xxx.feishu.cn/file/TOKEN",
-  max_level = 4
+  max_level = 4,
+  preview_chars = 0
 )
 ```
 
-返回 `sections`，每项有 `id`、`title`、`level`、`section_path`、`range.start_line/end_line` 和直接截断的 `preview`。标题仅解析代码围栏外的 ATX 标题（`#` 至 `######`）。
+首轮只返回 `sections` 的 `id`、`title`、`level`、`section_path`、`range.start_line/end_line`，不返回正文或预览。标题仅解析代码围栏外的 ATX 标题（`#` 至 `######`）。只有用户明确要求在选章前查看少量上下文时，才设置正数 `preview_chars`。
 
 用户选章后，按 ID 一次取得原始 Markdown：
 

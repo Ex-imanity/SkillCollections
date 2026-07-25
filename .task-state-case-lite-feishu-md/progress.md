@@ -1,17 +1,9 @@
-# Progress
+# Progress Log
 
-<!-- Append chronological execution log entries below this line. -->
+## 2026-07-25
 
-## 2026-07-25 21:10 CST - Design evidence recorded
-
-- Created isolated worktrees and feature branches in both repositories.
-- Fast-forward merged the completed cross-agent-review work into `SkillCollections/main` before branching.
-- Verified the supplied wiki URL is a wiki-wrapped native Drive Markdown file through read-only inspection and fetch.
-- Established the MCP-first contract: URL resolution, raw download and parsing stay in `feishu-docx-blocks`; case-lite only orchestrates selection and artifacts.
-
-## 2026-07-25 22:05 CST - Feature implemented and release candidate built
-
-- Used TDD for file URL resolution, wiki-file resolution, non-file rejection, Drive endpoint bytes, fence-aware headings, no-heading full-text opt-in, registry, and OAuth scope.
-- Updated case-lite's routing, corpus contract, README and Feishu tool guide. Docx behavior remains separate and unchanged.
-- Validated 13 targeted MCP tests, 24 case-lite tests (Python 3.13), source compilation, wheel packaging, Twine metadata, and clean wheel installation.
-- Reached publication gate. Direct MCP OAuth integration needs configured app credentials; cross-agent review needs a new approved provider budget.
+- Completed browser OAuth for `feishu-docx-blocks` using the application configuration already present in the local Claude MCP setup. Stored credentials and tokens only in `~/.config/feishu-docx-blocks/.env`.
+- Verified the supplied Wiki URL resolves to `个人错题本-服务端设计.md`, a native Drive `file`; the MCP downloaded it as UTF-8 Markdown and returned a requested original section (35,595 characters).
+- Added regression coverage for cached refresh-token lookup, opaque token expiry fallback, and API error `99991668` as an invalid access token. Targeted MCP tests: 16 passed.
+- Tightened the native Markdown directory call to return only headings and line ranges by default. The caller must pass `preview_chars` explicitly to obtain any preview; after selection it receives only the selected original Markdown. Targeted MCP tests: 17 passed.
+- Found four existing MCP server processes from Cursor, Claude Code, and Codex sharing the same user-level token file. A later process rewrote the freshly authorized long token with a stale invalid one, so persistent OAuth validation is blocked until those processes are restarted or isolated.
