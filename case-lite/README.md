@@ -21,7 +21,7 @@ cp -r SkillCollections/case-lite ~/.cc-switch/skills/case-lite
 
 case-lite 依赖两个 MCP：
 
-- `feishu-docx-blocks`：读取飞书文档、图片和 wiki 子文档
+- `feishu-docx-blocks`：读取飞书 Docx、云空间原生 Markdown、图片和 wiki 子文档
 - `Banshan`：通过 caseId 获取参考用例
 
 首次使用时，建议先让 Agent 运行依赖诊断：
@@ -52,7 +52,7 @@ https://gaotuedu.feishu.cn/wiki/CNBZwz8rwiew8dkXHt1cRIAAn8g#share-DrNhdQPiToYWMX
 对话中说 **"case-lite"** 或 **"小需求用例"**，然后提供：
 
 - 需求名称
-- 飞书文档链接（支持 docx 和 wiki 链接，可多个）
+- 飞书文档链接（支持 docx、wiki 和云空间原生 Markdown 的 `/file/TOKEN` 链接，可多个）
 - 文档类型（可选，如后端技术方案、需求文档等）
 
 ```
@@ -61,11 +61,12 @@ case-lite
 需求名称：用户自助重置密码
 后端技术方案：https://xxx.feishu.cn/docx/TOKEN1
 前端交互文档：https://xxx.feishu.cn/wiki/TOKEN2
+接口草稿：https://xxx.feishu.cn/file/TOKEN3
 ```
 
 ### 第二步：浏览章节，选择范围
 
-AI 会先检查你提供的 wiki/docx 链接是否包含知识库子文档；如果发现下级或更下级子文档，会列出来让你确认是否作为同类文档一起读取。确认纳入后，这些子文档会和你原始粘贴的链接一起进入章节选择流程。
+AI 会先检查你提供的 wiki/docx 链接是否包含知识库子文档；如果发现下级或更下级子文档，会列出来让你确认是否作为同类文档一起读取。云空间原生 Markdown（`/file/TOKEN`，或解析为 file 的 wiki）会直接读取标题目录。确认纳入后，这些子文档会和你原始粘贴的链接一起进入章节选择流程。
 
 AI 会展示每个文档的章节目录：
 
@@ -148,7 +149,7 @@ case-lite-output/user-self-reset-password/
 不会。写回是追加模式，脚本会提醒你。如需重新写入，请先在搬山平台手动清空用例。
 
 **Q: 文档中有流程图/截图，AI 能看到吗？**
-能。AI 会自动下载文档中的图片和画板，用于理解交互逻辑和分支流程。
+Docx 能。AI 会自动下载 Docx 中的图片和画板，用于理解交互逻辑和分支流程。原生 Markdown 文件保留图片和附件引用的原始文本，不下载图片。
 
 **Q: 没有飞书文档，只有 TAPD 描述怎么办？**
 选章节步骤后，AI 会询问补充信息，可以直接粘贴 TAPD 内容。

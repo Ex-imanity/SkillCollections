@@ -1,6 +1,6 @@
 ---
 name: case-lite
-description: 小需求测试用例生成 skill。用户提供飞书文档链接 → 浏览并手动选择章节 → 生成场景结构 → 生成完整用例 → 可选 agent 自检补漏 → 写回搬山。不含模块拆分和自动选章，适用于单一功能点的小需求。当用户说"小需求用例"、"简单需求生成用例"、"case-lite"，或明确只有 1-2 篇文档且无需模块拆分时触发。
+description: 小需求测试用例生成 skill。用户提供飞书 Docx、Wiki 或云空间原生 Markdown 文件链接 → 浏览并手动选择章节 → 生成场景结构 → 生成完整用例 → 可选 agent 自检补漏 → 写回搬山。不含模块拆分和自动选章，适用于单一功能点的小需求。当用户说"小需求用例"、"简单需求生成用例"、"case-lite"，或明确只有 1-2 篇文档且无需模块拆分时触发。
 ---
 
 # case-lite：小需求用例生成
@@ -46,7 +46,7 @@ python case-lite/scripts/setup_mcp.py --agent <claude-code|codex> --fix
 
 ### 飞书文档工具（必需）
 
-尝试调用 `get_child_documents`、`parse_document_id` 或 `extract_document_structure`。如果工具不存在或缺少 `get_child_documents`，进入首次使用依赖向导；如果已经配置但不是 `feishu-docx-blocks@latest`，询问用户是否升级。
+对 Docx/Wiki 尝试调用 `get_child_documents`、`parse_document_id` 或 `extract_document_structure`。当用户提供 `/file/TOKEN`，或 Wiki 节点解析为 `file` 时，必须确认 `get_markdown_file_sections` 可用。缺少本任务所需工具时进入首次使用依赖向导；如果已经配置但不是 `feishu-docx-blocks@latest`，询问用户是否升级。
 
 ```json
 {
@@ -64,7 +64,7 @@ python case-lite/scripts/setup_mcp.py --agent <claude-code|codex> --fix
 ```
 
 > 首次调用工具或授权过期时，`feishu-docx-blocks` 会自动拉起浏览器完成飞书授权。
-> `get_child_documents` 依赖 `feishu-docx-blocks` 最新版及 `wiki:node:retrieve` 权限。若该工具缺失，提示用户重启 MCP / 重新授权 / 确认 `uvx feishu-docx-blocks@latest` 已生效；无法立即升级时，可降级为仅处理用户已粘贴的文档链接。
+> `get_child_documents` 依赖 `feishu-docx-blocks` 最新版及 `wiki:node:retrieve` 权限。原生 Markdown 文件还需要 `get_markdown_file_sections` 和 `drive:file:download` 授权。若所需工具缺失，提示用户重启 MCP / 重新授权 / 确认 `uvx feishu-docx-blocks@latest` 已生效；无法立即升级时，只能处理当前 MCP 已支持的文档类型。
 
 ### 搬山测试平台工具（推荐）
 
@@ -155,7 +155,7 @@ case-lite-output/{slug}/
 
 #### 1a. 递归发现 wiki 子文档 [HITL]
 
-在进入章节浏览前，必须先对用户提供的每个飞书链接尝试发现子文档：
+在进入章节浏览前，对 Wiki/Docx 链接尝试发现子文档；直接 `/file/TOKEN` 的原生 Markdown 文件没有 Docx 子文档树，跳过发现并在 `chapters/child-documents.md` 记录“不适用”：
 
 1. **调用子文档工具**：对每个原始链接调用：
    ```
@@ -194,11 +194,14 @@ case-lite-output/{slug}/
 
 #### 2a. 逐文档浏览章节并完成选章
 
-对 Step 1 和 Step 1a 确认后的文档列表依次执行：
+对 Step 1 和 Step 1a 确认后的文档列表依次先进行**类型分流**，同一任务中允许同时包含原生 Markdown 和 Docx：
 
-1. **解析文档 ID**：调用 `parse_document_id(url)` 获取 document_id
-2. **获取章节树**：调用 `extract_document_structure(document_id, max_level=4, output_format="json")`
-3. **处理无章节的文档**：如果章节树为空（文档没有任何 H1-H4 标题），告知用户并让其选择：
+1. **原生 Markdown 分流**：
+   - `/file/TOKEN` URL：调用 `get_markdown_file_sections(url="{url}", max_level=4)`。
+   - `/wiki/TOKEN` URL：先调用同一工具。若其成功返回，则该 Wiki 节点底层是原生 Markdown `file`，继续使用此分流；若返回“不是原生飞书 Markdown 文件”，才进入下方 Docx 分流。
+   - **不要**对原生 Markdown 调用 `parse_document_id`、`extract_document_structure` 或 `get_document_blocks`。
+2. **Docx 分流**：调用 `parse_document_id(url)` 获取 `document_id`，再调用 `extract_document_structure(document_id, max_level=4, output_format="json")`。
+3. **处理无章节的文档**：若对应工具返回空章节列表（Markdown 指代码围栏外没有 ATX 标题；Docx 指没有 H1-H4），告知用户并让其选择：
    ```
    📄 文档 "{文档标题}" 未解析出任何章节标题，可能是纯文本/列表格式。
    请选择处理方式：
@@ -206,10 +209,10 @@ case-lite-output/{slug}/
    2. 跳过该文档
    3. 我手动指定需要的内容
    ```
-   - 选 1：调用 `get_document_blocks(document_id, fetch_all=true)` 获取全文，后续作为语料直接使用
+   - 选 1：Docx 调用 `get_document_blocks(document_id, fetch_all=true)` 获取全文；Markdown 仅在用户确认短文件可全文导入后调用 `get_markdown_file_sections(..., include_full_content=true)` 获取原始 Markdown
    - 选 2：跳过该文档，继续处理下一个
    - 选 3：按用户指示获取部分内容（如用 `search_document_content` 搜索关键词定位）
-4. **格式化展示**（正常有章节时）：将章节树转为用户友好的编号列表
+4. **格式化展示**（正常有章节时）：将对应工具返回的章节树转为用户友好的编号列表。Markdown 使用 `id`、`section_path`、`range.start_line/end_line`；Docx 继续使用 `position`。
 
 展示格式示例：
 
@@ -256,7 +259,7 @@ case-lite-output/{slug}/
 - {章节标题} | pos:{start}-{end}
 ```
 
-position range 从 `extract_document_structure` 的 JSON 返回值中读取。每个文档单独追加到其对应的 chapters 文件。
+Docx 的 position range 从 `extract_document_structure` 的 JSON 返回值中读取。Markdown 记录 `line:{start}-{end}` 和 MCP 返回的 `section_id`。每个文档单独追加到其对应的 chapters 文件。
 
 完成所有文档的章节展示与选章后，再统一进入补充信息确认。
 
@@ -319,6 +322,24 @@ position range 从 `extract_document_structure` 的 JSON 返回值中读取。�
 #### 3b. 拉取选定语料
 
 > **⛔ 严禁改写** — `selected-corpus.md` 必须**原文**写入 `get_document_blocks` 返回的文本，包括表格、代码块、JSON 示例、curl 命令、字段说明。**不得摘要、精简、改写任何内容。** 唯一允许的处理是添加章节分隔注释 `<!-- SOURCE: ... -->`。
+
+对每个选定章节，按文档类型走对应分支，并在每个文档完成后立即追加写入 `corpus/selected-corpus.md`：
+
+**原生 Markdown 文件分支**
+
+1. 对同一文件的用户选章 ID 一次调用：
+   ```
+   get_markdown_file_sections(url="{url}", section_ids=["1", "2.1"])
+   ```
+2. 工具返回的 `selected_sections[].content` 是**原始 Markdown**。按返回顺序逐段落盘，格式：
+   ```markdown
+   <!-- SOURCE: {docKey} | {section_title} | line:{start}-{end} | native-markdown -->
+   {原始 Markdown，不改写}
+   <!-- END SOURCE -->
+   ```
+3. **不下载图片**：Markdown 内的图片、链接和附件引用作为原始文本保留。不要调用 `download_image_blocks` 或 `download_board_as_image`，因为它们只适用于 Docx blocks。
+
+**Docx 文档分支**
 
 对每个选定章节，**按顺序执行以下三步，每章完成后立即追加写入 `corpus/selected-corpus.md`，不等所有章节拉完再统一写盘**：
 

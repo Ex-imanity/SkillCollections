@@ -2,7 +2,37 @@
 
 本文件供 case-lite skill 在 Step 2（章节浏览）和 Step 3（语料拉取）阶段参考。
 
-## 0. 发现 wiki/docx-in-wiki 子文档
+## 0. 原生云空间 Markdown 文件
+
+原生 Markdown 是飞书云空间中的 `.md` **文件/附件**，不是 Docx。支持直接 `/file/TOKEN`，以及最终对象类型为 `file` 的 `/wiki/TOKEN`：
+
+```
+get_markdown_file_sections(
+  url = "https://xxx.feishu.cn/file/TOKEN",
+  max_level = 4
+)
+```
+
+返回 `sections`，每项有 `id`、`title`、`level`、`section_path`、`range.start_line/end_line` 和直接截断的 `preview`。标题仅解析代码围栏外的 ATX 标题（`#` 至 `######`）。
+
+用户选章后，按 ID 一次取得原始 Markdown：
+
+```
+get_markdown_file_sections(
+  url = "https://xxx.feishu.cn/wiki/TOKEN",
+  section_ids = ["1", "2.1"]
+)
+```
+
+- `selected_sections[].content` 必须原样写入语料，不得摘要或改写。
+- 选中的父章节会包含其子章节；工具会去重重叠范围。
+- 如果 Wiki 的最终对象不是 `file`，工具会明确返回“不是原生飞书 Markdown 文件”；此时才转到下方 Docx 流程。
+- 该工具只读，要求 `drive:file:download` 授权。
+- 不下载图片或画板：Markdown 中的媒体引用作为原始 Markdown 文本保留。
+
+无标题的短 Markdown 在用户确认后可使用 `include_full_content=true` 读取全文；长文件应要求用户补充范围或跳过，避免无边界地把全文加入语料。
+
+## 1. 发现 wiki/docx-in-wiki 子文档
 
 在解析正文前，先用 `get_child_documents` 检查用户给出的飞书链接是否是知识库节点，或是否属于知识库节点树。
 
@@ -33,7 +63,7 @@ get_child_documents(
 
 普通 docx 如果不在知识库节点树中，工具会返回成功但 `children=[]`，可直接继续处理该文档本身。
 
-## 1. 解析文档链接 → document_id
+## 2. 解析文档链接 → document_id（仅 Docx）
 
 用户提供的飞书链接通常有两种格式：
 
@@ -55,7 +85,7 @@ wiki_v2_space_getNode(query={ token: "TOKEN" })
 → 从返回的 obj_token 获取 document_id
 ```
 
-## 2. 获取章节结构（标题树）
+## 3. 获取章节结构（标题树，仅 Docx）
 
 **用 `extract_document_structure`**，这是最轻量的方式，只返回标题层级：
 
@@ -89,7 +119,7 @@ get_document_section_digests(
 
 返回每个章节的 `range`（start_position / end_position）和 `preview` 文本。
 
-## 3. 精准拉取章节内容
+## 4. 精准拉取章节内容（仅 Docx）
 
 用户选章后，按 position range 拉取指定章节的完整内容：
 
@@ -137,7 +167,7 @@ download_board_as_image(
 
 > **完整拉取流程**：`get_document_blocks` → 检查返回的图片/画板元数据 → 如有，调 `download_image_blocks` / `download_board_as_image` → 合并到语料中
 
-## 4. 章节 position range 的确定
+## 5. 章节 position range 的确定（仅 Docx）
 
 `extract_document_structure` 返回的 `flat_headings` 中每个标题有 `position`，但**不直接包含 end_position**。
 
@@ -152,7 +182,7 @@ download_board_as_image(
 2. 用户选章后，用 `get_document_section_digests` 获取选定章节的精确 range
 3. 用 `get_document_blocks(start_position, end_position)` 拉取内容
 
-## 5. 关键词搜索（补充手段）
+## 6. 关键词搜索（补充手段，仅 Docx）
 
 如果用户通过关键词选章，可用 `search_document_content` 辅助定位：
 
@@ -166,7 +196,7 @@ search_document_content(
 
 返回每个匹配项的标题层级上下文（H1/H2/H3/H4）和建议的读取范围。
 
-## 6. 常见问题
+## 7. 常见问题
 
 **Q: wiki 链接获取 document_id 失败？**
 → 使用 `wiki_v2_space_getNode` 备用方案

@@ -64,6 +64,22 @@ class CaseLiteSkillContractTest(unittest.TestCase):
         self.assertIn("不确定", reference)
         self.assertIn("连通", reference)
 
+    def test_skill_routes_native_drive_markdown_through_mcp(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        guide = (SKILL_ROOT / "references" / "feishu-tools-guide.md").read_text(encoding="utf-8")
+        readme = (SKILL_ROOT / "README.md").read_text(encoding="utf-8")
+
+        for document in (skill, guide):
+            self.assertIn("get_markdown_file_sections", document)
+            self.assertIn("/file/TOKEN", document)
+            self.assertIn("section_ids", document)
+            self.assertIn("原始 Markdown", document)
+
+        self.assertIn("原生 Markdown", skill)
+        self.assertIn("Docx", skill)
+        self.assertIn("不下载图片", skill)
+        self.assertIn("/file/TOKEN", readme)
+
 
 if __name__ == "__main__":
     unittest.main()
