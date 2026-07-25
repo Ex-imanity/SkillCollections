@@ -42,7 +42,7 @@ Obtain a fresh ClaudeCode review budget, then run the read-only review before pu
 - docs/plans/2026-07-25-case-lite-feishu-drive-markdown.md (design and execution plan)
 - architecture.md (cross-repository ownership and data flow)
 - FeishuMCP commit: `78daa91` on `codex/case-lite-feishu-md`
-- SkillCollections commit: `121861e` on `codex/case-lite-feishu-md`
+- SkillCollections commit: `2fcaccc` on `codex/case-lite-feishu-md`
 
 ## Project Context
 See CLAUDE.md for project constraints, AGENTS.md for agent guidelines.
