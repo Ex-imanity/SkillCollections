@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -554,6 +555,24 @@ def _redact_sensitive_text(value: str, sensitive_values: Optional[list] = None) 
     return redacted
 
 
+def emit_review_started(
+    gate_id: str,
+    artifact_key: str,
+    attempt: int,
+    timeout_seconds: float,
+    sensitive_values: Optional[list] = None,
+) -> None:
+    """Emit the post-reservation lifecycle event without changing stdout."""
+    payload = {
+        "status": "review_started",
+        "gate_id": _redact_sensitive_text(str(gate_id), sensitive_values),
+        "artifact_key": _redact_sensitive_text(str(artifact_key), sensitive_values),
+        "attempt": attempt,
+        "timeout_seconds": timeout_seconds,
+    }
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True), file=sys.stderr, flush=True)
+
+
 def _safe_gate_id(gate_id: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", gate_id).strip("-.")
     return safe or "review-gate"
@@ -806,7 +825,14 @@ def review_gate(
                     claude_config_dir=config_dir,
                     claude_cli_identity=claude_identity,
                 )
-                _reserve_attempt_unlocked(marker_path, artifact_key)
+                attempt = _reserve_attempt_unlocked(marker_path, artifact_key)
+                emit_review_started(
+                    gate_id,
+                    artifact_key,
+                    attempt,
+                    timeout_seconds,
+                    sensitive_values,
+                )
 
                 start = time.monotonic()
                 result = run_review(

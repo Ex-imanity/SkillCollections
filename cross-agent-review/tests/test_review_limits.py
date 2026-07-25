@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import subprocess
 import sys
@@ -18,6 +20,146 @@ from scripts import claude_to_codex, codex_to_claude
 
 
 class ReviewLimitTests(unittest.TestCase):
+    def test_forward_adapter_emits_started_event_after_reserving_attempt(self) -> None:
+        observed_before_runner = ""
+
+        def successful_runner(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            nonlocal observed_before_runner
+            observed_before_runner = captured_stderr.getvalue()
+            return subprocess.CompletedProcess(
+                args=["claude"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "is_error": False,
+                        "api_error_status": None,
+                        "result": "APPROVE",
+                        "session_id": "test-session",
+                    }
+                ),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings_path = root / "settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "env": {
+                            "ANTHROPIC_BASE_URL": "https://example.invalid",
+                            "ANTHROPIC_AUTH_TOKEN": "test-token",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            captured_stderr = io.StringIO()
+
+            with (
+                mock.patch.object(codex_to_claude, "claude_available", return_value=True),
+                contextlib.redirect_stderr(captured_stderr),
+            ):
+                result = codex_to_claude.review_gate(
+                    request_prompt="Review the artifact and return a verdict.",
+                    add_dirs=[str(root)],
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-a",
+                    artifact_key="artifact-a",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(settings_path),
+                    runner=successful_runner,
+                    timeout_seconds=1,
+                    max_budget_usd=1.0,
+                )
+
+            self.assertEqual("success", result.status)
+            self.assertEqual(captured_stderr.getvalue(), observed_before_runner)
+            self.assertTrue(captured_stderr.getvalue())
+            self.assertEqual(
+                {
+                    "status": "review_started",
+                    "gate_id": "gate-a",
+                    "artifact_key": "artifact-a",
+                    "attempt": 1,
+                    "timeout_seconds": 1,
+                },
+                json.loads(captured_stderr.getvalue()),
+            )
+
+    def test_reverse_adapter_redacts_started_event_before_invoking_runner(self) -> None:
+        observed_before_runner = ""
+
+        def successful_runner(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            nonlocal observed_before_runner
+            observed_before_runner = captured_stderr.getvalue()
+            output_path = Path(argv[argv.index("--output-last-message") + 1])
+            output_path.write_text("APPROVE", encoding="utf-8")
+            return subprocess.CompletedProcess(
+                args=argv,
+                returncode=0,
+                stdout="\n".join(
+                    (
+                        json.dumps({"type": "thread.started", "thread_id": "thread-a"}),
+                        json.dumps(
+                            {
+                                "type": "turn.completed",
+                                "usage": {"input_tokens": 1, "output_tokens": 1},
+                            }
+                        ),
+                    )
+                ),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            captured_stderr = io.StringIO()
+
+            with (
+                mock.patch.object(claude_to_codex, "codex_available", return_value=True),
+                contextlib.redirect_stderr(captured_stderr),
+            ):
+                result = claude_to_codex.codex_review_gate(
+                    request_prompt="Review the artifact and return a verdict.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-sk-abcdefghi",
+                    artifact_key="artifact-a",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "settings.json"),
+                    runner=successful_runner,
+                    timeout_seconds=1,
+                )
+
+            self.assertEqual("success", result.status)
+            self.assertEqual(captured_stderr.getvalue(), observed_before_runner)
+            self.assertTrue(captured_stderr.getvalue())
+            self.assertEqual(
+                {
+                    "status": "review_started",
+                    "gate_id": "gate-[REDACTED]",
+                    "artifact_key": "artifact-a",
+                    "attempt": 1,
+                    "timeout_seconds": 1,
+                },
+                json.loads(captured_stderr.getvalue()),
+            )
+
+    def test_user_docs_distinguish_persistent_lock_from_marker_recovery(self) -> None:
+        skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        protocol = (SKILL_DIR / "references" / "cross-agent-review-protocol.md").read_text(
+            encoding="utf-8"
+        )
+        readme = (SKILL_DIR / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("`<marker-path>.lock` remains after normal completion", skill)
+        self.assertIn("not evidence of an active or failed gate", readme)
+        self.assertIn("normal persistent flock coordination file", protocol)
+        self.assertIn("stderr-only `review_started`", protocol)
+
     def test_forward_adapter_refuses_to_start_without_a_budget(self) -> None:
         calls = 0
 

@@ -31,6 +31,7 @@ from .codex_to_claude import (
     _reserve_attempt_unlocked,
     _safe_gate_id,
     check_attempt_cap,
+    emit_review_started,
     fail_closed,
     gate_failure_result,
     log_cost,
@@ -270,7 +271,14 @@ def codex_review_gate(
                         request_prompt,
                         sensitive_values,
                     )
-                _reserve_attempt_unlocked(marker_path, artifact_key)
+                attempt = _reserve_attempt_unlocked(marker_path, artifact_key)
+                emit_review_started(
+                    gate_id,
+                    artifact_key,
+                    attempt,
+                    timeout_seconds,
+                    sensitive_values,
+                )
                 start = time.monotonic()
                 result = run_codex_review(
                     argv,
