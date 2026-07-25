@@ -28,7 +28,9 @@ from .codex_to_claude import (
     ReviewResult,
     _commit_round_unlocked,
     _known_sensitive_values,
+    _reserve_attempt_unlocked,
     _safe_gate_id,
+    check_attempt_cap,
     fail_closed,
     gate_failure_result,
     log_cost,
@@ -219,17 +221,15 @@ def codex_review_gate(
     cost_log_path: str,
     output_path: Optional[str] = None,
     settings_path: str = DEFAULT_SETTINGS_PATH,
-    max_rounds: int = 2,
     runner: Callable = subprocess.run,
     timeout_seconds: float = 600,
 ) -> ReviewResult:
     """End-to-end single reverse review gate (ClaudeCode primary -> Codex).
 
-    Order: codex-available -> round-cap CHECK (read-only) -> invoke ->
-    classify -> log cost -> commit round ONLY on success. A failed call
-    consumes no round (P2-2). The sandbox is always read-only (P1-b). Fails
-    closed on unavailable codex, refusal, or any non-success. Depends only on
-    the `codex` CLI, not the official plugin.
+    Order: codex-available -> fixed caps -> reserve attempt -> invoke ->
+    classify -> log cost -> commit success. A started call consumes an attempt
+    even if it fails, preventing unbounded retries. The sandbox is always
+    read-only (P1-b).
     """
     sensitive_values = _known_sensitive_values(settings_path, None)
 
@@ -241,7 +241,7 @@ def codex_review_gate(
         return ReviewResult("codex_unavailable", None, {}, exit_code=1)
 
     try:
-        with round_cap_guard(marker_path, artifact_key, max_rounds=max_rounds) as decision:
+        with round_cap_guard(marker_path, artifact_key) as decision:
             if not decision.allowed:
                 failure_status = decision.reason or "round_cap_exceeded"
                 return gate_failure_result(
@@ -260,6 +260,17 @@ def codex_review_gate(
             cleanup_error = None
             try:
                 argv = build_codex_command(cd=cd, last_message_path=last_message_path)
+                attempt_decision = check_attempt_cap(marker_path, artifact_key)
+                if not attempt_decision.allowed:
+                    return gate_failure_result(
+                        handoff_dir,
+                        gate_id,
+                        attempt_decision.reason or "attempt_cap_exceeded",
+                        f"attempt check refused at {attempt_decision.current}; max {attempt_decision.max_rounds}",
+                        request_prompt,
+                        sensitive_values,
+                    )
+                _reserve_attempt_unlocked(marker_path, artifact_key)
                 start = time.monotonic()
                 result = run_codex_review(
                     argv,
@@ -313,7 +324,6 @@ def codex_review_gate(
                 )
 
             if result.status != "success":
-                # Consume no round on failure: only a completed review commits (P2-2).
                 return gate_failure_result(
                     handoff_dir,
                     gate_id,
@@ -345,7 +355,7 @@ def codex_review_gate(
                         {"total_cost_usd": result.envelope.get("total_cost_usd")},
                     )
             try:
-                _commit_round_unlocked(marker_path, artifact_key, max_rounds=max_rounds)
+                _commit_round_unlocked(marker_path, artifact_key)
             except (OSError, ValueError) as exc:
                 detail = f"{type(exc).__name__}: {exc}"
                 return gate_failure_result(
@@ -383,7 +393,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cost-log", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--settings", default=DEFAULT_SETTINGS_PATH)
-    parser.add_argument("--max-rounds", type=int, default=2)
     parser.add_argument("--timeout-seconds", type=float, default=600)
     return parser
 
@@ -402,7 +411,6 @@ def main(argv: Optional[list] = None) -> int:
         cost_log_path=args.cost_log,
         output_path=args.output,
         settings_path=args.settings,
-        max_rounds=args.max_rounds,
         timeout_seconds=args.timeout_seconds,
     )
     payload = {

@@ -22,6 +22,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -32,6 +33,17 @@ from typing import Callable, Optional
 DEFAULT_ALLOWED_TOOLS = "Read,Grep,Glob"
 DEFAULT_SETTINGS_PATH = os.path.expanduser("~/.claude/settings.json")
 PROXY_ENV_KEYS = ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN")
+INHERITED_CLAUDE_IDENTITY_KEYS = (
+    "ANTHROPIC_CUSTOM_HEADERS",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_AGENT_SDK_VERSION",
+)
+_TRUTHFUL_CLAUDE_CLI_USER_AGENT = re.compile(
+    r"^claude-cli/[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$"
+)
+_CLAUDE_CLI_VERSION = re.compile(
+    r"\b([0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?)\b"
+)
 _AUTH_ERROR_STATUSES = {401, 403}
 _AUTH_ERROR_PHRASES = (
     "failed to authenticate",
@@ -39,9 +51,12 @@ _AUTH_ERROR_PHRASES = (
     "unauthorized",
     "forbidden",
 )
+MAX_REVIEW_ATTEMPTS = 2
+MAX_SUCCESSFUL_REVIEWS = 2
 _SECRET_PATTERNS = (
     (re.compile(r"(?i)(ANTHROPIC_AUTH_TOKEN\s*[=:]\s*)\S+"), r"\1[REDACTED]"),
     (re.compile(r"(?i)(ANTHROPIC_BASE_URL\s*[=:]\s*)\S+"), r"\1[REDACTED]"),
+    (re.compile(r"(?im)(ANTHROPIC_CUSTOM_HEADERS\s*[=:]\s*)[^\r\n]+"), r"\1[REDACTED]"),
     (re.compile(r"(?i)(Authorization\s*:\s*Bearer\s+)\S+"), r"\1[REDACTED]"),
     (re.compile(r"\bsk-[A-Za-z0-9_-]{6,}\b"), "[REDACTED]"),
     (
@@ -58,6 +73,56 @@ _SECRET_PATTERNS = (
 
 
 # --- readiness ---------------------------------------------------------------
+
+
+def claude_available() -> bool:
+    """True when the `claude` CLI is on PATH. Portability precheck."""
+    return shutil.which("claude") is not None
+
+
+@dataclass(frozen=True)
+class ClaudeCliIdentity:
+    """A version proven to come from the exact binary that will be invoked."""
+
+    executable: str
+    version: str
+
+    @property
+    def user_agent(self) -> str:
+        return f"claude-cli/{self.version}"
+
+
+def discover_claude_cli_identity(
+    version_runner: Callable = subprocess.run,
+    timeout_seconds: float = 5,
+) -> ClaudeCliIdentity:
+    """Resolve local `claude` and derive its truthful compatibility identity.
+
+    This is a local version probe only. It never sends a model request or reads
+    credentials. The returned executable is also used for the review command,
+    preventing a PATH change from separating the advertised version and caller.
+    """
+    executable = shutil.which("claude")
+    if not executable:
+        raise ValueError("claude CLI is not available on PATH")
+    try:
+        completed = version_runner(
+            [executable, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"unable to read local claude version: {exc}") from exc
+    if completed.returncode != 0:
+        raise ValueError("local claude --version exited non-zero")
+    version_match = _CLAUDE_CLI_VERSION.search(completed.stdout or "")
+    if not version_match:
+        raise ValueError("local claude --version did not contain a semantic version")
+    identity = ClaudeCliIdentity(executable=executable, version=version_match.group(1))
+    if not _TRUTHFUL_CLAUDE_CLI_USER_AGENT.fullmatch(identity.user_agent):
+        raise ValueError("local claude version is not a supported semantic version")
+    return identity
 
 
 @dataclass
@@ -116,12 +181,32 @@ def check_readiness(
     return Readiness(credential_source="missing", base_url=None, token_present=False)
 
 
-def resolve_subprocess_env(readiness: Readiness, explicit_env: Optional[dict] = None) -> dict:
-    """Build the child env. Only injects proxy vars when not already persisted."""
+def resolve_subprocess_env(
+    readiness: Readiness,
+    explicit_env: Optional[dict] = None,
+    settings_path: str = DEFAULT_SETTINGS_PATH,
+    claude_config_dir: Optional[str] = None,
+    claude_cli_identity: Optional[str] = None,
+) -> dict:
+    """Build a deterministic child environment without exposing credentials in artifacts."""
     child = dict(os.environ)
+    for key in INHERITED_CLAUDE_IDENTITY_KEYS:
+        child.pop(key, None)
+    if claude_cli_identity is not None:
+        if not _TRUTHFUL_CLAUDE_CLI_USER_AGENT.fullmatch(claude_cli_identity):
+            raise ValueError(
+                "claude_cli_identity must identify the real CLI as claude-cli/<semantic-version>"
+            )
+        child["ANTHROPIC_CUSTOM_HEADERS"] = f"User-Agent: {claude_cli_identity}"
     if readiness.credential_source == "settings-env":
+        settings_env = _read_env_block(settings_path)
         for key in PROXY_ENV_KEYS:
-            child.pop(key, None)
+            value = settings_env.get(key)
+            if not value:
+                raise ValueError(f"configured {key} disappeared before invocation")
+            child[key] = value
+        if claude_config_dir:
+            child["CLAUDE_CONFIG_DIR"] = claude_config_dir
     elif readiness.credential_source == "explicit-inject" and explicit_env:
         for key in PROXY_ENV_KEYS:
             if explicit_env.get(key):
@@ -136,6 +221,7 @@ def build_command(
     request_prompt: str,
     add_dirs: Optional[list] = None,
     max_budget_usd: Optional[float] = None,
+    claude_executable: str = "claude",
 ) -> list:
     """Assemble the read-only `claude -p` argv.
 
@@ -145,7 +231,7 @@ def build_command(
     findings and new evidence explicitly rather than resuming hidden context.
     """
     argv = [
-        "claude",
+        claude_executable,
         "-p",
         "--output-format",
         "json",
@@ -263,10 +349,11 @@ class RoundDecision:
 
 
 def _load_counts(marker_path: str) -> tuple:
-    """Return (counts, valid). counts is {} when the marker is absent.
+    """Return structured marker counts and whether the file is valid.
 
-    valid is False when the marker exists but is not a {str: non-negative int}
-    object, so callers can fail closed without resetting a tampered marker.
+    Legacy integer values are accepted as matching attempt and success counts.
+    New values must be ``{"attempts": int, "successes": int}`` so a failed
+    started call can be accounted for separately from a delivered review.
     """
     if not os.path.exists(marker_path):
         return {}, True
@@ -275,47 +362,105 @@ def _load_counts(marker_path: str) -> tuple:
             counts = json.load(fh)
     except (OSError, ValueError, TypeError):
         return {}, False
-    valid = isinstance(counts, dict) and all(
-        isinstance(key, str)
-        and isinstance(value, int)
-        and not isinstance(value, bool)
-        and value >= 0
-        for key, value in counts.items()
-    )
-    return (counts, True) if valid else ({}, False)
+    if not isinstance(counts, dict):
+        return {}, False
+    normalized = {}
+    for key, value in counts.items():
+        if not isinstance(key, str):
+            return {}, False
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            normalized[key] = {"attempts": value, "successes": value}
+            continue
+        if (
+            isinstance(value, dict)
+            and set(value) == {"attempts", "successes"}
+            and all(
+                isinstance(value.get(field), int)
+                and not isinstance(value.get(field), bool)
+                and value[field] >= 0
+                for field in ("attempts", "successes")
+            )
+        ):
+            normalized[key] = dict(value)
+            continue
+        return {}, False
+    return normalized, True
 
 
-def check_round_cap(marker_path: str, artifact_key: str, max_rounds: int = 2) -> RoundDecision:
+def _write_counts(marker_path: str, counts: dict) -> None:
+    marker_dir = os.path.dirname(os.path.abspath(marker_path))
+    os.makedirs(marker_dir, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(prefix=".rounds-", suffix=".json", dir=marker_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(counts, fh, indent=2, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temporary_path, marker_path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
+
+
+def _validate_fixed_cap(max_rounds: Optional[int]) -> None:
+    if max_rounds is not None and max_rounds != MAX_SUCCESSFUL_REVIEWS:
+        raise ValueError(f"review cap is fixed at {MAX_SUCCESSFUL_REVIEWS}")
+
+
+def check_round_cap(
+    marker_path: str,
+    artifact_key: str,
+    max_rounds: Optional[int] = None,
+) -> RoundDecision:
     """Read-only round-cap check. Never writes the marker.
 
-    Returns allowed=True only while the committed count for this artifact is
-    still below max_rounds. A tampered/malformed marker fails closed
-    (`invalid_marker`) without being reset. Callers must invoke `commit_round`
-    only after a verified successful review, so a failed model call consumes no
-    round (P2-2).
+    The public cap is fixed at two successful reviews. ``max_rounds`` remains
+    only as a compatibility argument and rejects every value other than two.
     """
-    if max_rounds < 1:
-        raise ValueError("max_rounds must be at least 1")
+    _validate_fixed_cap(max_rounds)
     counts, valid = _load_counts(marker_path)
     if not valid:
         return RoundDecision(
             allowed=False,
-            current=max_rounds + 1,
-            max_rounds=max_rounds,
+            current=MAX_SUCCESSFUL_REVIEWS + 1,
+            max_rounds=MAX_SUCCESSFUL_REVIEWS,
             reason="invalid_marker",
         )
-    current = counts.get(artifact_key, 0)
-    allowed = current < max_rounds
+    current = counts.get(artifact_key, {"successes": 0})["successes"]
+    allowed = current < MAX_SUCCESSFUL_REVIEWS
     return RoundDecision(
         allowed=allowed,
         current=current,
-        max_rounds=max_rounds,
+        max_rounds=MAX_SUCCESSFUL_REVIEWS,
         reason=None if allowed else "round_cap_exceeded",
     )
 
 
+def check_attempt_cap(marker_path: str, artifact_key: str) -> RoundDecision:
+    """Read-only check for the fixed number of started reviewer calls."""
+    counts, valid = _load_counts(marker_path)
+    if not valid:
+        return RoundDecision(
+            allowed=False,
+            current=MAX_REVIEW_ATTEMPTS + 1,
+            max_rounds=MAX_REVIEW_ATTEMPTS,
+            reason="invalid_marker",
+        )
+    current = counts.get(artifact_key, {"attempts": 0})["attempts"]
+    return RoundDecision(
+        allowed=current < MAX_REVIEW_ATTEMPTS,
+        current=current,
+        max_rounds=MAX_REVIEW_ATTEMPTS,
+        reason=None if current < MAX_REVIEW_ATTEMPTS else "attempt_cap_exceeded",
+    )
+
+
 @contextmanager
-def round_cap_guard(marker_path: str, artifact_key: str, max_rounds: int = 2):
+def round_cap_guard(
+    marker_path: str,
+    artifact_key: str,
+    max_rounds: Optional[int] = None,
+):
     """Hold the marker lock from cap check through the caller's commit.
 
     Gate callers must keep this context open for the complete paid review. That
@@ -339,27 +484,34 @@ def _commit_round_unlocked(
     max_rounds: Optional[int] = None,
 ) -> int:
     """Increment while the caller holds the marker lock."""
+    _validate_fixed_cap(max_rounds)
     counts, valid = _load_counts(marker_path)
     if not valid:
         raise ValueError("cannot commit a round over an invalid marker")
-    previous = counts.get(artifact_key, 0)
-    if max_rounds is not None and previous >= max_rounds:
+    entry = counts.get(artifact_key, {"attempts": 0, "successes": 0})
+    previous = entry["successes"]
+    if previous >= MAX_SUCCESSFUL_REVIEWS:
         raise ValueError("cannot commit a round beyond max_rounds")
     current = previous + 1
-    counts[artifact_key] = current
-    marker_dir = os.path.dirname(os.path.abspath(marker_path))
-    os.makedirs(marker_dir, exist_ok=True)
-    fd, temporary_path = tempfile.mkstemp(prefix=".rounds-", suffix=".json", dir=marker_dir)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(counts, fh, indent=2, sort_keys=True)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(temporary_path, marker_path)
-    finally:
-        if os.path.exists(temporary_path):
-            os.unlink(temporary_path)
+    entry["successes"] = current
+    counts[artifact_key] = entry
+    _write_counts(marker_path, counts)
     return current
+
+
+def _reserve_attempt_unlocked(marker_path: str, artifact_key: str) -> int:
+    """Record a reviewer call immediately before crossing the subprocess boundary."""
+    decision = check_attempt_cap(marker_path, artifact_key)
+    if not decision.allowed:
+        raise ValueError(decision.reason or "attempt_cap_exceeded")
+    counts, valid = _load_counts(marker_path)
+    if not valid:
+        raise ValueError("cannot reserve an attempt over an invalid marker")
+    entry = counts.get(artifact_key, {"attempts": 0, "successes": 0})
+    entry["attempts"] += 1
+    counts[artifact_key] = entry
+    _write_counts(marker_path, counts)
+    return entry["attempts"]
 
 
 def commit_round(
@@ -373,8 +525,8 @@ def commit_round(
     malformed marker rather than resetting it. When max_rounds is supplied,
     the cap is rechecked under the same lock used for the increment.
     """
-    effective_cap = max_rounds if max_rounds is not None else 2**63 - 1
-    with round_cap_guard(marker_path, artifact_key, max_rounds=effective_cap):
+    _validate_fixed_cap(max_rounds)
+    with round_cap_guard(marker_path, artifact_key):
         return _commit_round_unlocked(marker_path, artifact_key, max_rounds=max_rounds)
 
 
@@ -554,19 +706,57 @@ def review_gate(
     output_path: Optional[str] = None,
     settings_path: str = DEFAULT_SETTINGS_PATH,
     explicit_env: Optional[dict] = None,
-    max_rounds: int = 2,
     runner: Callable = subprocess.run,
+    version_runner: Callable = subprocess.run,
     timeout_seconds: float = 600,
     max_budget_usd: Optional[float] = None,
+    use_local_claude_cli_identity: bool = False,
 ) -> ReviewResult:
     """End-to-end single review gate with all guards applied.
 
-    Order: readiness -> round-cap CHECK (read-only) -> invoke -> classify ->
-    log cost -> commit round ONLY on success. A failed model call therefore
-    consumes no round (P2-2). Fails closed on refusal, missing credential, or
-    any non-success.
+    Order: readiness -> fixed caps -> reserve attempt -> invoke -> classify ->
+    log cost -> commit success. A started call consumes an attempt even when
+    the provider fails, preventing unbounded billable retries.
     """
     sensitive_values = _known_sensitive_values(settings_path, explicit_env)
+    if (
+        not isinstance(max_budget_usd, (int, float))
+        or isinstance(max_budget_usd, bool)
+        or max_budget_usd <= 0
+    ):
+        return gate_failure_result(
+            handoff_dir,
+            gate_id,
+            "budget_required",
+            "a positive user-approved max_budget_usd is required before invocation",
+            request_prompt,
+            sensitive_values,
+        )
+    if not claude_available():
+        return gate_failure_result(
+            handoff_dir,
+            gate_id,
+            "claude_unavailable",
+            "claude CLI is not available on PATH",
+            request_prompt,
+            sensitive_values,
+        )
+    claude_identity = None
+    claude_executable = "claude"
+    if use_local_claude_cli_identity:
+        try:
+            local_cli = discover_claude_cli_identity(version_runner=version_runner)
+        except ValueError as exc:
+            return gate_failure_result(
+                handoff_dir,
+                gate_id,
+                "setup_failure",
+                str(exc),
+                request_prompt,
+                sensitive_values,
+            )
+        claude_identity = local_cli.user_agent
+        claude_executable = local_cli.executable
     readiness = check_readiness(settings_path=settings_path, explicit_env=explicit_env)
     if readiness.credential_source == "missing":
         fail_closed(
@@ -580,7 +770,7 @@ def review_gate(
         return ReviewResult("credential_missing", None, {}, exit_code=1)
 
     try:
-        with round_cap_guard(marker_path, artifact_key, max_rounds=max_rounds) as decision:
+        with round_cap_guard(marker_path, artifact_key) as decision:
             if not decision.allowed:
                 failure_status = decision.reason or "round_cap_exceeded"
                 return gate_failure_result(
@@ -596,17 +786,36 @@ def review_gate(
                 request_prompt,
                 add_dirs,
                 max_budget_usd=max_budget_usd,
+                claude_executable=claude_executable,
             )
-            child_env = resolve_subprocess_env(readiness, explicit_env)
+            attempt_decision = check_attempt_cap(marker_path, artifact_key)
+            if not attempt_decision.allowed:
+                return gate_failure_result(
+                    handoff_dir,
+                    gate_id,
+                    attempt_decision.reason or "attempt_cap_exceeded",
+                    f"attempt check refused at {attempt_decision.current}; max {attempt_decision.max_rounds}",
+                    request_prompt,
+                    sensitive_values,
+                )
+            with tempfile.TemporaryDirectory(prefix="cross-agent-review-claude-") as config_dir:
+                child_env = resolve_subprocess_env(
+                    readiness,
+                    explicit_env,
+                    settings_path=settings_path,
+                    claude_config_dir=config_dir,
+                    claude_cli_identity=claude_identity,
+                )
+                _reserve_attempt_unlocked(marker_path, artifact_key)
 
-            start = time.monotonic()
-            result = run_review(
-                argv,
-                runner=runner,
-                env=child_env,
-                timeout_seconds=timeout_seconds,
-                request_prompt=request_prompt,
-            )
+                start = time.monotonic()
+                result = run_review(
+                    argv,
+                    runner=runner,
+                    env=child_env,
+                    timeout_seconds=timeout_seconds,
+                    request_prompt=request_prompt,
+                )
             try:
                 log_cost(result.envelope, cost_log_path, gate_id, time.monotonic() - start)
             except (OSError, ValueError) as exc:
@@ -622,7 +831,6 @@ def review_gate(
                 )
 
             if result.status != "success":
-                # Consume no round on failure: only a completed review commits (P2-2).
                 return gate_failure_result(
                     handoff_dir,
                     gate_id,
@@ -653,7 +861,7 @@ def review_gate(
                         {"total_cost_usd": result.envelope.get("total_cost_usd")},
                     )
             try:
-                _commit_round_unlocked(marker_path, artifact_key, max_rounds=max_rounds)
+                _commit_round_unlocked(marker_path, artifact_key)
             except (OSError, ValueError) as exc:
                 detail = f"{type(exc).__name__}: {exc}"
                 return gate_failure_result(
@@ -689,9 +897,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cost-log", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--settings", default=DEFAULT_SETTINGS_PATH)
-    parser.add_argument("--max-rounds", type=int, default=2)
     parser.add_argument("--timeout-seconds", type=float, default=600)
-    parser.add_argument("--max-budget-usd", type=float)
+    parser.add_argument("--max-budget-usd", type=float, required=True)
+    parser.add_argument(
+        "--gateway-compat-cli-identity",
+        action="store_true",
+        help=(
+            "After explicit approval, derive a truthful plain claude-cli identity "
+            "from the locally resolved claude binary; omitted by default"
+        ),
+    )
     return parser
 
 
@@ -711,9 +926,9 @@ def main(argv: Optional[list] = None) -> int:
         output_path=args.output,
         settings_path=args.settings,
         explicit_env=explicit_env,
-        max_rounds=args.max_rounds,
         timeout_seconds=args.timeout_seconds,
         max_budget_usd=args.max_budget_usd,
+        use_local_claude_cli_identity=args.gateway_compat_cli_identity,
     )
     payload = {
         "status": result.status,

@@ -3,8 +3,8 @@
 **Primary path (distributable, no plugin dependency):** the repo-owned direct
 adapter `scripts/claude_to_codex.py`, wrapping
 `codex exec --sandbox read-only --json --output-last-message`. It enforces the
-same protocol guards as the codex→claude adapter (fail-closed, round cap with
-commit-on-success, redaction, result-based readiness, hardcoded read-only) and
+same protocol guards as the codex→claude adapter (fail-closed, fixed started
+attempt and successful-review caps, redaction, result-based readiness, hardcoded read-only) and
 parses the `--json` stream for real `thread_id` / token-usage provenance. Run
 `python -m scripts.claude_to_codex --help`. This is the route
 the skill ships with, so it works for users who never installed the plugin.

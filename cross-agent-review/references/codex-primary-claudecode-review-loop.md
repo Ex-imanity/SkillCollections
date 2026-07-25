@@ -1,8 +1,8 @@
 # Codex Primary + ClaudeCode Review Loop
 
-Status: validated checklist. First-use passed with caveat on 2026-06-14; keep as a checklist unless a future non-self-referential use proves an installed skill trigger is needed.
+Status: historical validated checklist. Its 2026-06-14 first-use evidence is provenance; the containing `cross-agent-review` skill has its own installed-version validation state.
 
-This is not an installed skill. It is a collaboration protocol for tasks where Codex should preserve continuity and do the main writing/implementation, while ClaudeCode should act as a source-grounded reviewer and risk finder.
+This is a collaboration protocol for tasks where Codex should preserve continuity and do the main writing/implementation, while ClaudeCode should act as a source-grounded reviewer and risk finder.
 
 ## When To Use
 
