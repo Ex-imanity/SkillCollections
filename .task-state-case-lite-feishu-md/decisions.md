@@ -15,3 +15,7 @@ The Drive API must download a Markdown file into MCP process memory to parse hea
 ## 2026-07-25: Shared token-file process isolation
 
 Multiple old MCP processes can overwrite the single user-level token file. Release verification must run after those processes use the released MCP version or are stopped/restarted; never rely on a token that another server can silently replace.
+
+## 2026-07-25: Release review closure
+
+ClaudeCode returned `APPROVE WITH NITS` for the 3.4.0 candidate. The two P3 contract-documentation discrepancies and two P3 test gaps were corrected. The reviewer identified no P0-P2 issue; its optional content-type validation suggestion is deliberately deferred because the tool remains read-only and has explicit UTF-8/non-heading behavior.

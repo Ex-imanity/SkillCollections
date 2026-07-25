@@ -41,13 +41,13 @@
 - TODO
 
 ## Phase 7: ClaudeCode read-only review
-**Status:** pending
-**Description:** Create a self-contained review request and run it only after the user approves a new provider budget.
+**Status:** completed
+**Description:** ClaudeCode completed a bounded $2 read-only gate with verdict `APPROVE WITH NITS` and reported cost $1.56871475. All P3 contract/documentation and test findings were applied.
 **Deliverables:**
 - TODO
 
 ## Phase 8: PyPI publication
-**Status:** pending
+**Status:** in_progress
 **Description:** The 3.4.0 sdist and wheel are built, Twine-checked, and clean-installed with the Markdown tool registered. Publication remains gated on cross-agent review.
 **Deliverables:**
 - TODO

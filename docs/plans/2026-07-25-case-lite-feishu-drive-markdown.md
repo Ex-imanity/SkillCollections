@@ -13,13 +13,13 @@ Input:
 - exactly one of `url` or `file_token`
 - `max_level` from 1 through 6, default 4
 - `section_ids` optional; absent means index-only, present means return selected original sections
-- `preview_chars`, default 300, only affects index output
+- `preview_chars`, default 0; a positive value explicitly opts into a direct index preview
 
 Index fields:
 
 - `id`, `title`, `level`, `section_path`
 - `range.start_line` and `range.end_line`, both 1-based and inclusive
-- `preview`, a direct truncated excerpt, not a summary
+- `preview`, a direct truncated excerpt, not a summary, only when `preview_chars > 0`
 
 Selected-content rule: a section runs from its own heading through the line immediately before the next heading of equal or lower level. A selected parent therefore includes nested subsections exactly once. The caller deduplicates ancestor/descendant selections before writing the corpus.
 

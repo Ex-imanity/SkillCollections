@@ -1,6 +1,6 @@
 # Task State
 
-**Last Updated:** 2026-07-25 22:48:00
+**Last Updated:** 2026-07-25 23:05:00
 **Updated By:** Codex
 
 ## Goal
@@ -10,14 +10,13 @@ Enable case-lite to read native Feishu Drive Markdown files and select sections 
 active
 
 ## Active Todos
-- [ ] ClaudeCode read-only review (added: 2026-07-25, source: plan Phase 7)
 - [ ] PyPI publication (added: 2026-07-25, source: plan Phase 8)
 
 ## Current Phase
-Phase 7: ClaudeCode read-only review gate
+Phase 8: PyPI publication
 
 ## Next Action
-Obtain a fresh ClaudeCode review budget, then run the read-only review before publishing `feishu-docx-blocks` 3.4.0.
+Publish the verified `feishu-docx-blocks` 3.4.0 release to PyPI, then install it and run the final case-lite selection workflow.
 
 ## Completed Items
 - Native Drive Markdown file token and wiki URL resolution
@@ -29,9 +28,9 @@ Obtain a fresh ClaudeCode review budget, then run the read-only review before pu
 - Token persistence hardening: cached refresh-token lookup, opaque-token default expiry, and `99991668` invalid-token handling
 - Precision hardening: native Markdown directory mode exposes no preview or content by default; only an explicit user request may request a preview, and selected sections alone return original Markdown
 - Release artifact validation: `feishu-docx-blocks` 3.4.0 sdist and wheel passed Twine metadata checks and a clean virtual-environment installation verified the new MCP tool registration
+- ClaudeCode read-only review: `APPROVE WITH NITS`, actual cost `$1.56871475`; all P3 documentation/test findings were applied and the final MCP regression suite has 19 passing tests
 
 ## Open Questions
-- A paid ClaudeCode review requires a new per-run budget approval. The previous $2 authorization was consumed by the earlier cross-agent-review task.
 - The verified browser OAuth credentials and tokens are stored only in the user-level MCP configuration, never in either Git worktree.
 - Existing MCP processes were restarted and a fresh user-level token was verified in a new process. Release installation must still replace legacy server instances with the published version.
 
@@ -44,6 +43,8 @@ Obtain a fresh ClaudeCode review budget, then run the read-only review before pu
 - SkillCollections commit: `2fcaccc` on `codex/case-lite-feishu-md`
 - `progress.md` (live OAuth and real-file validation record)
 - `decisions.md` (MCP credential ownership and validation conclusions)
+- `Review/ByClaudeCode/2026-07-25-case-lite-feishu-markdown-release-review.md` (approved read-only review)
+- `.task-state-case-lite-feishu-md/cross-agent-review-cost.jsonl` (provider cost provenance)
 
 ## Project Context
 See CLAUDE.md for project constraints, AGENTS.md for agent guidelines.
