@@ -1,0 +1,14 @@
+{
+  "codex-credential-remedy-verification-20260725": {
+    "attempts": 1,
+    "successes": 0
+  },
+  "codex-sdk-cli-user-agent-verification-20260725": {
+    "attempts": 1,
+    "successes": 1
+  },
+  "cross-agent-review-p1-hardening": {
+    "attempts": 1,
+    "successes": 0
+  }
+}
