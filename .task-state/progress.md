@@ -80,3 +80,27 @@
 - Synchronized the complete verified bundle to `/Users/gaotu/.cc-switch/skills/cross-agent-review`; its own Python compilation, 12/12 regression suite, and source parity check passed.
 - Did not spend a second model call: the single approved live gate already validated the exact child header, and local tests validate the new option wiring.
 - Final independent verification reran the installed bundle's 12 tests, both adapter compilation, candidate/install parity, MRS validation, `git diff --check`, and a tightened secret scan. An installed-CLI smoke test also rejected `claude-vscode` as `setup_failure` with no attempt marker, without invoking a model.
+
+## 2026-07-26 — Phase 8 compatibility hardening (ClaudeCode, awaiting Codex review)
+- Reviewed the installed skill for third-party portability ("will other installers be able to use it?"). Found 2×P1 + 2×P2 blockers (see findings.md 2026-07-26). Baseline suite 17/17 green before changes.
+- P1-a: replaced unconditional `import fcntl` with conditional fcntl/msvcrt binding + `_lock_exclusive`/`_unlock`; both adapters now import on Windows, lock fails closed if no primitive exists.
+- P1-b: `check_readiness` returns `inherited` instead of `missing`; forward gate works with official Claude auth, not just a proxy gateway. (Discovered while testing that this very session runs behind the `baijia.com` proxy — the ambient env carries the proxy vars, so the `inherited` test had to clean the environment to be deterministic.)
+- P2-a: added `claude_supports_max_budget()` `--help` probe + opt-in forward-gate preflight (clear upgrade message, no attempt reserved) + doctor `max_budget_supported` field (text shows `max-budget-usd=yes`).
+- P2-b: rewrote `_parse_codex_json_stream`/`_extract_*` to be drift-tolerant (verified primary → defensive fallback, exact-key only), capture verified optional token fields, and emit observed event types on `provenance_failure`.
+- Consulted Codex for its real `--json` schema (per user suggestion). Its live probe was sandbox-blocked, so it source-verified `rust-v0.144.1` (this host's version) and confirmed the primary field names + two real optional usage fields; applied `cached_input_tokens`/`reasoning_output_tokens` capture and camelCase id fallbacks as a result.
+- Verification: `py_compile` OK on all scripts+tests; `pytest tests/` → 29 passed (17 original + 12 new across CompatibilityTests and CodexProvenanceTests); both adapter `--help` and `runtime_capabilities` run clean; doctor reports `claude ... max-budget-usd=yes`, `codex ... supported`.
+- Updated SKILL.md + README.md (credential `inherited` path, POSIX/Windows lock + Python 3.8+, `--max-budget-usd` version note, tolerant/diagnosable provenance).
+- NOT committed and NOT re-synced to `/Users/gaotu/.cc-switch/skills/cross-agent-review`. Next: Codex main session reviews the working diff, then commits if acceptable.
+
+## 2026-07-26 — Codex review round 1 resolved (ClaudeCode)
+- Codex main session reviewed the Phase 8 diff and raised three valid findings (see findings.md 2026-07-26 review entry). Applied the receiving-code-review discipline; agreed with all three.
+- Fix 1 (P1 provenance): rewrote extraction so ONLY source-verified event-type+field paths gate success; alias names are diagnostic-only `drift_hints`. Rewrote `_verified_session_id`/`_verified_usage`/`_collect_drift_hints`; `run_codex_review` now surfaces drift hints in the failure detail. Updated the corresponding test to assert aliases do NOT validate but ARE captured as hints.
+- Fix 2 (protocol sync): updated `references/cross-agent-review-protocol.md` credential rule (added `inherited`) and guarantee-boundary provenance line (verified-only + diagnostics).
+- Fix 3 (Windows lock): added `import errno`; `_lock_exclusive` retries msvcrt only on `EDEADLOCK`/`EDEADLK`, re-raises all other `OSError`; added two mock-msvcrt tests (retry-on-contention, reraise-non-contention).
+- Verification: `py_compile` OK; `pytest tests/` → 31 passed (was 29); no provider calls.
+- Still NOT committed. Next: Codex re-reviews the updated diff; commit if acceptable.
+
+## 2026-07-26 — Phase 8 closure (Codex)
+- Re-reviewed the resolved Phase 8 working diff and accepted it with no further blocking findings.
+- Fresh verification: `python -m pytest cross-agent-review/tests/ -q` → 31 passed; `python -m py_compile scripts/*.py tests/*.py` from `cross-agent-review/` and `git diff --check` passed. No provider call was made.
+- User accepted the remaining real-Windows validation gap as deferred work for a future Windows use case. The source working tree remains intentionally uncommitted, and the user will manually commit it and synchronize the installed bundle.

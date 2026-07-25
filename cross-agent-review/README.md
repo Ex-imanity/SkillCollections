@@ -45,19 +45,21 @@ python -m scripts.runtime_capabilities --json # 本机 agent CLI 发现（不发
 ## 核心安全保证（协议）
 
 - readiness 由**真实结果信封**判定，绝不用 `claude auth status`。
+- 凭证：优先用 settings.json 的 `env` 代理块（隔离 `CLAUDE_CONFIG_DIR` 后显式注入），其次用显式注入的代理变量；两者都没有时回退 `inherited`，直接让本机 `claude` 用它自己已有的认证（订阅/OAuth 登录或环境里的 `ANTHROPIC_API_KEY`）——**无需代理网关**。未认证的 CLI 会在真实信封里被判为 `auth_failure` 并 fail closed。
 - 默认清除宿主继承的自定义 Header/IDE 身份；兼容 User-Agent 必须显式启用，并从实际执行的本机 Claude CLI 导出。
 - reviewer 物理只读（claude `--permission-mode plan` + 固定 `Read,Grep,Glob`；codex 硬编码 `--sandbox read-only`）；无调用方 override。
 - 并发安全的固定上限（marker 锁从 check 到 commit）：每个 artifact 最多 2 次已启动调用和最多 2 次成功 review；已启动后失败也消耗 attempt，损坏计数 fail closed。同一 marker 文件在整个 reviewer 调用期间持锁，因此共享该文件的不同 artifact gate 会串行；等待方没有独立获取锁超时，通常会等待当前调用的配置超时（默认 600 秒）及本地 I/O。
 - `<marker-path>.lock` 是正常常驻的 flock 协调文件，不保存计数；它在正常结束后仍存在，并非 gate 正在运行或已失败的证据（not evidence of an active or failed gate）。将 marker 与 lock 放在忽略的 task-state 路径下；只有 marker JSON 损坏时才先保留证据、再手动删除 marker，gate 运行期间不要删除 lock。
 - attempt 已持久化预留、且 reviewer 子进程尚未启动时，两个 adapter 都会向 stderr 输出一条脱敏的 `review_started` JSON；它只说明 gate 已开始，最终结构化结果仍在 stdout。
 - 任何非成功 → fail closed 到**脱敏** durable handoff；禁止递归互审。
-- codex 反向成功需真实 `thread_id` + `usage`，否则 fail closed；缺 USD 记 JSON `null`，绝不伪造 0。
+- codex 反向成功需真实 session/thread id + 真实非负 token 对，否则 fail closed；字段提取容忍 codex schema 轻微漂移（先用已探测的主字段名，再回退常见别名），仍缺则 fail closed，且 `provenance_failure` 会记录实际观察到的 event type 以便诊断 schema 变化；缺 USD 记 JSON `null`，绝不伪造 0。
 - 只持久化经校验的非空 reviewer 输出;落盘前对已知 endpoint/token 值与密钥模式脱敏。
 
 ## 依赖
 
-- 本机 `claude` + `codex` CLI（`codex exec --sandbox read-only --json` / `claude -p --output-format json`）。
+- 本机 `claude` + `codex` CLI（`codex exec --sandbox read-only --json` / `claude -p --output-format json`）。正向 gate 用到 `--max-budget-usd`，需要支持该 flag 的较新 `claude`；旧版本会 fail closed 并落 handoff。
 - 无官方 Codex plugin 依赖（plugin 仅作可选 fallback，见 mapping reference）。
+- Python 3.8+，仅用标准库。跨平台：POSIX 用 `fcntl`、Windows 用 `msvcrt` 做 marker 锁；两者都没有的平台 fail closed，而不是跳过串行化。
 - 连续性契约：marker/成本日志为调用方指定的文件路径，可由任意 MRS/task-state 机制（如 `context-resilient-task`）满足；本 skill 不硬依赖它。
 
 ## 验证与历史证据

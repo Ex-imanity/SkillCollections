@@ -73,7 +73,7 @@ starts a review or model request.
 ## Non-negotiable guards (from the protocol)
 
 - Readiness = a real result envelope, never `claude auth status` / auth-status commands.
-- Credentials = verify the settings.json env block, then run the child with a fresh temporary `CLAUDE_CONFIG_DIR` and explicitly inject those verified values; fall back to explicit inject only when settings credentials are absent. Never log the token or mutate auth.
+- Credentials = verify the settings.json env block, then run the child with a fresh temporary `CLAUDE_CONFIG_DIR` and explicitly inject those verified values; fall back to explicit inject when only env vars supply the proxy keys; otherwise fall back to `inherited` and let the local `claude` use its own existing auth (subscription/OAuth login or ambient `ANTHROPIC_API_KEY`) — no proxy gateway is required. Auth is judged on the real result envelope, so an unauthenticated CLI fails closed as `auth_failure`. Never log the token or mutate auth.
 - Client identity = discard inherited custom-header/IDE identity variables. Keep Claude Code's default identity unless the user explicitly approves the derived local-CLI gateway workaround.
 - One primary/continuity owner; reviewer is read-only (`--permission-mode plan` for claude, hardcoded `--sandbox read-only` for codex; fixed `Read,Grep,Glob`; no caller override).
 - Fresh session per gate. Re-review uses a second fresh gate with prior findings and new evidence explicit in the request; resume/session controls are not exposed.
@@ -84,12 +84,13 @@ starts a review or model request.
 - Fail to a redacted durable handoff on any non-success; no recursive mutual review; plugin review gate off by default.
 - Round counters for multiple artifacts share a single marker file. The exclusive lock covers the entire review call, so gates for different artifacts using that marker serialize; a waiting gate has no separate acquisition deadline and normally waits behind the current call's configured timeout (600 seconds by default) plus local I/O. `<marker-path>.lock` remains after normal completion as a harmless flock coordination sentinel, not review state; put both files in an ignored task-state location and do not delete the lock while a gate may hold it. If the marker JSON itself is damaged, preserve it for diagnosis then delete only that marker file; the adapter recreates it on the next readiness-qualified attempt.
 - After an attempt is durably reserved and immediately before the reviewer subprocess begins, both adapters emit one redacted `review_started` JSON record to stderr. It is an active-gate signal, not a success result; the final structured result remains on stdout.
-- Reverse (codex) success requires real `thread.started.thread_id` + `turn.completed.usage`; otherwise fail closed. Log provider-reported `total_cost_usd` + wall time; missing USD is JSON `null`, never a fabricated `0`.
+- Reverse (codex) success requires a real session/thread id + a real non-negative token pair. Extraction is tolerant of minor codex schema drift (primary probed names first, then conventional fallbacks), but still fails closed when either piece is missing; a `provenance_failure` records the observed event types so a schema change is diagnosable rather than silent. Log provider-reported `total_cost_usd` + wall time; missing USD is JSON `null`, never a fabricated `0`.
 - Persist only verified non-empty reviewer output; never treat an empty/invalid envelope as a review. Redact known endpoint/token values and secret patterns before writing any artifact.
 
 ## Requirements & notes
 
-- Requires the local `claude` and `codex` CLIs on PATH; no official Codex plugin dependency (it is only an optional fallback).
+- Requires the local `claude` and `codex` CLIs on PATH; no official Codex plugin dependency (it is only an optional fallback). The forward gate uses `claude -p --max-budget-usd ...`, so it needs a `claude` build new enough to support that flag; an older CLI fails closed with a handoff rather than running.
+- Python 3.8+ stdlib only. Cross-platform: POSIX uses `fcntl` for the marker lock, Windows uses `msvcrt`; a platform with neither fails closed instead of skipping serialization.
 - Self-contained runtime: the adapters, protocol, and checklist needed to run
   a gate are bundled here. Historical evidence paths remain optional provenance.
 - Continuity: the protocol requires durable primary-owned continuity. Marker and cost-log paths are caller-selected filesystem paths, so any MRS/task-state mechanism (e.g. `context-resilient-task`) can satisfy that contract; this skill does not hard-depend on it.

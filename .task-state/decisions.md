@@ -101,3 +101,36 @@ Entry shape (copy below the "## Entries" marker):
 - **Decision:** Ship `scripts.runtime_capabilities` with an explicit catalog of known agent CLI names. Only `claude` and `codex` are marked as supported review routes; other discovered CLIs are reported but never used automatically.
 - **Reason:** A generic executable scan cannot safely infer a review protocol, permissions, result envelope, or cost contract for a different agent. Reporting availability and version retains useful local compatibility evidence without widening authority.
 - **Source:** User request for best-compatible local agent discovery; `tests/test_runtime_capabilities.py`.
+
+## 2026-07-26: Cross-platform file lock instead of POSIX-only fcntl
+- **Decision:** Bind `fcntl` (POSIX) / `msvcrt` (Windows) conditionally and route the marker lock through `_lock_exclusive`/`_unlock`; fail closed (raise `OSError`) on a platform with neither, never silently skip serialization.
+- **Reason:** The unconditional top-level `import fcntl` crashed both adapters at import on Windows (the reverse adapter imports from the forward one), making the skill unusable for any Windows installer despite docs claiming only the two CLIs as dependencies.
+- **Source:** Phase 8 compatibility review; `tests/test_review_limits.py::CompatibilityTests` (portable lock + fail-closed-when-no-primitive); Windows-simulation smoke test.
+
+## 2026-07-26: `inherited` credential source for non-proxy installers
+- **Decision:** When neither settings.json nor injected env supplies both proxy keys, `check_readiness` returns `inherited` (not `missing`), and the child runs with ambient auth and the default `CLAUDE_CONFIG_DIR` (no temp-dir override, no proxy injection). Auth truth is still decided on the real result envelope.
+- **Reason:** The proxy-only readiness gate made the forward direction unusable for the majority of installers who use official Claude auth (subscription OAuth or `ANTHROPIC_API_KEY`), even though `claude -p` would work with inherited auth. An unauthenticated CLI still classifies as `auth_failure` and fails closed, so no guarantee is weakened.
+- **Source:** Phase 8 compatibility review; `tests/test_review_limits.py::CompatibilityTests` (inherited fallback + gate runs without injecting proxy env under a cleaned environment).
+
+## 2026-07-26: Opt-in `--max-budget-usd` preflight, plus doctor reporting
+- **Decision:** Add `claude_supports_max_budget()` (a `--help` probe returning True/False/None). The forward gate runs the preflight ONLY when the caller injects a help runner (the CLI does; hermetic unit tests do not); a conclusive "unsupported" fails closed with an upgrade message before reserving an attempt; inconclusive never blocks. The doctor reports `max_budget_supported`.
+- **Reason:** `--max-budget-usd` is a required forward flag but a relatively new `claude` feature; older CLIs otherwise fail with a cryptic non-success envelope. Opt-in keeps existing hermetic tests from making real subprocess calls.
+- **Source:** Phase 8 compatibility review; `tests/test_review_limits.py::CompatibilityTests` (probe True/False/inconclusive; gate fails closed without starting the subprocess).
+
+## 2026-07-26: Tolerant-but-fail-closed codex provenance extraction
+- **Decision:** Parse the codex `--json` stream with source-verified primary names first (`thread.started.thread_id`, `turn.completed.usage.input_tokens/output_tokens`), then defensive fallbacks (camelCase ids, `prompt_tokens`/`completion_tokens`, `token_usage`), using exact-key matching only. Capture the verified optional `cached_input_tokens`/`reasoning_output_tokens` for telemetry. Keep the fail-closed rule (real id + real non-negative token pair required; never fabricate) and record observed event types in the `provenance_failure` detail for diagnosis.
+- **Reason:** The prior parser pinned one probe-date schema; a future codex rename would silently break every reverse gate. Codex source-verified rust-v0.144.1 (this host) confirming the primary names, the real optional fields, and that the stream is unversioned with documented historical item-field drift.
+- **Source:** Phase 8; Codex source verification of `rust-v0.144.1` `codex-rs/exec/src/exec_events.rs`; `tests/test_review_limits.py::CodexProvenanceTests`.
+- **SUPERSEDED by the 2026-07-26 review-round decision below:** the "defensive fallbacks participate in extraction" part was over-broad and is replaced by verified-only-gates-success + diagnostic-only aliases.
+
+## 2026-07-26: Resolve Codex review round 1 (verified-only provenance; strict Windows lock; protocol sync)
+- **Decision (P1 — provenance):** Only the source-verified paths gate a successful review — session id ONLY from a `thread.started` event's `thread_id`, usage ONLY from a `turn.completed` event's `usage.{input_tokens,output_tokens}`. Conventional alias names (`session_id`/camelCase ids, `prompt_tokens`/`completion_tokens`, `token_usage`) NO LONGER flip a `provenance_failure` into success; they are collected as diagnostic `drift_hints` and surfaced in the failure detail so a human can extend the verified contract WITH fresh source evidence. Verified optional `cached_input_tokens`/`reasoning_output_tokens` still captured for telemetry.
+- **Decision (P2 — Windows lock):** `_lock_exclusive` retries the non-blocking `msvcrt.locking` ONLY on a genuine contention errno (`EDEADLOCK`/`EDEADLK`); any other `OSError` (EACCES/EINVAL/EBADF) propagates so the gate fails closed instead of spinning forever.
+- **Decision (P2 — protocol sync):** Updated `references/cross-agent-review-protocol.md` (the declared authoritative source) to add the `inherited` credential step and the verified-only-with-diagnostics provenance rule, matching SKILL.md/README.
+- **Reason:** Codex main-session review (2026-07-26) correctly flagged that (1) accepting unverified aliases as success would persist an unverified review — violating the "only verified provenance" guarantee; (2) retrying all `OSError` turns a non-contention failure into an infinite hang instead of the documented fail-closed; (3) the authoritative protocol doc still described the old proxy-only `missing` credential rule and strict codex fields, contradicting the new implementation.
+- **Source:** Codex review findings (screenshot, 2026-07-26); `tests/test_review_limits.py::CodexProvenanceTests::test_alias_shapes_do_not_flip_failure_to_success`, `::CompatibilityTests::test_windows_lock_retries_only_on_contention` / `::test_windows_lock_reraises_non_contention_error`; 31/31 passing.
+
+## 2026-07-26: Defer real Windows lock validation
+- **Decision:** Accept the mock-backed Windows lock tests for this release and defer a real Windows smoke/CI run until a Windows usage scenario exists.
+- **Reason:** The reviewed implementation retries only `EDEADLOCK`/`EDEADLK` contention and re-raises all other `OSError` values, so it fails closed. The remaining uncertainty is platform-runtime behavior, not a known correctness defect; the user explicitly accepted the deferral.
+- **Source:** User direction in the active task; Codex re-review with 31 passing local tests.

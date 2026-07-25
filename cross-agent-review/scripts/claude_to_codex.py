@@ -104,14 +104,103 @@ def classify_codex(exit_code: int, last_message_text: Optional[str], stderr: str
     return "other_error"
 
 
-def _parse_codex_json_stream(stdout: str) -> dict:
-    """Extract provenance/usage from a `codex exec --json` event stream.
+# --- provenance: verified success contract + diagnostic-only drift hints ------
+#
+# ONLY the source-verified paths below may gate a successful review (codex
+# rust-v0.144.1, `codex-rs/exec/src/exec_events.rs`): a session id from a
+# `thread.started` event's `thread_id`, and a token pair from a `turn.completed`
+# event's `usage.{input_tokens,output_tokens}`. Requiring both the event type
+# and the exact field keeps a foreign/partial signal from being mistaken for
+# provenance. Nothing is ever fabricated; a missing verified pair fails closed.
+#
+# The stream is UNVERSIONED, so if codex renames these we must NOT silently
+# accept a guessed alias as success (that would persist an unverified review).
+# Instead we fail closed loudly and record diagnostic hints — observed event
+# types plus any conventional alias names seen — so a human can add the new
+# names to the verified contract WITH fresh source evidence. Alias names never
+# flip provenance_failure into success.
+_VERIFIED_SESSION_EVENT = "thread.started"
+_VERIFIED_SESSION_KEY = "thread_id"
+_VERIFIED_USAGE_EVENT = "turn.completed"
+_REQUIRED_USAGE_KEYS = ("input_tokens", "output_tokens")
+# Verified optional fields on the codex usage struct — captured for telemetry
+# when present, never required for validity.
+_OPTIONAL_TOKEN_KEYS = ("cached_input_tokens", "reasoning_output_tokens")
+# Diagnostic-only alias names (NOT accepted as provenance). Seeing one on a
+# failed gate signals a likely schema rename worth investigating.
+_DIAGNOSTIC_SESSION_KEYS = ("session_id", "threadId", "sessionId")
+_DIAGNOSTIC_USAGE_KEYS = ("prompt_tokens", "completion_tokens")
 
-    Real schema (probed 2026-07-24): `thread.started` carries `thread_id`;
-    `turn.completed` carries `usage` (token counts). Codex reports no USD cost.
-    Best-effort and defensive: unparseable lines are skipped.
+
+def _nonneg_int(value: object) -> Optional[int]:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def _verified_session_id(event: dict, event_type: object) -> Optional[str]:
+    """Session id from the verified `thread.started` + `thread_id` path only.
+
+    Exact-key on the verified event type, so a collab field like
+    `sender_thread_id` or an item/tool id is never mistaken for the session id.
+    """
+    if event_type != _VERIFIED_SESSION_EVENT:
+        return None
+    value = event.get(_VERIFIED_SESSION_KEY)
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _verified_usage(event: dict, event_type: object) -> Optional[dict]:
+    """Token pair from the verified `turn.completed` + `usage` path only.
+
+    Requires a complete non-negative ``input_tokens``/``output_tokens`` pair;
+    captures the verified optional cached/reasoning fields when present.
+    """
+    if event_type != _VERIFIED_USAGE_EVENT:
+        return None
+    usage = event.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    input_tokens = _nonneg_int(usage.get("input_tokens"))
+    output_tokens = _nonneg_int(usage.get("output_tokens"))
+    if input_tokens is None or output_tokens is None:
+        return None
+    normalized = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+    for extra in _OPTIONAL_TOKEN_KEYS:
+        value = _nonneg_int(usage.get(extra))
+        if value is not None:
+            normalized[extra] = value
+    return normalized
+
+
+def _collect_drift_hints(event: dict, event_type: object, hints: set) -> None:
+    """Record conventional alias names for diagnosis only (never for success)."""
+    label = event_type if isinstance(event_type, str) else "<untyped>"
+    for key in _DIAGNOSTIC_SESSION_KEYS:
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            hints.add(f"{label}:{key}")
+    for container_key in ("usage", "token_usage"):
+        usage = event.get(container_key)
+        if isinstance(usage, dict):
+            for key in _DIAGNOSTIC_USAGE_KEYS:
+                if key in usage:
+                    hints.add(f"{label}:{container_key}.{key}")
+
+
+def _parse_codex_json_stream(stdout: str) -> dict:
+    """Extract verified provenance from a `codex exec --json` event stream.
+
+    Takes the first verified session id and the last verified usage pair (final
+    usage is cumulative). Records ``observed_types`` and ``drift_hints`` for
+    failure diagnosis only. Codex reports no USD cost. Unparseable lines skipped.
     """
     meta: dict = {}
+    observed_types: list = []
+    drift_hints: set = set()
+    last_usage: Optional[dict] = None
     for raw in (stdout or "").splitlines():
         line = raw.strip()
         if not line:
@@ -122,10 +211,21 @@ def _parse_codex_json_stream(stdout: str) -> dict:
             continue
         if not isinstance(event, dict):
             continue
-        if event.get("type") == "thread.started" and event.get("thread_id"):
-            meta["session_id"] = event["thread_id"]
-        if event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict):
-            meta["usage"] = event["usage"]
+        event_type = event.get("type")
+        if isinstance(event_type, str):
+            observed_types.append(event_type)
+        if "session_id" not in meta:
+            session_id = _verified_session_id(event, event_type)
+            if session_id is not None:
+                meta["session_id"] = session_id
+        usage = _verified_usage(event, event_type)
+        if usage is not None:
+            last_usage = usage
+        _collect_drift_hints(event, event_type, drift_hints)
+    if last_usage is not None:
+        meta["usage"] = last_usage
+    meta["observed_types"] = observed_types
+    meta["drift_hints"] = sorted(drift_hints)
     return meta
 
 
@@ -140,7 +240,7 @@ def _valid_codex_provenance(meta: dict) -> bool:
             isinstance(usage.get(key), int)
             and not isinstance(usage.get(key), bool)
             and usage[key] >= 0
-            for key in ("input_tokens", "output_tokens")
+            for key in _REQUIRED_USAGE_KEYS
         )
     )
 
@@ -184,16 +284,36 @@ def run_codex_review(
     except OSError:
         text = None
     meta = _parse_codex_json_stream(stdout)
+    observed_types = meta.pop("observed_types", [])
+    drift_hints = meta.pop("drift_hints", [])
     status = classify_codex(exit_code, text, stderr)
     if status == "success" and not _valid_codex_provenance(meta):
         status = "provenance_failure"
     effective_exit_code = exit_code if status == "success" or exit_code != 0 else 1
+    if status == "provenance_failure":
+        missing = []
+        if not (isinstance(meta.get("session_id"), str) and meta["session_id"].strip()):
+            missing.append("session_id")
+        if not isinstance(meta.get("usage"), dict):
+            missing.append("usage")
+        # Event types and alias hints are non-sensitive labels; surfacing them
+        # makes a codex schema drift diagnosable instead of a silent failure.
+        seen = sorted(set(observed_types))[:20]
+        hint = (
+            f"; saw unverified alias fields {drift_hints} — codex may have "
+            "renamed its schema, add them to the verified contract in "
+            "claude_to_codex.py only with fresh source evidence"
+            if drift_hints
+            else ""
+        )
+        detail = (
+            f"codex provenance incomplete: missing verified {missing}; "
+            f"observed event types={seen or 'none'}{hint}"
+        )
+    else:
+        detail = stderr[:200]
     envelope = {
-        "detail": (
-            stderr[:200]
-            if status != "provenance_failure"
-            else "missing required thread.started.thread_id or turn.completed.usage"
-        ),
+        "detail": detail,
         "session_id": meta.get("session_id"),
         "usage": meta.get("usage"),
         "total_cost_usd": None,  # Codex reports token usage, not USD; never fake 0.

@@ -660,5 +660,289 @@ class ReviewLimitTests(unittest.TestCase):
             )
 
 
+class CompatibilityTests(unittest.TestCase):
+    """Portability guarantees for installers on non-proxy auth and Windows."""
+
+    def test_readiness_falls_back_to_inherited_without_proxy_credentials(self) -> None:
+        readiness = codex_to_claude.check_readiness(
+            settings_path="/does/not/exist.json", explicit_env={}
+        )
+        self.assertEqual("inherited", readiness.credential_source)
+
+    def test_inherited_gate_runs_without_injecting_proxy_env(self) -> None:
+        def successful_runner(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            child_env = kwargs["env"]
+            # No proxy gateway configured and none in the (cleaned) ambient env:
+            # the adapter injects nothing and does not force a temp config dir,
+            # so the child uses whatever auth the local `claude` already holds.
+            self.assertNotIn("ANTHROPIC_BASE_URL", child_env)
+            self.assertNotIn("ANTHROPIC_AUTH_TOKEN", child_env)
+            self.assertNotIn("CLAUDE_CONFIG_DIR", child_env)
+            return subprocess.CompletedProcess(
+                args=["claude"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "is_error": False,
+                        "api_error_status": None,
+                        "result": "APPROVE",
+                        "session_id": "inherited-session",
+                    }
+                ),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # Clean ambient env so the test is independent of a proxy-configured
+            # shell (this suite may itself run behind a gateway).
+            with (
+                mock.patch.object(codex_to_claude, "claude_available", return_value=True),
+                mock.patch.dict(codex_to_claude.os.environ, {"PATH": "/usr/bin"}, clear=True),
+            ):
+                result = codex_to_claude.review_gate(
+                    request_prompt="Review the artifact and return a verdict.",
+                    add_dirs=[str(root)],
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-a",
+                    artifact_key="artifact-a",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "absent-settings.json"),
+                    explicit_env={},
+                    runner=successful_runner,
+                    timeout_seconds=1,
+                    max_budget_usd=1.0,
+                )
+
+            self.assertEqual("success", result.status)
+
+    def test_round_cap_guard_serializes_with_portable_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker_path = str(Path(directory) / "rounds.json")
+            with codex_to_claude.round_cap_guard(marker_path, "artifact-a") as decision:
+                self.assertTrue(decision.allowed)
+            self.assertTrue(Path(f"{marker_path}.lock").exists())
+
+    def test_lock_fails_closed_when_no_locking_primitive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            lock_path = Path(directory) / "x.lock"
+            with open(lock_path, "a+", encoding="utf-8") as handle:
+                with (
+                    mock.patch.object(codex_to_claude, "_fcntl", None),
+                    mock.patch.object(codex_to_claude, "_msvcrt", None),
+                ):
+                    with self.assertRaises(OSError):
+                        codex_to_claude._lock_exclusive(handle)
+
+    def test_windows_lock_retries_only_on_contention(self) -> None:
+        import errno as _errno
+
+        class ContendMsvcrt:
+            LK_NBLCK = 1
+
+            def __init__(self) -> None:
+                self.attempts = 0
+
+            def locking(self, _fd: int, _mode: int, _n: int) -> None:
+                self.attempts += 1
+                if self.attempts < 3:
+                    raise OSError(_errno.EDEADLK, "region locked")
+
+        fake = ContendMsvcrt()
+        with tempfile.TemporaryDirectory() as directory:
+            lock_path = Path(directory) / "x.lock"
+            with open(lock_path, "a+", encoding="utf-8") as handle:
+                with (
+                    mock.patch.object(codex_to_claude, "_fcntl", None),
+                    mock.patch.object(codex_to_claude, "_msvcrt", fake),
+                    mock.patch.object(codex_to_claude.time, "sleep", lambda *_a: None),
+                ):
+                    codex_to_claude._lock_exclusive(handle)  # returns after retries
+        self.assertEqual(3, fake.attempts)
+
+    def test_windows_lock_reraises_non_contention_error(self) -> None:
+        import errno as _errno
+
+        class FailMsvcrt:
+            LK_NBLCK = 1
+
+            def locking(self, _fd: int, _mode: int, _n: int) -> None:
+                raise OSError(_errno.EACCES, "permission denied")
+
+        with tempfile.TemporaryDirectory() as directory:
+            lock_path = Path(directory) / "x.lock"
+            with open(lock_path, "a+", encoding="utf-8") as handle:
+                with (
+                    mock.patch.object(codex_to_claude, "_fcntl", None),
+                    mock.patch.object(codex_to_claude, "_msvcrt", FailMsvcrt()),
+                    mock.patch.object(codex_to_claude.time, "sleep", lambda *_a: None),
+                ):
+                    with self.assertRaises(OSError) as ctx:
+                        codex_to_claude._lock_exclusive(handle)
+        self.assertEqual(_errno.EACCES, ctx.exception.errno)
+
+    def test_max_budget_probe_reads_help_text(self) -> None:
+        def with_flag(argv: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, 0, "  --max-budget-usd FLOAT\n", "")
+
+        def without_flag(argv: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, 0, "  --output-format json\n", "")
+
+        def unreadable(argv: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
+            raise OSError("help unavailable")
+
+        self.assertIs(
+            True,
+            codex_to_claude.claude_supports_max_budget(executable="claude", help_runner=with_flag),
+        )
+        self.assertIs(
+            False,
+            codex_to_claude.claude_supports_max_budget(
+                executable="claude", help_runner=without_flag
+            ),
+        )
+        self.assertIsNone(
+            codex_to_claude.claude_supports_max_budget(executable="claude", help_runner=unreadable)
+        )
+
+    def test_forward_gate_fails_closed_when_claude_lacks_max_budget(self) -> None:
+        def help_without_flag(argv: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, 0, "usage: claude -p [--output-format]\n", "")
+
+        def runner_must_not_start(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            raise AssertionError("reviewer subprocess must not start when the flag is unsupported")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(codex_to_claude, "claude_available", return_value=True):
+                result = codex_to_claude.review_gate(
+                    request_prompt="Review the artifact and return a verdict.",
+                    add_dirs=[str(root)],
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-a",
+                    artifact_key="artifact-a",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "absent-settings.json"),
+                    explicit_env={},
+                    runner=runner_must_not_start,
+                    timeout_seconds=1,
+                    max_budget_usd=1.0,
+                    budget_help_runner=help_without_flag,
+                )
+
+            self.assertEqual("setup_failure", result.status)
+            # No attempt was reserved because we refused before the subprocess.
+            self.assertFalse((root / "rounds.json").exists())
+
+
+class CodexProvenanceTests(unittest.TestCase):
+    """Tolerant, fail-closed provenance extraction across codex schema drift."""
+
+    def test_accepts_current_probed_schema(self) -> None:
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "thread.started", "thread_id": "thread-a"}),
+                json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3, "output_tokens": 5}}),
+            ]
+        )
+        meta = claude_to_codex._parse_codex_json_stream(stdout)
+        self.assertEqual("thread-a", meta["session_id"])
+        self.assertEqual({"input_tokens": 3, "output_tokens": 5}, meta["usage"])
+        self.assertTrue(claude_to_codex._valid_codex_provenance(meta))
+
+    def test_alias_shapes_do_not_flip_failure_to_success(self) -> None:
+        # A hypothetical renamed schema: session event + OpenAI-style token keys.
+        # These are NOT the source-verified paths, so provenance must stay
+        # invalid (fail closed) and the alias names surface only as drift hints.
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "session.created", "session_id": "sess-b"}),
+                json.dumps(
+                    {"type": "response.completed", "usage": {"prompt_tokens": 7, "completion_tokens": 9}}
+                ),
+            ]
+        )
+        meta = claude_to_codex._parse_codex_json_stream(stdout)
+        self.assertIsNone(meta.get("session_id"))
+        self.assertIsNone(meta.get("usage"))
+        self.assertFalse(claude_to_codex._valid_codex_provenance(meta))
+        self.assertIn("session.created:session_id", meta["drift_hints"])
+        self.assertIn("response.completed:usage.prompt_tokens", meta["drift_hints"])
+
+    def test_captures_verified_optional_usage_fields(self) -> None:
+        # codex rust-v0.144.1 usage struct also carries cached/reasoning tokens.
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "thread.started", "thread_id": "thread-d"}),
+                json.dumps(
+                    {
+                        "type": "turn.completed",
+                        "usage": {
+                            "input_tokens": 10,
+                            "output_tokens": 20,
+                            "cached_input_tokens": 4,
+                            "reasoning_output_tokens": 6,
+                        },
+                    }
+                ),
+            ]
+        )
+        meta = claude_to_codex._parse_codex_json_stream(stdout)
+        self.assertEqual(
+            {
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "cached_input_tokens": 4,
+                "reasoning_output_tokens": 6,
+            },
+            meta["usage"],
+        )
+        self.assertTrue(claude_to_codex._valid_codex_provenance(meta))
+
+    def test_bare_id_on_non_session_event_is_not_a_session_id(self) -> None:
+        stdout = json.dumps({"type": "item.completed", "id": "item-123"})
+        meta = claude_to_codex._parse_codex_json_stream(stdout)
+        self.assertIsNone(meta.get("session_id"))
+
+    def test_incomplete_token_pair_is_invalid(self) -> None:
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "thread.started", "thread_id": "thread-c"}),
+                json.dumps({"type": "turn.completed", "usage": {"input_tokens": 4}}),
+            ]
+        )
+        meta = claude_to_codex._parse_codex_json_stream(stdout)
+        self.assertIsNone(meta.get("usage"))
+        self.assertFalse(claude_to_codex._valid_codex_provenance(meta))
+
+    def test_provenance_failure_detail_reports_observed_types(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            last_message = Path(directory) / "last.txt"
+            last_message.write_text("APPROVE", encoding="utf-8")
+
+            def runner(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+                return subprocess.CompletedProcess(
+                    args=["codex"],
+                    returncode=0,
+                    stdout=json.dumps({"type": "turn.completed"}),  # no usage, no id
+                    stderr="",
+                )
+
+            result = claude_to_codex.run_codex_review(
+                argv=["codex"],
+                last_message_path=str(last_message),
+                runner=runner,
+                timeout_seconds=1,
+                prompt="review",
+            )
+
+        self.assertEqual("provenance_failure", result.status)
+        self.assertIn("session_id", result.envelope["detail"])
+        self.assertIn("usage", result.envelope["detail"])
+        self.assertIn("turn.completed", result.envelope["detail"])
+
+
 if __name__ == "__main__":
     unittest.main()

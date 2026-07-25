@@ -18,7 +18,7 @@ never make real model calls.
 from __future__ import annotations
 
 import argparse
-import fcntl
+import errno
 import json
 import os
 import re
@@ -30,6 +30,61 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Optional
+
+# Cross-platform exclusive file locking. `fcntl` is POSIX-only and `msvcrt` is
+# Windows-only, so we bind whichever exists and expose one blocking primitive.
+# Importing either eagerly at module top level would crash the whole adapter on
+# the other platform (and the reverse adapter, which imports from this module).
+try:  # POSIX
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - exercised on Windows only
+    _fcntl = None
+try:  # Windows
+    import msvcrt as _msvcrt
+except ImportError:  # pragma: no cover - exercised on POSIX only
+    _msvcrt = None
+
+
+# On Windows, a non-blocking `msvcrt.locking` on an already-locked region raises
+# OSError with errno EDEADLOCK — that is the ONLY retryable (contention) error.
+# Any other OSError (EACCES, EINVAL, EBADF, ...) is a real failure and must
+# propagate so the gate fails closed instead of spinning forever.
+_MSVCRT_CONTENTION_ERRNOS = frozenset(
+    e for e in (getattr(errno, "EDEADLOCK", None), getattr(errno, "EDEADLK", None)) if e is not None
+)
+
+
+def _lock_exclusive(lock_file) -> None:
+    """Acquire a blocking exclusive lock on an open file handle.
+
+    POSIX uses ``flock``; Windows approximates blocking by retrying the
+    non-blocking ``msvcrt.locking`` region lock ONLY on a genuine contention
+    error, and re-raising any other error. Fails closed on a platform with
+    neither primitive rather than silently skipping serialization.
+    """
+    if _fcntl is not None:
+        _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_EX)
+        return
+    if _msvcrt is not None:  # pragma: no cover - Windows only
+        while True:
+            try:
+                lock_file.seek(0)
+                _msvcrt.locking(lock_file.fileno(), _msvcrt.LK_NBLCK, 1)
+                return
+            except OSError as exc:
+                if exc.errno not in _MSVCRT_CONTENTION_ERRNOS:
+                    raise
+                time.sleep(0.1)
+    raise OSError("no supported file-locking primitive on this platform")
+
+
+def _unlock(lock_file) -> None:
+    if _fcntl is not None:
+        _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_UN)
+        return
+    if _msvcrt is not None:  # pragma: no cover - Windows only
+        lock_file.seek(0)
+        _msvcrt.locking(lock_file.fileno(), _msvcrt.LK_UNLCK, 1)
 
 DEFAULT_ALLOWED_TOOLS = "Read,Grep,Glob"
 DEFAULT_SETTINGS_PATH = os.path.expanduser("~/.claude/settings.json")
@@ -81,6 +136,40 @@ def claude_available() -> bool:
     return shutil.which("claude") is not None
 
 
+MAX_BUDGET_FLAG = "--max-budget-usd"
+
+
+def claude_supports_max_budget(
+    executable: Optional[str] = None,
+    help_runner: Callable = subprocess.run,
+    timeout_seconds: float = 5,
+    env: Optional[dict] = None,
+) -> Optional[bool]:
+    """Best-effort check that the local `claude` accepts ``--max-budget-usd``.
+
+    Returns True/False when the CLI help text is readable, or None when the
+    probe is inconclusive (binary missing, help unreadable/empty). Callers
+    treat None as "do not block" and let the real envelope surface any error;
+    they treat False as a version-too-old setup failure worth reporting up
+    front instead of a cryptic non-success envelope. ``env``, when supplied,
+    is passed verbatim to the probe (the doctor uses a PATH-only env).
+    """
+    exe = executable or shutil.which("claude")
+    if not exe:
+        return None
+    probe_kwargs: dict = {"capture_output": True, "text": True, "timeout": timeout_seconds}
+    if env is not None:
+        probe_kwargs["env"] = env
+    try:
+        completed = help_runner([exe, "--help"], **probe_kwargs)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = (getattr(completed, "stdout", "") or "") + (getattr(completed, "stderr", "") or "")
+    if not text.strip():
+        return None
+    return MAX_BUDGET_FLAG in text
+
+
 @dataclass(frozen=True)
 class ClaudeCliIdentity:
     """A version proven to come from the exact binary that will be invoked."""
@@ -130,7 +219,7 @@ def discover_claude_cli_identity(
 class Readiness:
     """Where the live credential comes from. Never carries the token value."""
 
-    credential_source: str  # 'settings-env' | 'explicit-inject' | 'missing'
+    credential_source: str  # 'settings-env' | 'explicit-inject' | 'inherited'
     base_url: Optional[str]
     token_present: bool
 
@@ -160,7 +249,12 @@ def check_readiness(
 
     1. If both proxy keys are non-empty in settings.json, use 'settings-env'.
     2. Else if explicit_env supplies both non-empty keys, use 'explicit-inject'.
-    3. Else 'missing' (caller must fail closed before invoking the model).
+    3. Else 'inherited': no proxy gateway is configured, so let the local
+       `claude` CLI use whatever auth it already holds (subscription/OAuth
+       login in the default config dir, or an ambient ANTHROPIC_API_KEY). This
+       is the common case for installers not behind a custom gateway. Actual
+       auth is still judged on the real result envelope, never pre-asserted;
+       an unauthenticated CLI classifies as `auth_failure` and fails closed.
     """
     env = _read_env_block(settings_path)
     if env.get("ANTHROPIC_BASE_URL") and env.get("ANTHROPIC_AUTH_TOKEN"):
@@ -179,7 +273,7 @@ def check_readiness(
             base_url=explicit_env.get("ANTHROPIC_BASE_URL"),
             token_present=True,
         )
-    return Readiness(credential_source="missing", base_url=None, token_present=False)
+    return Readiness(credential_source="inherited", base_url=None, token_present=False)
 
 
 def resolve_subprocess_env(
@@ -472,11 +566,11 @@ def round_cap_guard(
     os.makedirs(marker_dir, exist_ok=True)
     lock_path = f"{marker_path}.lock"
     with open(lock_path, "a+", encoding="utf-8") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        _lock_exclusive(lock_file)
         try:
             yield check_round_cap(marker_path, artifact_key, max_rounds=max_rounds)
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            _unlock(lock_file)
 
 
 def _commit_round_unlocked(
@@ -730,6 +824,7 @@ def review_gate(
     timeout_seconds: float = 600,
     max_budget_usd: Optional[float] = None,
     use_local_claude_cli_identity: bool = False,
+    budget_help_runner: Optional[Callable] = None,
 ) -> ReviewResult:
     """End-to-end single review gate with all guards applied.
 
@@ -776,6 +871,24 @@ def review_gate(
             )
         claude_identity = local_cli.user_agent
         claude_executable = local_cli.executable
+    # Optional preflight: only run when the caller injects a help runner (the
+    # CLI does; hermetic unit tests do not). A conclusive "unsupported" turns a
+    # cryptic non-success envelope into a clear upgrade message; an
+    # inconclusive probe never blocks.
+    if budget_help_runner is not None and (
+        claude_supports_max_budget(
+            executable=claude_executable, help_runner=budget_help_runner
+        )
+        is False
+    ):
+        return gate_failure_result(
+            handoff_dir,
+            gate_id,
+            "setup_failure",
+            f"local claude does not support {MAX_BUDGET_FLAG}; upgrade the claude CLI",
+            request_prompt,
+            sensitive_values,
+        )
     readiness = check_readiness(settings_path=settings_path, explicit_env=explicit_env)
     if readiness.credential_source == "missing":
         fail_closed(
@@ -955,6 +1068,7 @@ def main(argv: Optional[list] = None) -> int:
         timeout_seconds=args.timeout_seconds,
         max_budget_usd=args.max_budget_usd,
         use_local_claude_cli_identity=args.gateway_compat_cli_identity,
+        budget_help_runner=subprocess.run,
     )
     payload = {
         "status": result.status,

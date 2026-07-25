@@ -49,6 +49,24 @@ def _version_line(
     return output.splitlines()[0].strip()[:160], None
 
 
+def _probe_claude_max_budget(
+    executable: str, version_runner: Callable, path_env: str
+) -> Optional[bool]:
+    """Best-effort `--max-budget-usd` support probe, isolated from import cycles.
+
+    Imported lazily so the capability doctor keeps a minimal import surface and
+    never fails just because the adapter module is unavailable. The probe runs
+    with the same PATH-only environment as the version probe.
+    """
+    try:
+        from .codex_to_claude import claude_supports_max_budget
+    except Exception:  # pragma: no cover - defensive: doctor must still report
+        return None
+    return claude_supports_max_budget(
+        executable=executable, help_runner=version_runner, env={"PATH": path_env}
+    )
+
+
 def discover_local_agents(
     which: Callable[[str], Optional[str]] = shutil.which,
     version_runner: Callable = subprocess.run,
@@ -59,6 +77,9 @@ def discover_local_agents(
     The catalog is intentionally explicit. Finding an unsupported CLI is useful
     diagnostic evidence, but it does not grant a new review route or execute a
     model request. Version probes receive only ``PATH`` and invoke ``--version``.
+    For a supported ``claude`` the doctor also checks (via ``--help``) whether
+    the forward gate's required ``--max-budget-usd`` flag exists, so an
+    out-of-date CLI is flagged before a gate fails closed cryptically.
     """
     resolved_path = path_env if path_env is not None else os.environ.get("PATH", "")
     agents = []
@@ -81,6 +102,10 @@ def discover_local_agents(
                 entry["status"] = "supported"
             else:
                 entry["status"] = "detected_not_supported"
+            if command == "claude" and entry["status"] == "supported":
+                entry["max_budget_supported"] = _probe_claude_max_budget(
+                    executable, version_runner, resolved_path
+                )
         agents.append(entry)
     return {"agents": agents}
 
@@ -101,10 +126,15 @@ def main(argv: Optional[list] = None) -> int:
         return 0
     for entry in report["agents"]:
         version = entry["version"] or "-"
-        print(
+        line = (
             f"{entry['command']}: {entry['status']} "
             f"version={version} path={entry['path'] or '-'}"
         )
+        if "max_budget_supported" in entry:
+            supported = entry["max_budget_supported"]
+            label = {True: "yes", False: "NO(upgrade)", None: "unknown"}[supported]
+            line += f" max-budget-usd={label}"
+        print(line)
     return 0
 
 

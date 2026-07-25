@@ -56,6 +56,17 @@
 - Derived gateway compatibility identity with no raw version input (completed in source)
 - Reconciled source/installed documentation and parity verification (completed: both copies compile and pass 14/14 tests)
 
+## Phase 8: Third-party installer compatibility hardening
+**Status:** completed
+**Description:** Remove portability blockers in the cross-agent-review bundle while preserving fail-closed review guarantees.
+**Deliverables:**
+- Portable POSIX/Windows marker-lock import and fail-closed handling
+- Inherited official-Claude authentication path
+- Claude CLI `--max-budget-usd` capability preflight and doctor output
+- Source-verified Codex provenance with diagnostic-only drift hints
+- Synced authoritative protocol and 31 passing local regressions
+- Explicitly deferred real-Windows smoke validation, accepted by user for a future Windows use case
+
 ## Plan Registry (docs/plans)
 
 <!--
