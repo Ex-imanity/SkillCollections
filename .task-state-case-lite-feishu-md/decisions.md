@@ -19,3 +19,7 @@ Multiple old MCP processes can overwrite the single user-level token file. Relea
 ## 2026-07-25: Release review closure
 
 ClaudeCode returned `APPROVE WITH NITS` for the 3.4.0 candidate. The two P3 contract-documentation discrepancies and two P3 test gaps were corrected. The reviewer identified no P0-P2 issue; its optional content-type validation suggestion is deliberately deferred because the tool remains read-only and has explicit UTF-8/non-heading behavior.
+
+## 2026-07-25: Published release closure
+
+`feishu-docx-blocks` 3.4.0 is published on PyPI and was validated by installing that public artifact in a clean environment, then exercising the supplied native Feishu Markdown file. The source and installed `case-lite` skill were synchronized after the release.

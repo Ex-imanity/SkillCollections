@@ -1,22 +1,22 @@
 # Task State
 
-**Last Updated:** 2026-07-25 23:12:00
+**Last Updated:** 2026-07-25 23:30:00
 **Updated By:** Codex
 
 ## Goal
 Enable case-lite to read native Feishu Drive Markdown files and select sections through an updated feishu-docx-blocks MCP, then publish the verified MCP release.
 
 ## Status
-active
+completed
 
 ## Active Todos
-- [ ] PyPI publication (added: 2026-07-25, source: plan Phase 8)
+None.
 
 ## Current Phase
-Phase 8: PyPI publication
+Completed
 
 ## Next Action
-Restore PyPI upload authorization for `feishu-docx-blocks`, then retry the verified 3.4.0 upload and run the final installed-MCP case-lite selection workflow.
+Task complete. Restart running MCP clients to load the merged local source, then use `case-lite` with a native Feishu Markdown URL.
 
 ## Completed Items
 - Native Drive Markdown file token and wiki URL resolution
@@ -29,11 +29,12 @@ Restore PyPI upload authorization for `feishu-docx-blocks`, then retry the verif
 - Precision hardening: native Markdown directory mode exposes no preview or content by default; only an explicit user request may request a preview, and selected sections alone return original Markdown
 - Release artifact validation: `feishu-docx-blocks` 3.4.0 sdist and wheel passed Twine metadata checks and a clean virtual-environment installation verified the new MCP tool registration
 - ClaudeCode read-only review: `APPROVE WITH NITS`, actual cost `$1.56871475`; all P3 documentation/test findings were applied and the final MCP regression suite has 19 passing tests
+- PyPI publication: `feishu-docx-blocks` 3.4.0 published successfully after credential renewal
+- Public release validation: a clean PyPI installation of 3.4.0 completed the real metadata-only directory and selected-original-Markdown flow against the supplied Feishu file
+- Installed case-lite synchronization: the source skill and `~/.cc-switch/skills/case-lite` are identical apart from cache directories; installed contract suite has 24 passing tests
 
 ## Open Questions
-- The verified browser OAuth credentials and tokens are stored only in the user-level MCP configuration, never in either Git worktree.
-- Existing MCP processes were restarted and a fresh user-level token was verified in a new process. Release installation must still replace legacy server instances with the published version.
-- The existing PyPI API token has the expected `__token__`/`pypi-` shape but PyPI rejected the 3.4.0 upload with HTTP 403. The token is expired, revoked, or lacks ownership/maintainer permission for this project; no distribution was published.
+None.
 
 ## Artifacts
 - plan.md (created at init)

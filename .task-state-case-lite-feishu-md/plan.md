@@ -47,8 +47,8 @@
 - TODO
 
 ## Phase 8: PyPI publication
-**Status:** in_progress
-**Description:** The 3.4.0 sdist and wheel are built, Twine-checked, and clean-installed with the Markdown tool registered. Publication remains gated on cross-agent review.
+**Status:** completed
+**Description:** `feishu-docx-blocks` 3.4.0 was published to PyPI. A clean public-PyPI installation completed the supplied real file's metadata-only directory and selected original Markdown retrieval path.
 **Deliverables:**
 - TODO
 
@@ -62,7 +62,7 @@ Status values: pending | in_progress | completed | abandoned
 
 | File | Source Skill | Date | Status |
 |------|--------------|------|--------|
-| docs/plans/2026-07-25-case-lite-feishu-drive-markdown.md | writing-plans | 2026-07-25 | in_progress |
+| docs/plans/2026-07-25-case-lite-feishu-drive-markdown.md | writing-plans | 2026-07-25 | completed |
 
 ## Reference Index
 
