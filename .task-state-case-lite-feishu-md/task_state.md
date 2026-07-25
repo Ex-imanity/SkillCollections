@@ -1,6 +1,6 @@
 # Task State
 
-**Last Updated:** 2026-07-25 22:35:00
+**Last Updated:** 2026-07-25 22:48:00
 **Updated By:** Codex
 
 ## Goal
@@ -28,11 +28,12 @@ Obtain a fresh ClaudeCode review budget, then run the read-only review before pu
 - Real provided file validation through the MCP: browser OAuth, Wiki resolution, Drive download, UTF-8 decoding, and selected original Markdown retrieval
 - Token persistence hardening: cached refresh-token lookup, opaque-token default expiry, and `99991668` invalid-token handling
 - Precision hardening: native Markdown directory mode exposes no preview or content by default; only an explicit user request may request a preview, and selected sections alone return original Markdown
+- Release artifact validation: `feishu-docx-blocks` 3.4.0 sdist and wheel passed Twine metadata checks and a clean virtual-environment installation verified the new MCP tool registration
 
 ## Open Questions
 - A paid ClaudeCode review requires a new per-run budget approval. The previous $2 authorization was consumed by the earlier cross-agent-review task.
 - The verified browser OAuth credentials and tokens are stored only in the user-level MCP configuration, never in either Git worktree.
-- Four existing old `run_server.py` MCP processes share the same user-level token file and can overwrite a newly authorized token. Do not publish or claim persistent OAuth validation until those processes are restarted against the released version or otherwise isolated.
+- Existing MCP processes were restarted and a fresh user-level token was verified in a new process. Release installation must still replace legacy server instances with the published version.
 
 ## Artifacts
 - plan.md (created at init)

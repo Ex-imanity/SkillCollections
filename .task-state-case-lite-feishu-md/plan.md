@@ -36,7 +36,7 @@
 
 ## Phase 6: real provided file validation
 **Status:** completed
-**Description:** Browser OAuth was completed with `drive:file:download`. A fresh MCP process resolved the supplied Wiki URL to its native Drive file, downloaded UTF-8 Markdown, and returned selected original Markdown content.
+**Description:** Browser OAuth was completed with `drive:file:download`. After MCP restart, a fresh MCP process resolved the supplied Wiki URL to its native Drive file, returned 38 metadata-only sections, and returned original Markdown only for the selected section.
 **Deliverables:**
 - TODO
 
@@ -48,7 +48,7 @@
 
 ## Phase 8: PyPI publication
 **Status:** pending
-**Description:** The 3.4.0 wheel is built, Twine-checked, and clean-installed. Publish remains gated on cross-agent review.
+**Description:** The 3.4.0 sdist and wheel are built, Twine-checked, and clean-installed with the Markdown tool registered. Publication remains gated on cross-agent review.
 **Deliverables:**
 - TODO
 
