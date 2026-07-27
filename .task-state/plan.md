@@ -67,6 +67,14 @@
 - Synced authoritative protocol and 31 passing local regressions
 - Explicitly deferred real-Windows smoke validation, accepted by user for a future Windows use case
 
+## Phase 9: Controlled reviewer-model selection
+**Status:** completed
+**Description:** Add an optional, common `--model` adapter argument that maps to the local Claude/Codex CLI model selector without exposing arbitrary configuration or weakening the review safety envelope.
+**Deliverables:**
+- Reviewed implementation plan at `docs/plans/2026-07-27-cross-agent-review-model-selection.md`
+- Fresh ClaudeCode read-only compatibility review before implementation (completed: `APPROVE WITH NITS`; findings incorporated)
+- TDD-backed model validation, argv construction, requested-model audit data, and docs (completed: 37 local tests pass)
+
 ## Plan Registry (docs/plans)
 
 <!--
@@ -77,6 +85,7 @@ Status values: pending | in_progress | completed | abandoned
 
 | File | Source Skill | Date | Status |
 |------|--------------|------|--------|
+| docs/plans/2026-07-27-cross-agent-review-model-selection.md | writing-plans | 2026-07-27 | completed |
 
 ## Reference Index
 

@@ -837,6 +837,198 @@ class CompatibilityTests(unittest.TestCase):
             self.assertFalse((root / "rounds.json").exists())
 
 
+class ModelSelectionTests(unittest.TestCase):
+    def test_requested_model_validation_is_opaque_and_bounded(self) -> None:
+        self.assertIsNone(codex_to_claude.validate_requested_model(None))
+        self.assertEqual("sonnet", codex_to_claude.validate_requested_model("sonnet"))
+        self.assertEqual(
+            "claude-sonnet-4-5-20250929",
+            codex_to_claude.validate_requested_model("claude-sonnet-4-5-20250929"),
+        )
+        self.assertEqual(
+            "gpt-5.6-terra", codex_to_claude.validate_requested_model("gpt-5.6-terra")
+        )
+        for invalid in ("", "-not-a-model", "gpt-5\nmodel", "m" * 129):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    codex_to_claude.validate_requested_model(invalid)
+
+    def test_command_builders_preserve_default_or_emit_single_model_token(self) -> None:
+        forward_default = codex_to_claude.build_command("review", max_budget_usd=1.0)
+        reverse_default = claude_to_codex.build_codex_command("/repo", "/tmp/last.txt")
+        self.assertFalse(any(token.startswith("--model") for token in forward_default))
+        self.assertFalse(any(token.startswith("--model") for token in reverse_default))
+
+        forward_selected = codex_to_claude.build_command(
+            "review", model="sonnet", max_budget_usd=1.0
+        )
+        reverse_selected = claude_to_codex.build_codex_command(
+            "/repo", "/tmp/last.txt", model="gpt-5.6-terra"
+        )
+        self.assertIn("--model=sonnet", forward_selected)
+        self.assertIn("--model=gpt-5.6-terra", reverse_selected)
+
+    def test_invalid_model_fails_before_runner_or_marker(self) -> None:
+        def runner_must_not_start(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            raise AssertionError("reviewer subprocess must not start for an invalid model")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(codex_to_claude, "claude_available", return_value=True):
+                result = codex_to_claude.review_gate(
+                    request_prompt="Review the artifact.",
+                    add_dirs=[str(root)],
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="model-validation",
+                    artifact_key="model-validation",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "settings.json"),
+                    runner=runner_must_not_start,
+                    timeout_seconds=1,
+                    max_budget_usd=1.0,
+                    model="-not-a-model",
+                )
+
+            self.assertEqual("setup_failure", result.status)
+            self.assertFalse((root / "rounds.json").exists())
+
+    def test_model_preflight_fails_closed_only_when_help_conclusively_lacks_flag(self) -> None:
+        def runner_must_not_start(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            raise AssertionError("reviewer subprocess must not start for an unsupported CLI flag")
+
+        def help_without_model(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, 0, "--max-budget-usd AMOUNT\n", "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(codex_to_claude, "claude_available", return_value=True):
+                result = codex_to_claude.review_gate(
+                    request_prompt="Review the artifact.",
+                    add_dirs=[str(root)],
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="forward-model-help",
+                    artifact_key="forward-model-help",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "settings.json"),
+                    runner=runner_must_not_start,
+                    timeout_seconds=1,
+                    max_budget_usd=1.0,
+                    budget_help_runner=help_without_model,
+                    model="sonnet",
+                )
+
+            self.assertEqual("setup_failure", result.status)
+            self.assertFalse((root / "rounds.json").exists())
+
+    def test_codex_model_preflight_fails_closed_when_help_lacks_flag(self) -> None:
+        def runner_must_not_start(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            raise AssertionError("reviewer subprocess must not start for an unsupported CLI flag")
+
+        def help_without_model(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, 0, "--sandbox read-only\n", "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(claude_to_codex, "codex_available", return_value=True):
+                result = claude_to_codex.codex_review_gate(
+                    request_prompt="Review the artifact.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="reverse-model-help",
+                    artifact_key="reverse-model-help",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "settings.json"),
+                    runner=runner_must_not_start,
+                    timeout_seconds=1,
+                    model_help_runner=help_without_model,
+                    model="gpt-5.6-terra",
+                )
+
+            self.assertEqual("setup_failure", result.status)
+            self.assertFalse((root / "rounds.json").exists())
+
+    def test_requested_model_is_logged_for_each_started_direction(self) -> None:
+        def claude_runner(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=["claude"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "is_error": False,
+                        "api_error_status": None,
+                        "result": "APPROVE",
+                        "session_id": "forward-model-session",
+                    }
+                ),
+                stderr="",
+            )
+
+        def codex_runner(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            Path(argv[argv.index("--output-last-message") + 1]).write_text("APPROVE", encoding="utf-8")
+            return subprocess.CompletedProcess(
+                args=argv,
+                returncode=0,
+                stdout="\n".join(
+                    (
+                        json.dumps({"type": "thread.started", "thread_id": "reverse-model-session"}),
+                        json.dumps(
+                            {
+                                "type": "turn.completed",
+                                "usage": {"input_tokens": 1, "output_tokens": 1},
+                            }
+                        ),
+                    )
+                ),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(codex_to_claude, "claude_available", return_value=True):
+                forward = codex_to_claude.review_gate(
+                    request_prompt="Review the artifact.",
+                    add_dirs=[str(root)],
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "forward-rounds.json"),
+                    gate_id="forward-model-audit",
+                    artifact_key="forward-model-audit",
+                    cost_log_path=str(root / "forward-cost.jsonl"),
+                    settings_path=str(root / "settings.json"),
+                    runner=claude_runner,
+                    timeout_seconds=1,
+                    max_budget_usd=1.0,
+                    model="sonnet",
+                )
+            with mock.patch.object(claude_to_codex, "codex_available", return_value=True):
+                reverse = claude_to_codex.codex_review_gate(
+                    request_prompt="Review the artifact.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "reverse-rounds.json"),
+                    gate_id="reverse-model-audit",
+                    artifact_key="reverse-model-audit",
+                    cost_log_path=str(root / "reverse-cost.jsonl"),
+                    settings_path=str(root / "settings.json"),
+                    runner=codex_runner,
+                    timeout_seconds=1,
+                    model="gpt-5.6-terra",
+                )
+
+            self.assertEqual("success", forward.status)
+            self.assertEqual("success", reverse.status)
+            self.assertEqual(
+                "sonnet",
+                json.loads((root / "forward-cost.jsonl").read_text(encoding="utf-8"))["requested_model"],
+            )
+            self.assertEqual(
+                "gpt-5.6-terra",
+                json.loads((root / "reverse-cost.jsonl").read_text(encoding="utf-8"))["requested_model"],
+            )
+
+
 class CodexProvenanceTests(unittest.TestCase):
     """Tolerant, fail-closed provenance extraction across codex schema drift."""
 

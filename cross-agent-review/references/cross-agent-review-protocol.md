@@ -84,9 +84,22 @@ python -m scripts.codex_to_claude \
   --max-budget-usd <user-approved-per-call-budget>
 ```
 
+Append `--model <optional-claude-model>` only when the user explicitly selects
+the Claude reviewer model; omit it to retain the local CLI default.
+
 For a confirmed gateway client-identity 403 only, append the user-approved `--gateway-compat-cli-identity` option described above. A materially revised artifact version gets a fresh artifact key; an unchanged artifact keeps its key so the fixed cap cannot be bypassed.
 
 Run `python -m scripts.codex_to_claude --help` for all options. The adapter assembles `claude -p --output-format json --permission-mode plan --allowedTools Read,Grep,Glob`; these permissions cannot be widened by the caller.
+
+`--model` is optional in both directions. Omit it to let the local CLI choose
+its configured default. A valid value is passed as one native
+`--model=<value>` argv token and written as `requested_model` only in the
+post-invocation cost record; it is not evidence of an effective provider model.
+The adapter accepts provider-defined identifiers without an allowlist, but
+rejects empty, leading-`-`, ASCII-control-containing, or over-128-character
+values before any attempt reservation. A conclusive local `--help` result that
+lacks `--model` fails closed before the subprocess; an inconclusive probe does
+not block and never asserts that a particular model is available.
 
 Must be passed explicitly (the reviewer starts blind — no MRS/context auto-discovery): target artifact paths, review questions, evidence/acceptance criteria, readable dirs (`--add-dir`), output language, and a user-approved `--max-budget-usd`. Judge readiness on a non-empty success envelope. Any runner exception, timeout, invalid envelope/provenance, auth failure, setup/cost/persistence I/O failure, damaged marker, or cap refusal returns non-zero and makes a best effort to write a redacted durable handoff; if handoff persistence itself fails, the structured result records `handoff_error`.
 
@@ -94,7 +107,7 @@ Use `scripts/codex_to_claude.py::review_gate(...)` which applies readiness → f
 
 ## ClaudeCode → Codex invocation contract
 
-Primary path: the repo-owned direct adapter `python -m scripts.claude_to_codex` wrapping `codex exec --sandbox read-only --json --output-last-message`. It enforces the same guards as the codex→claude adapter (fail-closed, fixed attempt/success caps, redaction, result-based readiness, hardcoded read-only) and parses the `--json` stream for real `thread_id`/token-usage provenance. Codex reports no per-call USD cap here: require explicit user approval, then use the timeout and fixed attempt cap. No official-plugin dependency is required.
+Primary path: the repo-owned direct adapter `python -m scripts.claude_to_codex` wrapping `codex exec --sandbox read-only --json --output-last-message`. It enforces the same guards as the codex→claude adapter (fail-closed, fixed attempt/success caps, redaction, result-based readiness, hardcoded read-only) and parses the `--json` stream for real `thread_id`/token-usage provenance. It also accepts the optional common `--model <MODEL>` flag; omit it for Codex's configured default. Codex reports no per-call USD cap here: require explicit user approval, then use the timeout and fixed attempt cap. A chosen model can change this bounded-but-not-USD-capped exposure; do not infer a Claude-style budget ceiling. No official-plugin dependency is required.
 
 Optional fallback (only if the plugin is already installed): full mapping in `references/claude-to-codex-mapping.md`. Summary: code defects → `/codex:review`; plan/approach/design review MUST default to `/codex:adversarial-review`; `/codex:rescue` only for exceptional non-diff investigation, output advisory; session handoff → `/codex:transfer`. A plugin job launched read-only has `write=false`; require full review text in the job result, then persist it with job/thread provenance. Do NOT reimplement the plugin broker.
 

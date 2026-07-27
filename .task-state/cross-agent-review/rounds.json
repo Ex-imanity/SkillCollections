@@ -7,6 +7,10 @@
     "attempts": 1,
     "successes": 1
   },
+  "cross-agent-review-model-selection-plan-v1": {
+    "attempts": 1,
+    "successes": 1
+  },
   "cross-agent-review-p1-hardening": {
     "attempts": 1,
     "successes": 0

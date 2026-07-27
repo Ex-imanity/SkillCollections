@@ -35,8 +35,10 @@ from .codex_to_claude import (
     fail_closed,
     gate_failure_result,
     log_cost,
+    MODEL_FLAG,
     persist_success,
     round_cap_guard,
+    validate_requested_model,
 )
 
 DEFAULT_SETTINGS_PATH = os.path.expanduser("~/.claude/settings.json")
@@ -57,11 +59,34 @@ def codex_available() -> bool:
     return shutil.which("codex") is not None
 
 
+def codex_supports_model(
+    executable: Optional[str] = None,
+    help_runner: Callable = subprocess.run,
+    timeout_seconds: float = 5,
+) -> Optional[bool]:
+    """Best-effort check that ``codex exec`` accepts the model flag."""
+    exe = executable or shutil.which("codex")
+    if not exe:
+        return None
+    try:
+        completed = help_runner(
+            [exe, "exec", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = (getattr(completed, "stdout", "") or "") + (getattr(completed, "stderr", "") or "")
+    return None if not text.strip() else MODEL_FLAG in text
+
+
 def build_codex_command(
     cd: str,
     last_message_path: str,
     output_schema: Optional[str] = None,
     skip_git_repo_check: bool = True,
+    model: Optional[str] = None,
 ) -> list:
     """Assemble a read-only `codex exec` argv.
 
@@ -84,6 +109,9 @@ def build_codex_command(
     ]
     if skip_git_repo_check:
         argv.append("--skip-git-repo-check")
+    requested_model = validate_requested_model(model)
+    if requested_model is not None:
+        argv.append(f"--model={requested_model}")
     if output_schema:
         argv += ["--output-schema", output_schema]
     return argv
@@ -344,6 +372,8 @@ def codex_review_gate(
     settings_path: str = DEFAULT_SETTINGS_PATH,
     runner: Callable = subprocess.run,
     timeout_seconds: float = 600,
+    model: Optional[str] = None,
+    model_help_runner: Optional[Callable] = None,
 ) -> ReviewResult:
     """End-to-end single reverse review gate (ClaudeCode primary -> Codex).
 
@@ -353,6 +383,17 @@ def codex_review_gate(
     read-only (P1-b).
     """
     sensitive_values = _known_sensitive_values(settings_path, None)
+    try:
+        requested_model = validate_requested_model(model)
+    except ValueError as exc:
+        return gate_failure_result(
+            handoff_dir,
+            gate_id,
+            "setup_failure",
+            str(exc),
+            request_prompt,
+            sensitive_values,
+        )
 
     if not codex_available():
         fail_closed(
@@ -360,6 +401,17 @@ def codex_review_gate(
             "codex CLI not found on PATH", request_prompt, sensitive_values,
         )
         return ReviewResult("codex_unavailable", None, {}, exit_code=1)
+    if requested_model is not None and model_help_runner is not None and (
+        codex_supports_model(help_runner=model_help_runner) is False
+    ):
+        return gate_failure_result(
+            handoff_dir,
+            gate_id,
+            "setup_failure",
+            f"local codex does not support {MODEL_FLAG}; upgrade the codex CLI",
+            request_prompt,
+            sensitive_values,
+        )
 
     try:
         with round_cap_guard(marker_path, artifact_key) as decision:
@@ -380,7 +432,11 @@ def codex_review_gate(
             log_error = None
             cleanup_error = None
             try:
-                argv = build_codex_command(cd=cd, last_message_path=last_message_path)
+                argv = build_codex_command(
+                    cd=cd,
+                    last_message_path=last_message_path,
+                    model=requested_model,
+                )
                 attempt_decision = check_attempt_cap(marker_path, artifact_key)
                 if not attempt_decision.allowed:
                     return gate_failure_result(
@@ -414,11 +470,11 @@ def codex_review_gate(
                         cost_log_path,
                         gate_id,
                         time.monotonic() - start,
-                        extra=(
-                            {"provider": "codex", "usage": usage}
-                            if usage is not None
-                            else {"provider": "codex"}
-                        ),
+                        extra={
+                            "provider": "codex",
+                            "requested_model": requested_model,
+                            **({"usage": usage} if usage is not None else {}),
+                        },
                     )
                 except (OSError, ValueError) as exc:
                     log_error = exc
@@ -522,6 +578,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True)
     parser.add_argument("--settings", default=DEFAULT_SETTINGS_PATH)
     parser.add_argument("--timeout-seconds", type=float, default=600)
+    parser.add_argument("--model")
     return parser
 
 
@@ -540,6 +597,8 @@ def main(argv: Optional[list] = None) -> int:
         output_path=args.output,
         settings_path=args.settings,
         timeout_seconds=args.timeout_seconds,
+        model=args.model,
+        model_help_runner=subprocess.run,
     )
     payload = {
         "status": result.status,

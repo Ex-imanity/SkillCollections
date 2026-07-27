@@ -54,6 +54,16 @@ provider-supported USD cap, so obtain explicit approval and rely on the fixed
 attempt cap plus timeout. The direct `claude_to_codex` adapter has no plugin
 dependency; the official Codex plugin is an optional fallback only.
 
+Both adapters accept an optional `--model <MODEL>`. Omit it to retain the local
+CLI's configured default model. When provided, it is passed as one native
+`--model=<MODEL>` argument after validation and recorded in the cost log as
+`requested_model`, not as a claim about the effective provider model. A
+conclusive local `--help` result that lacks the flag fails closed before an
+attempt is reserved; an inconclusive help probe does not block. The forward
+Claude route keeps its required USD ceiling. The reverse Codex route has no
+provider USD cap, so selecting a model must be covered by the user's explicit
+cost approval, fixed attempt cap, and timeout.
+
 Some third-party Anthropic-compatible gateways reject Claude Code's default
 `sdk-cli` identity with a pre-model 403. Prefer asking the gateway operator to
 allow the official identity. Only after the user explicitly approves the
@@ -85,6 +95,7 @@ starts a review or model request.
 - Round counters for multiple artifacts share a single marker file. The exclusive lock covers the entire review call, so gates for different artifacts using that marker serialize; a waiting gate has no separate acquisition deadline and normally waits behind the current call's configured timeout (600 seconds by default) plus local I/O. `<marker-path>.lock` remains after normal completion as a harmless flock coordination sentinel, not review state; put both files in an ignored task-state location and do not delete the lock while a gate may hold it. If the marker JSON itself is damaged, preserve it for diagnosis then delete only that marker file; the adapter recreates it on the next readiness-qualified attempt.
 - After an attempt is durably reserved and immediately before the reviewer subprocess begins, both adapters emit one redacted `review_started` JSON record to stderr. It is an active-gate signal, not a success result; the final structured result remains on stdout.
 - Reverse (codex) success requires a real session/thread id + a real non-negative token pair. Extraction is tolerant of minor codex schema drift (primary probed names first, then conventional fallbacks), but still fails closed when either piece is missing; a `provenance_failure` records the observed event types so a schema change is diagnosable rather than silent. Log provider-reported `total_cost_usd` + wall time; missing USD is JSON `null`, never a fabricated `0`.
+- Reviewer model selection is optional and defaults to the local CLI model when omitted. A requested model is an opaque identifier (no model allowlist): reject empty, leading-`-`, ASCII-control-containing, or over-128-character values; pass valid values as one `--model=<value>` argv token; audit only `requested_model` after a reviewer subprocess starts. Do not expose profile, arbitrary config, reasoning, sandbox, or permission overrides.
 - Persist only verified non-empty reviewer output; never treat an empty/invalid envelope as a review. Redact known endpoint/token values and secret patterns before writing any artifact.
 
 ## Requirements & notes

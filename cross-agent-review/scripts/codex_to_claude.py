@@ -137,22 +137,38 @@ def claude_available() -> bool:
 
 
 MAX_BUDGET_FLAG = "--max-budget-usd"
+MODEL_FLAG = "--model"
+MAX_REQUESTED_MODEL_LENGTH = 128
 
 
-def claude_supports_max_budget(
+def validate_requested_model(model: Optional[str]) -> Optional[str]:
+    """Return a safe optional model identifier without pinning a model catalog."""
+    if model is None:
+        return None
+    if not isinstance(model, str):
+        raise ValueError("model must be a string")
+    if not model:
+        raise ValueError("model must not be empty")
+    if model.startswith("-"):
+        raise ValueError("model must not start with '-'")
+    if len(model) > MAX_REQUESTED_MODEL_LENGTH:
+        raise ValueError(f"model must be at most {MAX_REQUESTED_MODEL_LENGTH} characters")
+    if any(ord(character) < 32 or ord(character) == 127 for character in model):
+        raise ValueError("model must not contain ASCII control characters")
+    return model
+
+
+def claude_supported_flags(
     executable: Optional[str] = None,
     help_runner: Callable = subprocess.run,
     timeout_seconds: float = 5,
     env: Optional[dict] = None,
-) -> Optional[bool]:
-    """Best-effort check that the local `claude` accepts ``--max-budget-usd``.
+) -> Optional[set[str]]:
+    """Return recognized model/budget flags from local Claude help, or ``None``.
 
-    Returns True/False when the CLI help text is readable, or None when the
-    probe is inconclusive (binary missing, help unreadable/empty). Callers
-    treat None as "do not block" and let the real envelope surface any error;
-    they treat False as a version-too-old setup failure worth reporting up
-    front instead of a cryptic non-success envelope. ``env``, when supplied,
-    is passed verbatim to the probe (the doctor uses a PATH-only env).
+    A missing or unreadable help result is inconclusive rather than a failure.
+    Callers use this one probe to avoid an extra subprocess when checking both
+    the required budget flag and an explicitly requested model flag.
     """
     exe = executable or shutil.which("claude")
     if not exe:
@@ -167,7 +183,18 @@ def claude_supports_max_budget(
     text = (getattr(completed, "stdout", "") or "") + (getattr(completed, "stderr", "") or "")
     if not text.strip():
         return None
-    return MAX_BUDGET_FLAG in text
+    return {flag for flag in (MAX_BUDGET_FLAG, MODEL_FLAG) if flag in text}
+
+
+def claude_supports_max_budget(
+    executable: Optional[str] = None,
+    help_runner: Callable = subprocess.run,
+    timeout_seconds: float = 5,
+    env: Optional[dict] = None,
+) -> Optional[bool]:
+    """Best-effort check that the local `claude` accepts ``--max-budget-usd``."""
+    flags = claude_supported_flags(executable, help_runner, timeout_seconds, env)
+    return None if flags is None else MAX_BUDGET_FLAG in flags
 
 
 @dataclass(frozen=True)
@@ -317,6 +344,7 @@ def build_command(
     add_dirs: Optional[list] = None,
     max_budget_usd: Optional[float] = None,
     claude_executable: str = "claude",
+    model: Optional[str] = None,
 ) -> list:
     """Assemble the read-only `claude -p` argv.
 
@@ -337,6 +365,9 @@ def build_command(
         "--allowedTools",
         DEFAULT_ALLOWED_TOOLS,
     ]
+    requested_model = validate_requested_model(model)
+    if requested_model is not None:
+        argv.append(f"--model={requested_model}")
     for d in add_dirs or []:
         argv += ["--add-dir", d]
     if max_budget_usd is not None:
@@ -825,6 +856,7 @@ def review_gate(
     max_budget_usd: Optional[float] = None,
     use_local_claude_cli_identity: bool = False,
     budget_help_runner: Optional[Callable] = None,
+    model: Optional[str] = None,
 ) -> ReviewResult:
     """End-to-end single review gate with all guards applied.
 
@@ -833,6 +865,17 @@ def review_gate(
     the provider fails, preventing unbounded billable retries.
     """
     sensitive_values = _known_sensitive_values(settings_path, explicit_env)
+    try:
+        requested_model = validate_requested_model(model)
+    except ValueError as exc:
+        return gate_failure_result(
+            handoff_dir,
+            gate_id,
+            "setup_failure",
+            str(exc),
+            request_prompt,
+            sensitive_values,
+        )
     if (
         not isinstance(max_budget_usd, (int, float))
         or isinstance(max_budget_usd, bool)
@@ -875,20 +918,28 @@ def review_gate(
     # CLI does; hermetic unit tests do not). A conclusive "unsupported" turns a
     # cryptic non-success envelope into a clear upgrade message; an
     # inconclusive probe never blocks.
-    if budget_help_runner is not None and (
-        claude_supports_max_budget(
+    if budget_help_runner is not None:
+        supported_flags = claude_supported_flags(
             executable=claude_executable, help_runner=budget_help_runner
         )
-        is False
-    ):
-        return gate_failure_result(
-            handoff_dir,
-            gate_id,
-            "setup_failure",
-            f"local claude does not support {MAX_BUDGET_FLAG}; upgrade the claude CLI",
-            request_prompt,
-            sensitive_values,
-        )
+        if supported_flags is not None and MAX_BUDGET_FLAG not in supported_flags:
+            return gate_failure_result(
+                handoff_dir,
+                gate_id,
+                "setup_failure",
+                f"local claude does not support {MAX_BUDGET_FLAG}; upgrade the claude CLI",
+                request_prompt,
+                sensitive_values,
+            )
+        if requested_model is not None and supported_flags is not None and MODEL_FLAG not in supported_flags:
+            return gate_failure_result(
+                handoff_dir,
+                gate_id,
+                "setup_failure",
+                f"local claude does not support {MODEL_FLAG}; upgrade the claude CLI",
+                request_prompt,
+                sensitive_values,
+            )
     readiness = check_readiness(settings_path=settings_path, explicit_env=explicit_env)
     if readiness.credential_source == "missing":
         fail_closed(
@@ -919,6 +970,7 @@ def review_gate(
                 add_dirs,
                 max_budget_usd=max_budget_usd,
                 claude_executable=claude_executable,
+                model=requested_model,
             )
             attempt_decision = check_attempt_cap(marker_path, artifact_key)
             if not attempt_decision.allowed:
@@ -956,7 +1008,13 @@ def review_gate(
                     request_prompt=request_prompt,
                 )
             try:
-                log_cost(result.envelope, cost_log_path, gate_id, time.monotonic() - start)
+                log_cost(
+                    result.envelope,
+                    cost_log_path,
+                    gate_id,
+                    time.monotonic() - start,
+                    extra={"requested_model": requested_model},
+                )
             except (OSError, ValueError) as exc:
                 detail = f"{type(exc).__name__}: {exc}"
                 return gate_failure_result(
@@ -1038,6 +1096,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--settings", default=DEFAULT_SETTINGS_PATH)
     parser.add_argument("--timeout-seconds", type=float, default=600)
     parser.add_argument("--max-budget-usd", type=float, required=True)
+    parser.add_argument("--model")
     parser.add_argument(
         "--gateway-compat-cli-identity",
         action="store_true",
@@ -1069,6 +1128,7 @@ def main(argv: Optional[list] = None) -> int:
         max_budget_usd=args.max_budget_usd,
         use_local_claude_cli_identity=args.gateway_compat_cli_identity,
         budget_help_runner=subprocess.run,
+        model=args.model,
     )
     payload = {
         "status": result.status,

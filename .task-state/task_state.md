@@ -1,11 +1,11 @@
 # Task State
 
-**Last Updated:** 2026-07-26
+**Last Updated:** 2026-07-27
 **Updated By:** Codex
 
 ## Goal
-Harden the cross-agent-review skill P1 safety guarantees and obtain a ClaudeCode read-only review.
-(Phase 8 extension: compatibility review for third-party installers — portability blockers, not new safety features.)
+Harden the cross-agent-review skill's safety guarantees and compatibility.
+(Phase 9 extension: add controlled reviewer-model selection, with a ClaudeCode plan review before implementation.)
 
 ## Status
 completed
@@ -14,10 +14,10 @@ completed
 _(none)_
 
 ## Current Phase
-Closed: Phase 8 compatibility hardening for third-party installers. Codex accepted the resolved review round after local verification (2026-07-26).
+Closed: Phase 9 controlled reviewer-model selection implemented and locally verified (2026-07-27).
 
 ## Next Action
-User manually commits the accepted working-tree changes and synchronizes the locally installed `cross-agent-review` bundle. When a Windows use case exists, run a real Windows smoke/CI validation of the `msvcrt` lock path.
+User may review, commit, and synchronize the source bundle to the installed skill. No installed-bundle synchronization or additional paid review is implied by this implementation.
 
 ## Completed Items
 - Added and observed five P1 regression tests fail before their corresponding implementation (2026-07-25).
@@ -42,10 +42,14 @@ User manually commits the accepted working-tree changes and synchronizes the loc
 - Synchronized the Phase 7 source bundle to `/Users/gaotu/.cc-switch/skills/cross-agent-review`, preserving the prior installed bundle at `cross-agent-review.backup-20260725-phase7`; source/installed parity, compilation, and 14/14 regressions passed (2026-07-25).
 - Phase 8 (2026-07-26): compatibility review found and fixed 2×P1 + 2×P2 portability blockers for third-party installers; regression suite grew 17→29 passing; not yet committed or synced to the installed bundle (2026-07-26).
 - Phase 8 closure (2026-07-26): Codex re-reviewed the resolved diff with no further blocking findings. `pytest` passed 31 tests, `py_compile` and `git diff --check` passed, and no provider call was made. The user accepted deferral of real-Windows validation and will manually commit and synchronize the installed bundle.
+- Phase 9 planning (2026-07-27): documented a common, optional `--model` interface for both review directions, preserving default behavior when omitted and keeping non-model Codex configuration out of scope. Prepared a read-only ClaudeCode compatibility review; no provider call or adapter edit has occurred.
+- Phase 9 plan review (2026-07-27): ClaudeCode returned `APPROVE WITH NITS` through a verified adapter gate (session `6c28687b-8f1f-4ca4-a6cd-cb2d666f9b15`, reported cost `$1.30125925`). Incorporated its P2/P3 hardening into the plan; implementation remains unstarted.
+- Phase 9 implementation (2026-07-27): added optional common `--model` selection to both adapters. Omission preserves the local CLI default; valid explicit values become single `--model=<value>` argv tokens. Added fail-closed validation/preflight and `requested_model` audit metadata. 37 tests, compilation, both adapter help commands, and `git diff --check` passed without a model call.
 
 ## Open Questions
 - RESOLVED (2026-07-26, per Codex review): only source-verified fields gate success; speculative aliases are diagnostic-only `drift_hints`. Implemented.
 - DEFERRED (user decision, 2026-07-26): validate actual `msvcrt.locking` contention/error behavior on a real Windows runner when there is a Windows use case. Mock tests cover contention retry and non-contention fail-closed handling.
+- RESOLVED (2026-07-27, ClaudeCode review): model selection needs only the common `--model` option; arbitrary Codex config/profile/reasoning passthrough remains out of scope. Adopt a no-network, inconclusive-safe model-flag help preflight before attempt reservation; it cannot validate particular model availability.
 
 ## Phase 8 completed items (2026-07-26, accepted)
 - P1-a Windows: replaced the unconditional top-level `import fcntl` (POSIX-only, which also crashed the reverse adapter via its import) with a portable `_lock_exclusive`/`_unlock` (fcntl on POSIX, msvcrt on Windows, fail-closed if neither).
@@ -74,6 +78,10 @@ User manually commits the accepted working-tree changes and synchronizes the loc
 - Review/ByClaudeCode/codex-sdk-cli-user-agent-verification.md (verified adapter result; APPROVE WITH NITS)
 - /Users/gaotu/.cc-switch/skills/cross-agent-review (updated installed bundle; NOT yet re-synced with Phase 8)
 - Phase 8 working diff (uncommitted, 2026-07-26): cross-agent-review/scripts/codex_to_claude.py, scripts/claude_to_codex.py, scripts/runtime_capabilities.py, tests/test_review_limits.py, SKILL.md, README.md, references/cross-agent-review-protocol.md (7 files; 31/31 tests)
+- docs/plans/2026-07-27-cross-agent-review-model-selection.md (Phase 9 implementation plan; awaiting review)
+- Review/ForClaudeCode/2026-07-27-cross-agent-review-model-selection-plan.md (prepared read-only plan-review request)
+- Review/ByClaudeCode/2026-07-27-cross-agent-review-model-selection-plan-review.md (verified adapter result; `APPROVE WITH NITS`, plan findings incorporated)
+- Phase 9 implementation: `cross-agent-review/scripts/codex_to_claude.py`, `scripts/claude_to_codex.py`, `tests/test_review_limits.py`, `SKILL.md`, `README.md`, and `references/cross-agent-review-protocol.md`
 
 ## Project Context
 See CLAUDE.md for project constraints, AGENTS.md for agent guidelines.

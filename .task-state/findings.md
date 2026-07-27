@@ -119,3 +119,15 @@ Codex reviewed the working diff and raised three valid findings; all fixed (suit
 - **Result:** No further blocking finding after re-review of the resolved Phase 8 diff. The three round-1 fixes preserve the stated guarantees: only verified provenance succeeds, non-contention Windows lock errors fail closed, and the authoritative protocol matches the implementation.
 - **Verification:** `python -m pytest cross-agent-review/tests/ -q` reported 31 passed; `python -m py_compile scripts/*.py tests/*.py` from `cross-agent-review/` and `git diff --check` passed. No provider call was made.
 - **Residual risk:** The Windows `msvcrt.locking` branch is covered by mocks only. The user accepted deferral of real-Windows validation until a Windows use case exists.
+
+## 2026-07-27 — ClaudeCode model-selection plan review
+- **Verdict:** `APPROVE WITH NITS` through the verified Codex-to-ClaudeCode adapter gate. Session `6c28687b-8f1f-4ca4-a6cd-cb2d666f9b15`; reported cost `$1.30125925`; one attempt and one success for artifact `cross-agent-review-model-selection-plan-v1`.
+- **P2-1 incorporated:** A two-token `['--model', value]` form could let a leading-dash value be parsed as an option. Plan now rejects leading `-` and emits one `--model=<value>` token.
+- **P2-2 incorporated:** Documentation and the plan now state that explicit model choice on Codex review changes a route with no provider USD ceiling; it remains bounded only by explicit user approval, fixed attempts, and timeout.
+- **P2-3 adopted:** Add an injected, no-network, inconclusive-safe `--help` preflight for an explicitly supplied model. It detects only an absent CLI flag before reservation, never model availability.
+- **P3 clarifications incorporated:** set a 128-character bound; document that control checks protect audit/handoff hygiene rather than shell injection; record `requested_model` only in the one post-invoke cost row, never as an effective model.
+- **Source:** `Review/ByClaudeCode/2026-07-27-cross-agent-review-model-selection-plan-review.md`.
+
+## 2026-07-27 — Model-selection implementation verification
+- **Result:** Implemented the reviewed plan without widening the review authority surface. Omitted `--model` leaves both native CLIs at their own configured default; explicit models are one `--model=<value>` argv token, validated before any marker activity, checked against conclusive local help only, and audited as `requested_model` after subprocess start.
+- **Verification:** `python -m pytest tests/ -q` reported 37 passed; `python -m py_compile scripts/*.py tests/*.py`, both module help commands, and `git diff --check` passed. No live reviewer/model request was made.

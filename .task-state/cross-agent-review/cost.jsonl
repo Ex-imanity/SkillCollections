@@ -1,3 +1,4 @@
 {"gate_id": "cross-agent-review-p1-20260725", "total_cost_usd": 0, "wall_seconds": 2.791}
 {"gate_id": "codex-credential-remedy-verification-20260725", "total_cost_usd": 0, "wall_seconds": 1.5}
 {"gate_id": "codex-sdk-cli-user-agent-verification-20260725", "total_cost_usd": 0.64111725, "wall_seconds": 136.546}
+{"gate_id": "cross-agent-review-model-selection-plan-20260727", "total_cost_usd": 1.30125925, "wall_seconds": 218.727}

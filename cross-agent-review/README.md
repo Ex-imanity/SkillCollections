@@ -38,6 +38,20 @@ python -m scripts.runtime_capabilities --json # 本机 agent CLI 发现（不发
 
 每个 review gate 需显式传入：request 文件、artifact key、可读目录、输出路径、超时和用户明确批准。Codex 主 → ClaudeCode 还必须传 `--max-budget-usd`；反向 Codex CLI 没有等价 USD 上限，只能以用户批准、超时和固定 attempt cap 限制。先读 `references/cross-agent-review-protocol.md`。
 
+两个 adapter 都可选传 `--model <MODEL>`。不传时保持本机 CLI 默认模型；传入时 adapter 将其校验后以单个 `--model=<MODEL>` 原生参数传递，并在子进程实际启动后于成本日志记录 `requested_model`，不会把它称为实际生效模型。模型名不做内置白名单，以兼容 CLI alias 与网关自定义名称；空值、前导 `-`、ASCII 控制字符和超过 128 字符的值会在预留 attempt 前 fail closed。CLI `--help` 明确不支持 `--model` 时也会在预留前失败；帮助探测不可用时保持 inconclusive 并由真实结果信封裁决。Claude 方向仍受 `--max-budget-usd` 限制；Codex 方向没有 provider USD 上限，选择更高成本模型必须纳入用户明确授权、固定两次 attempt 和 timeout 的成本边界。
+
+模型选择只是在原有 gate 命令末尾按需追加：
+
+```bash
+# 默认：不要追加 --model，使用本机 CLI 配置的默认模型。
+python -m scripts.codex_to_claude <正常的必填 gate 参数>
+python -m scripts.claude_to_codex <正常的必填 gate 参数>
+
+# 显式选择 reviewer 模型。
+python -m scripts.codex_to_claude <正常的必填 gate 参数> --model sonnet
+python -m scripts.claude_to_codex <正常的必填 gate 参数> --model gpt-5.6-terra
+```
+
 已验证的一个特定 Anthropic 兼容网关会对 Claude Code 默认的 `sdk-cli` 身份返回 pre-model 403；这不是通用 token 故障结论。首选让网关放行官方身份。只有用户明确批准兼容方案后，才传 `--gateway-compat-cli-identity`：adapter 从实际解析到的本机 `claude --version` 导出 plain `claude-cli/<version>`，并用同一个绝对路径启动 reviewer。它不接收调用者填写的版本、不伪装 `claude-vscode`、不接收任意 Header，且版本探测失败时不预留 attempt；新版本 artifact 应使用新的 artifact key，不能靠换 key 绕过同一 artifact 的两次调用上限。
 
 `runtime_capabilities` 只检查明确列出的本机 CLI 候选（含 `claude`、`codex` 和常见的其他 agent CLI）及其 `--version`，以 `PATH`-only 子进程运行，不传递凭证。发现其他 CLI 仅供诊断，不会自动把它们接入互审；当前被 skill 支持的方向仍只有 `claude` 与 `codex`。
@@ -47,6 +61,7 @@ python -m scripts.runtime_capabilities --json # 本机 agent CLI 发现（不发
 - readiness 由**真实结果信封**判定，绝不用 `claude auth status`。
 - 凭证：优先用 settings.json 的 `env` 代理块（隔离 `CLAUDE_CONFIG_DIR` 后显式注入），其次用显式注入的代理变量；两者都没有时回退 `inherited`，直接让本机 `claude` 用它自己已有的认证（订阅/OAuth 登录或环境里的 `ANTHROPIC_API_KEY`）——**无需代理网关**。未认证的 CLI 会在真实信封里被判为 `auth_failure` 并 fail closed。
 - 默认清除宿主继承的自定义 Header/IDE 身份；兼容 User-Agent 必须显式启用，并从实际执行的本机 Claude CLI 导出。
+- 可选 `--model` 仅控制 reviewer 模型；省略即使用各 CLI 默认模型。它不能覆盖 profile、任意 config、reasoning、权限或 sandbox；有效值以单个 `--model=<value>` argv token 传递。
 - reviewer 物理只读（claude `--permission-mode plan` + 固定 `Read,Grep,Glob`；codex 硬编码 `--sandbox read-only`）；无调用方 override。
 - 并发安全的固定上限（marker 锁从 check 到 commit）：每个 artifact 最多 2 次已启动调用和最多 2 次成功 review；已启动后失败也消耗 attempt，损坏计数 fail closed。同一 marker 文件在整个 reviewer 调用期间持锁，因此共享该文件的不同 artifact gate 会串行；等待方没有独立获取锁超时，通常会等待当前调用的配置超时（默认 600 秒）及本地 I/O。
 - `<marker-path>.lock` 是正常常驻的 flock 协调文件，不保存计数；它在正常结束后仍存在，并非 gate 正在运行或已失败的证据（not evidence of an active or failed gate）。将 marker 与 lock 放在忽略的 task-state 路径下；只有 marker JSON 损坏时才先保留证据、再手动删除 marker，gate 运行期间不要删除 lock。
