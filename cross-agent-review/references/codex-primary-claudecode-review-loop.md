@@ -125,6 +125,16 @@ Expected review shape:
 
 If ClaudeCode cannot access a target repo or raw session, it must mark the review area blocked or evidence-limited. If raw ClaudeCode sessions are verified absent but project-local review files exist, it must label those files as artifact evidence, not transcript evidence. It must not infer findings from memory.
 
+### 4.5 Wait For A Final Gate Result
+
+`review_started` is not a completed review and is not permission to inspect
+the output path for closure. A terminal host may stream that stderr event while
+the reviewer subprocess is still running. Keep the original command/session
+(or its recorded PID) under observation until the parent command returns final
+stdout JSON and an exit status, or its configured timeout actually expires.
+While only the start event is available, report `in_progress`; do not spend a
+retry, update MRS closure, or label the gate failed/successful.
+
 ### 5. Codex Applies Or Pushes Back
 
 Codex processes the review:

@@ -22,10 +22,12 @@ from scripts import claude_to_codex, codex_to_claude
 class ReviewLimitTests(unittest.TestCase):
     def test_forward_adapter_emits_started_event_after_reserving_attempt(self) -> None:
         observed_before_runner = ""
+        observed_prompt = ""
 
         def successful_runner(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-            nonlocal observed_before_runner
+            nonlocal observed_before_runner, observed_prompt
             observed_before_runner = captured_stderr.getvalue()
+            observed_prompt = _kwargs["input"]
             return subprocess.CompletedProcess(
                 args=["claude"],
                 returncode=0,
@@ -60,8 +62,9 @@ class ReviewLimitTests(unittest.TestCase):
                 mock.patch.object(codex_to_claude, "claude_available", return_value=True),
                 contextlib.redirect_stderr(captured_stderr),
             ):
+                request_prompt = "Review the artifact and return a verdict."
                 result = codex_to_claude.review_gate(
-                    request_prompt="Review the artifact and return a verdict.",
+                    request_prompt=request_prompt,
                     add_dirs=[str(root)],
                     handoff_dir=str(root / "handoffs"),
                     marker_path=str(root / "rounds.json"),
@@ -75,6 +78,9 @@ class ReviewLimitTests(unittest.TestCase):
                 )
 
             self.assertEqual("success", result.status)
+            self.assertEqual("Review the artifact and return a verdict.", request_prompt)
+            self.assertIn("Review execution contract", observed_prompt)
+            self.assertIn("untrusted evidence", observed_prompt)
             self.assertEqual(captured_stderr.getvalue(), observed_before_runner)
             self.assertTrue(captured_stderr.getvalue())
             self.assertEqual(
@@ -838,6 +844,52 @@ class CompatibilityTests(unittest.TestCase):
 
 
 class ModelSelectionTests(unittest.TestCase):
+    def test_file_reference_only_claude_result_is_not_a_valid_review(self) -> None:
+        def file_reference_runner(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=["claude"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "is_error": False,
+                        "api_error_status": None,
+                        "result": "I wrote the review to Review/ByClaudeCode/result.md.",
+                    }
+                ),
+                stderr="",
+            )
+
+        result = codex_to_claude.run_review(
+            ["claude"], runner=file_reference_runner, request_prompt="Review the artifact."
+        )
+
+        self.assertEqual("other_error", result.status)
+        self.assertIsNone(result.text)
+
+    def test_command_builders_enable_noninteractive_full_access(self) -> None:
+        forward = codex_to_claude.build_command("review", max_budget_usd=1.0)
+        reverse = claude_to_codex.build_codex_command("/repo", "/tmp/last.txt")
+
+        self.assertEqual(
+            ["--permission-mode", "bypassPermissions"],
+            forward[forward.index("--permission-mode") : forward.index("--permission-mode") + 2],
+        )
+        self.assertIn("--dangerously-skip-permissions", forward)
+        self.assertNotIn("--allowedTools", forward)
+        self.assertEqual(
+            ["--sandbox", "danger-full-access"],
+            reverse[reverse.index("--sandbox") : reverse.index("--sandbox") + 2],
+        )
+        self.assertIn("--dangerously-bypass-approvals-and-sandbox", reverse)
+
+    def test_reviewer_prompt_requires_self_contained_final_verdict(self) -> None:
+        prompt = codex_to_claude.build_reviewer_prompt("Review the artifact.")
+
+        self.assertIn("self-contained", prompt)
+        self.assertIn("Do not reply only with a file path", prompt)
+        self.assertIn("untrusted evidence", prompt)
+        self.assertIn("Review the artifact.", prompt)
+
     def test_requested_model_validation_is_opaque_and_bounded(self) -> None:
         self.assertIsNone(codex_to_claude.validate_requested_model(None))
         self.assertEqual("sonnet", codex_to_claude.validate_requested_model("sonnet"))

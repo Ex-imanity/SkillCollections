@@ -1,10 +1,10 @@
 """ClaudeCode -> Codex direct review adapter.
 
 Symmetric to `codex_to_claude.py`, but for the reverse direction: a
-ClaudeCode-primary turn asks the local Codex CLI for a read-only review via
-`codex exec --sandbox read-only`, WITHOUT depending on the official Codex
-plugin. This keeps the skill self-contained and distributable (it needs only
-the `claude` and `codex` CLIs), and sidesteps the plugin broker.
+ClaudeCode-primary turn asks the local Codex CLI for an unattended full-access
+review via `codex exec`, WITHOUT depending on the official Codex plugin. This
+keeps the skill self-contained and distributable (it needs only the `claude`
+and `codex` CLIs), and sidesteps the plugin broker.
 
 Shared guards (round cap, redaction, fail-closed, cost log) are imported from
 `codex_to_claude` so both directions enforce the exact same protocol.
@@ -36,6 +36,7 @@ from .codex_to_claude import (
     gate_failure_result,
     log_cost,
     MODEL_FLAG,
+    build_reviewer_prompt,
     persist_success,
     round_cap_guard,
     validate_requested_model,
@@ -88,19 +89,22 @@ def build_codex_command(
     skip_git_repo_check: bool = True,
     model: Optional[str] = None,
 ) -> list:
-    """Assemble a read-only `codex exec` argv.
+    """Assemble an unattended full-access `codex exec` argv.
 
-    The sandbox is hardcoded to `read-only` and is NOT a caller-tunable
-    parameter (P1-b): a reviewer must be physically unable to write, so there
-    is no escape to `workspace-write`/`danger-full-access`. This mirrors the
-    hardcoded `--permission-mode plan` on the claude side. Review instructions
-    are passed via stdin, never argv.
+    The sandbox and approval bypass are hardcoded rather than caller-tunable:
+    review subprocesses may use verification tools and write their requested
+    review output without stalling for non-interactive confirmation. The review
+    prompt still forbids modifying the reviewed artifact or primary-owned
+    state. Review instructions are passed via stdin, never argv.
     """
     argv = [
         "codex",
         "exec",
+        # Keep both flags: the sandbox mode declares the intended full-access
+        # profile, while the bypass flag guarantees non-interactive execution.
         "--sandbox",
-        "read-only",
+        "danger-full-access",
+        "--dangerously-bypass-approvals-and-sandbox",
         "--json",
         "--output-last-message",
         last_message_path,
@@ -379,8 +383,8 @@ def codex_review_gate(
 
     Order: codex-available -> fixed caps -> reserve attempt -> invoke ->
     classify -> log cost -> commit success. A started call consumes an attempt
-    even if it fails, preventing unbounded retries. The sandbox is always
-    read-only (P1-b).
+    even if it fails, preventing unbounded retries. The subprocess uses the
+    same unattended full-access execution contract as the Claude direction.
     """
     sensitive_values = _known_sensitive_values(settings_path, None)
     try:
@@ -461,7 +465,7 @@ def codex_review_gate(
                     last_message_path,
                     runner=runner,
                     timeout_seconds=timeout_seconds,
-                    prompt=request_prompt,
+                    prompt=build_reviewer_prompt(request_prompt),
                 )
                 usage = result.envelope.get("usage")
                 try:
@@ -569,7 +573,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Run a fail-closed ClaudeCode->Codex review gate (direct codex CLI, no plugin)"
     )
     parser.add_argument("--request-file", required=True)
-    parser.add_argument("--cd", required=True, help="repository/working dir codex reviews (read-only)")
+    parser.add_argument("--cd", required=True, help="trusted repository/working dir Codex reviews")
     parser.add_argument("--handoff-dir", required=True)
     parser.add_argument("--marker-path", required=True)
     parser.add_argument("--gate-id", required=True)

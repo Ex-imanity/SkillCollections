@@ -14,5 +14,9 @@
   "cross-agent-review-p1-hardening": {
     "attempts": 1,
     "successes": 0
+  },
+  "cross-agent-review-unattended-execution-v1": {
+    "attempts": 1,
+    "successes": 1
   }
 }
