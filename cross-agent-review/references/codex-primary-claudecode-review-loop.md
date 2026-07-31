@@ -127,13 +127,30 @@ If ClaudeCode cannot access a target repo or raw session, it must mark the revie
 
 ### 4.5 Wait For A Final Gate Result
 
+Before launching, retain a **trackable runner handle**: the terminal-runner
+session ID or parent adapter PID; prefer a recorded PID whenever the host
+exposes it, because it survives loss of a terminal display handle. Where the
+host allows it, record the gate ID, parent process start time or command
+identity, and redacted stdout/stderr capture paths in primary-owned task state;
+never record request text or credentials.
+
 `review_started` is not a completed review and is not permission to inspect
-the output path for closure. A terminal host may stream that stderr event while
-the reviewer subprocess is still running. Keep the original command/session
-(or its recorded PID) under observation until the parent command returns final
-stdout JSON and an exit status, or its configured timeout actually expires.
-While only the start event is available, report `in_progress`; do not spend a
-retry, update MRS closure, or label the gate failed/successful.
+the output path for closure. A terminal tool returning early, releasing its
+display handle, or streaming only stderr does not prove the reviewer subprocess
+has exited. Until it does, report only `in_progress`; do not spend another
+retry, declare a verdict, inspect final artifacts, or update MRS closure state.
+
+Poll only the original handle. For a recorded PID, use a process-status check
+on POSIX and the platform process API on Windows. PIDs can be reused, so where
+the host exposes process start time or command identity, confirm it matches the
+recorded parent before treating that PID as the original process; a mismatch or
+unavailable comparison after session loss means report the process as
+unobservable. If the terminal session is lost, reattach through the recorded
+PID. If neither identifier is available, report the process as unobservable and
+wait through the configured timeout rather than infer failure or launch a
+replacement gate. Only after the original process is observed to have exited,
+or the configured timeout truly expires, validate final stdout JSON first, then
+the output or handoff and update durable state.
 
 ### 5. Codex Applies Or Pushes Back
 

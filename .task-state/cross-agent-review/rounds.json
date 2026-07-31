@@ -7,6 +7,10 @@
     "attempts": 1,
     "successes": 1
   },
+  "cross-agent-review-lifecycle-prompt-v1": {
+    "attempts": 1,
+    "successes": 1
+  },
   "cross-agent-review-model-selection-plan-v1": {
     "attempts": 1,
     "successes": 1

@@ -1,11 +1,11 @@
 # Task State
 
-**Last Updated:** 2026-07-27
+**Last Updated:** 2026-07-31
 **Updated By:** Codex
 
 ## Goal
 Harden the cross-agent-review skill's safety guarantees and compatibility.
-(Phase 9 extension: add controlled reviewer-model selection, with a ClaudeCode plan review before implementation.)
+(Phase 10 extension: make review-gate lifecycle observation resilient when a terminal tool returns early.)
 
 ## Status
 completed
@@ -14,10 +14,10 @@ completed
 _(none)_
 
 ## Current Phase
-Closed: Phase 9 controlled reviewer-model selection implemented and locally verified (2026-07-27).
+Closed: Phase 10 review-gate lifecycle guidance reviewed by ClaudeCode, hardened for recovery edges, synced, and locally verified (2026-07-31).
 
 ## Next Action
-User may review, commit, and synchronize the source bundle to the installed skill. No installed-bundle synchronization or additional paid review is implied by this implementation.
+User may review and commit the source bundle. The verified source files have already been synchronized to the installed skill; no additional paid review is required for the resolved P2/P3 review findings.
 
 ## Completed Items
 - Added and observed five P1 regression tests fail before their corresponding implementation (2026-07-25).
@@ -45,6 +45,8 @@ User may review, commit, and synchronize the source bundle to the installed skil
 - Phase 9 planning (2026-07-27): documented a common, optional `--model` interface for both review directions, preserving default behavior when omitted and keeping non-model Codex configuration out of scope. Prepared a read-only ClaudeCode compatibility review; no provider call or adapter edit has occurred.
 - Phase 9 plan review (2026-07-27): ClaudeCode returned `APPROVE WITH NITS` through a verified adapter gate (session `6c28687b-8f1f-4ca4-a6cd-cb2d666f9b15`, reported cost `$1.30125925`). Incorporated its P2/P3 hardening into the plan; implementation remains unstarted.
 - Phase 9 implementation (2026-07-27): added optional common `--model` selection to both adapters. Omission preserves the local CLI default; valid explicit values become single `--model=<value>` argv tokens. Added fail-closed validation/preflight and `requested_model` audit metadata. 37 tests, compilation, both adapter help commands, and `git diff --check` passed without a model call.
+- Phase 10 lifecycle hardening (2026-07-31): from the FeedbackProgress gate evidence, added an explicit trackable runner-handle requirement, early-terminal-return rule, POSIX/Windows PID observation guidance, lost-handle behavior, and exit-before-artifact-validation rule. The source and installed suites both passed 41 tests.
+- Phase 10 review closure (2026-07-31): a real Codex-to-ClaudeCode gate returned `APPROVE WITH NITS` for the lifecycle hardening (session `67752e50-df07-4963-8d1c-208bd62d2fab`, cost `$1.06299`). Resolved its P2/P3 coverage and precision findings: assert recovery branches and stdout ordering; prefer PID, detect possible PID reuse through start-time/command identity, and fail to unobservable waiting when identity cannot be confirmed. Source and installed suites both passed 41 tests.
 
 ## Open Questions
 - RESOLVED (2026-07-26, per Codex review): only source-verified fields gate success; speculative aliases are diagnostic-only `drift_hints`. Implemented.
@@ -82,6 +84,8 @@ User may review, commit, and synchronize the source bundle to the installed skil
 - Review/ForClaudeCode/2026-07-27-cross-agent-review-model-selection-plan.md (prepared read-only plan-review request)
 - Review/ByClaudeCode/2026-07-27-cross-agent-review-model-selection-plan-review.md (verified adapter result; `APPROVE WITH NITS`, plan findings incorporated)
 - Phase 9 implementation: `cross-agent-review/scripts/codex_to_claude.py`, `scripts/claude_to_codex.py`, `tests/test_review_limits.py`, `SKILL.md`, `README.md`, and `references/cross-agent-review-protocol.md`
+- Phase 10 lifecycle hardening: `cross-agent-review/SKILL.md`, `references/cross-agent-review-protocol.md`, `references/codex-primary-claudecode-review-loop.md`, and `tests/test_review_limits.py`
+- Phase 10 review closure: `Review/ForClaudeCode/2026-07-31-cross-agent-review-lifecycle-prompt-review.md`, `Review/ByClaudeCode/2026-07-31-cross-agent-review-lifecycle-prompt-review.md`, `.task-state/cross-agent-review/runs/`, and the four lifecycle-hardening source files
 
 ## Project Context
 See CLAUDE.md for project constraints, AGENTS.md for agent guidelines.

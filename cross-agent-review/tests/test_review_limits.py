@@ -166,6 +166,31 @@ class ReviewLimitTests(unittest.TestCase):
         self.assertIn("normal persistent flock coordination file", protocol)
         self.assertIn("stderr-only `review_started`", protocol)
 
+    def test_user_docs_require_a_trackable_gate_handle_before_closure(self) -> None:
+        skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        protocol = (SKILL_DIR / "references" / "cross-agent-review-protocol.md").read_text(
+            encoding="utf-8"
+        )
+        checklist = (
+            SKILL_DIR / "references" / "codex-primary-claudecode-review-loop.md"
+        ).read_text(encoding="utf-8")
+
+        for document in (skill, protocol, checklist):
+            normalized = " ".join(document.split())
+            self.assertIn("trackable runner handle", normalized)
+            self.assertIn("terminal tool returning early", normalized)
+            self.assertIn("original process is observed to have exited", normalized)
+            self.assertIn("prefer a recorded PID whenever the host exposes it", normalized)
+            self.assertIn("reattach through the recorded PID", normalized)
+            self.assertIn("report the process as unobservable", normalized)
+            self.assertIn(
+                "validate final stdout JSON first, then the output or handoff", normalized
+            )
+            self.assertIn("PIDs can be reused", normalized)
+
+        self.assertIn("POSIX", skill)
+        self.assertIn("Windows", skill)
+
     def test_forward_adapter_refuses_to_start_without_a_budget(self) -> None:
         calls = 0
 

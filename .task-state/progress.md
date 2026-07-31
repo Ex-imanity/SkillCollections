@@ -124,3 +124,13 @@
 ## 2026-07-27 — Phase 9 README clarity pass (Codex)
 - Added concise README examples for the two intended paths: omit `--model` for the local CLI default, or append `--model <MODEL>` for an explicit reviewer model.
 - Corrected the canonical protocol snippet so the optional model argument is appended only when selected, rather than appearing as a required trailing command argument.
+
+## 2026-07-31 — Phase 10 review-gate lifecycle hardening (Codex)
+- Reconstructed the latest FeedbackProgress review evidence from Codex thread `019fb275-9558-7000-af15-135224a9436b`: the second ClaudeCode gate emitted `review_started`; its terminal tool handle returned early; the same original process later completed successfully when it was tracked instead of retried. The failure was therefore a primary-side lifecycle interpretation error, not evidence that the adapter had failed to launch.
+- Added a RED documentation regression test requiring the authoritative Skill, protocol, and Codex-primary checklist to require a trackable runner handle, forbid treating an early terminal return as exit, and require observed exit before final-artifact validation. It failed before the wording change, then passed after it.
+- Updated the three operational documents with the retained session/PID, POSIX/Windows observation, session-loss reattachment, unobservable-process, and true-timeout rules. Source `pytest` and the synchronized installed-copy `pytest` each passed `41 passed`; `git diff --check` passed. No provider call was made.
+
+## 2026-07-31 — Phase 10 ClaudeCode review and finding closure (Codex)
+- Ran a fresh verified Codex-to-ClaudeCode gate for the lifecycle changes under artifact key `cross-agent-review-lifecycle-prompt-v1`, timeout 600 seconds, default local Claude model, user-approved gateway compatibility identity, and `$2` cap. The host terminal again released early after `review_started`, but the recorded adapter PID and Claude child were still active; primary-side PID observation continued until true exit.
+- Adapter result: `success`, reviewer session `67752e50-df07-4963-8d1c-208bd62d2fab`, one started/one successful gate, provider-reported `$1.0629899999999999`, wall time `173.558s`. ClaudeCode verdict: `APPROVE WITH NITS`; no P0/P1.
+- Verified and applied P2-A/P3-B/P3-C/P3-D. The lifecycle regression test now asserts PID preference, reattachment through the recorded PID, unobservable wait-through-timeout, stdout-then-output/handoff ordering, and PID-reuse protection. The docs require comparison of process start time or command identity where available; an unavailable/mismatched comparison fails to unobservable waiting. Source and installed suites each passed `41 passed`; no further provider call was made.
