@@ -42,6 +42,11 @@
 │   ├── SKILL.md
 │   ├── examples/
 │   └── references/
+├── gapm-mcp-recovery/
+│   ├── README.md
+│   ├── SKILL.md
+│   ├── evals/
+│   └── scripts/
 ├── internal-api-cookie-auth/
 │   ├── SKILL.md
 │   ├── scripts/
@@ -59,6 +64,7 @@
 | `context-resilient-task` | 上下文弹性任务管理，用磁盘上的 MRS 文件恢复长期任务状态 | 多阶段开发、跨会话继续、`/clear` 后恢复、避免 agent 忘记待办或编造状态 | `task_state.md` 是 source of truth，必须原地更新；`progress.md` 和 `decisions.md` 只追加；缺少 Tier 0 文件时应先初始化 MRS |
 | `cross-agent-review` | 本机 Codex 与 ClaudeCode 互相做只读评审的双向 skill，primary 保连续性、reviewer 只读返回带证据的 verdict | 跨代理评审 handoff：Codex 写、ClaudeCode 审，或反向；计划/代码互审、防作者自漏 | 只依赖本机 `claude`+`codex` CLI（官方 plugin 仅可选 fallback）；reviewer 物理只读、fail-closed、并发 round-cap、脱敏；readiness 看真实信封不看 auth status；不用于单 agent 自审或普通 code review |
 | `dify-dsl-generator` | 生成、重构或评审 Dify workflow/chatflow/agent DSL | 把业务需求、后端接口、规则系统或已有 YAML 转为可导入的 Dify DSL | 先冻结输入输出和应用形态，再写 YAML；优先复用 `references/` 和已有示例中的验证模式；输出前检查节点类型、变量路径、edge 和结构化输出 |
+| `gapm-mcp-recovery` | 诊断并恢复 Codex 中的 GAPM MCP；当前对话未注入 Tool 时可通过 App Server bridge 直接调用 | GAPM Tool 缺失、`invalid_client` / `authentication_required`、`serverInfo` 为空、日志排查疑似需要重启 Codex | 依赖 Codex CLI、Python 3.9+ 和内部网络；OAuth 过期仍需浏览器授权；参数及原始日志只能放在 `.local/`；查询无结果不能断言未调用 |
 | `internal-api-cookie-auth` | 为受支持内部 API 获取短期 CAS Cookie，并规范认证失败后的处理 | Internal AD/UOS、Athena、Compass 的接口开发与排障，Cookie 缺失或 HTTP 401 | 仅限允许的内部域名；不输出或持久化凭证；403 视为可能的权限问题，禁止盲目重试写操作 |
 
 ## 各 Skill 简介
@@ -135,6 +141,20 @@
 
 注意：Webhook、vision files、structured output 和复杂迁移流程是高风险区域，应优先参考 `references/` 和 `examples/` 中已有模式。
 
+### gapm-mcp-recovery
+
+`gapm-mcp-recovery` 用于恢复 Codex 中的 `gapm_agent_tools`。它不会把
+`codex mcp list/get` 的 `enabled` 或 `OAuth` 字样误判为服务健康，而是进一步检查 App
+Server 的 `serverInfo` 和三个 GAPM Tool 是否完整枚举。
+
+当 MCP 已健康但当前对话没有原生 `gapm_*` Tool 时，内置脚本可以创建临时只读 thread，
+通过 `mcpServer/tool/call` 直接查询 GAPM，从而避免为了刷新 Tool 快照而频繁重启 Codex 或
+新开对话。OAuth 失效时优先重新登录，浏览器授权完成后再次检查真实状态。
+
+该 Skill 只允许调用三个 GAPM 只读查询 Tool，参数和原始结果必须保存在 Git 忽略的
+`.local/`，不会调用 `mainSearch` 或修改生产数据。详细安装、状态含义和 bridge 用法见
+`gapm-mcp-recovery/README.md`。
+
 ## 安装与使用建议
 
 可以按需复制单个 skill 目录到本地 agent 的 skills 目录，也可以通过支持 GitHub skill 安装的工具安装整个仓库。
@@ -143,6 +163,7 @@
 # 示例：手动安装单个 skill
 cp -r case-lite ~/.cc-switch/skills/case-lite
 cp -r context-resilient-task ~/.cc-switch/skills/context-resilient-task
+cp -r gapm-mcp-recovery ~/.codex/skills/gapm-mcp-recovery
 ```
 
 使用建议：

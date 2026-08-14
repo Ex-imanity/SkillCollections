@@ -1,0 +1,38 @@
+{
+  "skill_name": "gapm-mcp-recovery",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "GAPM 三个工具在当前 Codex 对话里都看不到，但 codex mcp get 显示 enabled。请在不重启 Codex、不新开对话的前提下先判断服务是否健康，并继续查询日志。",
+      "expected_output": "区分配置、App Server 启动和当前对话 Tool 注入；服务健康时通过 App Server bridge 直接调用 GAPM，不先要求重启。",
+      "files": [],
+      "expectations": [
+        "先运行 status 检查 App Server 的 serverInfo 和 Tool 枚举",
+        "HEALTHY 且当前对话无原生 Tool 时使用 bridge call",
+        "不会在 bridge 可用时要求重启 Codex 或创建新对话"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "调用 gapm_log_query_v2 报 invalid_client: Client authentication failed，帮我恢复，尽量不要打断当前任务。",
+      "expected_output": "优先执行 codex mcp login gapm_agent_tools 并重新诊断；仅在直接登录无法替换旧凭证时 logout；恢复后优先 bridge 调用。",
+      "files": [],
+      "expectations": [
+        "第一次恢复使用 codex mcp login gapm_agent_tools",
+        "logout 只作为直接 login 反复失败后的条件式 fallback",
+        "授权完成后重新运行 status 而不是仅相信 CLI 登录成功文案"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "GAPM 查询 questionId 没有任何日志，是不是可以判定 search-agent 没调用下游？",
+      "expected_output": "把 MCP 连通性与业务证据完整性分开；无日志只能判 TELEMETRY_MISSING 或 INSUFFICIENT_DATA，并给出安全的后续查询顺序。",
+      "files": [],
+      "expectations": [
+        "不会把无日志直接判定为未路由或未调用下游",
+        "结论使用 TELEMETRY_MISSING 或 INSUFFICIENT_DATA",
+        "原始日志和关联标识只保存到 Git 忽略的 .local"
+      ]
+    }
+  ]
+}
