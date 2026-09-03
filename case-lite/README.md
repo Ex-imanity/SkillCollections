@@ -52,8 +52,11 @@ https://gaotuedu.feishu.cn/wiki/CNBZwz8rwiew8dkXHt1cRIAAn8g#share-DrNhdQPiToYWMX
 对话中说 **"case-lite"** 或 **"小需求用例"**，然后提供：
 
 - 需求名称
+- 迭代名称（可选，一个迭代可包含多个需求）
 - 飞书文档链接（支持 docx、wiki 和云空间原生 Markdown 的 `/file/TOKEN` 链接，可多个）
 - 文档类型（可选，如后端技术方案、需求文档等）
+
+**不带迭代**（产物平铺在 `case-lite-output/` 下）：
 
 ```
 case-lite
@@ -63,6 +66,35 @@ case-lite
 前端交互文档：https://xxx.feishu.cn/wiki/TOKEN2
 接口草稿：https://xxx.feishu.cn/file/TOKEN3
 ```
+
+→ 产物落在 `case-lite-output/user-self-reset-password/`
+
+**带迭代**（同一迭代的多个需求归到一个目录下）：
+
+```
+case-lite
+
+需求名称：用户自助重置密码
+迭代名称：AI搜索9月迭代
+后端技术方案：https://xxx.feishu.cn/docx/TOKEN1
+前端交互文档：https://xxx.feishu.cn/wiki/TOKEN2
+```
+
+→ 产物落在 `case-lite-output/ai-search-202609/user-self-reset-password/`
+
+同一迭代的下一个需求，只要迭代名称写成一样，就会自动归到同一个迭代目录下，并追加到该迭代的 `iteration-index.md`：
+
+```
+case-lite
+
+需求名称：新用户欢迎引导
+迭代名称：AI搜索9月迭代
+需求文档：https://xxx.feishu.cn/docx/TOKEN4
+```
+
+→ 产物落在 `case-lite-output/ai-search-202609/new-user-welcome-guide/`
+
+迭代名称不填就走平铺结构，AI 不会额外追问。如果指定了迭代、而同名需求的平铺目录已经存在，AI 会先问你「迁移」还是「新建」，不会自动移动已有产物。
 
 ### 第二步：浏览章节，选择范围
 
@@ -124,7 +156,9 @@ AI 基于确认的结构生成完整用例（full.md），包含每个测试点�
 
 ## 产物说明
 
-所有中间产物保存在 `case-lite-output/{需求名称}/` 下：
+所有中间产物保存在 `case-lite-output/` 下，目录层级取决于是否提供迭代信息。
+
+**未提供迭代信息（默认）**——按需求平铺：
 
 ```
 case-lite-output/user-self-reset-password/
@@ -137,6 +171,24 @@ case-lite-output/user-self-reset-password/
 ├── review.md            ← 自检结果
 └── writeback/           ← 节点树 + 写回日志
 ```
+
+**提供了迭代信息**——需求按迭代归组，一个迭代可包含多个需求：
+
+```
+case-lite-output/ai-search-202609/
+├── iteration-index.md              ← 本迭代需求清单、搬山 caseId 与进度
+├── user-self-reset-password/       ← 需求目录，内部结构同上
+│   ├── chapters/
+│   ├── corpus/
+│   ├── structure.md
+│   ├── full.md
+│   ├── review.md
+│   └── writeback/
+└── new-user-welcome-guide/
+    └── ...
+```
+
+Step 1 会把迭代名称作为**可选项**一并引导输入，不填就走平铺结构，已有的平铺目录无需迁移。如果指定了迭代、而同名需求的平铺目录已存在，AI 会提示你选择「迁移」还是「新建」，不会自动移动已有产物。
 
 这些产物默认都会保留，不会在任务完成后自动删除，方便后续复盘和继续编辑。
 

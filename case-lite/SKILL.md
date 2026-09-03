@@ -86,8 +86,19 @@ python case-lite/scripts/setup_mcp.py --agent <claude-code|codex> --fix
 
 ## 产物目录
 
+产物根目录由**是否提供迭代信息**决定。后续所有步骤中的产物路径都相对于「产物根目录」，本文档统一用 `{产物根目录}` 指代：
+
+| 场景 | 产物根目录 |
+|---|---|
+| 未提供迭代信息（默认） | `case-lite-output/{需求slug}/` |
+| 提供了迭代信息 | `case-lite-output/{迭代slug}/{需求slug}/` |
+
+`{需求slug}` 由需求名称生成，如 `ai-audit-model`；`{迭代slug}` 由迭代名称生成，如 `ai-search-202609`。两者规则一致：小写英文 kebab-case，中文按语义译成英文，日期/版本号保留数字（详见 Step 1）。
+
+产物根目录内部结构在两种场景下完全一致：
+
 ```
-case-lite-output/{slug}/
+{产物根目录}/
 ├── chapters/
 │   └── {docKey}-chapters.md    ← 章节树展示（供用户选章）
 │   └── child-documents.md      ← 子文档发现结果与用户纳入选择
@@ -104,7 +115,16 @@ case-lite-output/{slug}/
     └── writeback-log.json      ← 写回日志
 ```
 
-`slug` 由需求名称生成，如 `ai-audit-model`。
+提供迭代信息时，迭代目录下额外维护一份跨需求索引：
+
+```
+case-lite-output/{迭代slug}/
+├── iteration-index.md          ← 本迭代需求清单与进度（跨需求，追加维护）
+├── {需求slug-A}/
+└── {需求slug-B}/
+```
+
+> **向后兼容**：不提供迭代信息时，行为与旧版完全一致，已有的扁平产物目录无需迁移。
 
 ## 产物落盘约束
 
@@ -114,6 +134,7 @@ case-lite-output/{slug}/
   - 跳过参考用例 → `style-ref/reference-cases.md` 写明“本次未提供参考用例，使用默认风格规则”
   - 跳过自检 → `review.md` 写明“用户选择跳过用例自检，直接进入回填”
 - 任务完成后**不要删除这些产物**。`chapters/`、`corpus/`、`structure.md`、`full.md`、`review.md`、`writeback/` 都应保留，便于复盘和二次编辑
+- 提供了迭代信息时，`iteration-index.md` 位于迭代目录（需求目录的上一级），维护方式是**按需求行追加或更新**，绝不整份重写覆盖其他需求的记录
 - 进入下一步前，先检查上一步产物文件存在且内容已更新；若不存在，先补写文件再继续
 - 如果后续步骤修订了前序结论，应更新对应 markdown 文件，而不是只修改终态文件
 
@@ -125,26 +146,52 @@ case-lite-output/{slug}/
 
 从用户消息中提取：
 
-1. **需求名称**（必须）→ 用于生成 slug 和产物目录
-2. **文档链接**（必须）→ 飞书文档 URL 列表
-3. **文档类型标签**（可选）→ 需求 / 前端 / 后端 / 客户端 / 算法
+1. **需求名称**（必须）→ 用于生成 `{需求slug}` 和产物目录
+2. **迭代名称**（可选）→ 用于生成 `{迭代slug}`，决定产物目录是否多一层。一个迭代可包含多个需求
+3. **文档链接**（必须）→ 飞书文档 URL 列表
+4. **文档类型标签**（可选）→ 需求 / 前端 / 后端 / 客户端 / 算法
 
 引导话术：
 
 ```
 请提供以下信息：
 1. 需求名称（如：AI审核模型变更）
-2. 相关文档链接（飞书链接，可多个）
-3. 文档类型（可选，如：需求文档、后端技术方案等）
+2. 迭代名称（可选，一个迭代可包含多个需求，如：AI搜索9月迭代）
+3. 相关文档链接（飞书链接，可多个）
+4. 文档类型（可选，如：需求文档、后端技术方案等）
 
 示例：
 - 需求名称：AI审核模型变更
+- 迭代名称：AI搜索9月迭代
 - 后端技术方案：https://xxx.feishu.cn/docx/TOKEN1
 - 需求文档：https://xxx.feishu.cn/wiki/TOKEN2
 ```
 
-收到后创建产物目录 `case-lite-output/{slug}/`。
-同时初始化以下产物（如文件不存在则创建）：
+> 迭代名称是**可选项**。用户未提供时不要额外追问，直接按无迭代处理。
+
+#### 1a. 确定产物根目录
+
+1. **生成 slug**：需求名称和迭代名称都按同一规则转成 slug——小写英文 kebab-case；中文按语义译成英文（如「AI搜索9月迭代」→ `ai-search-202609`）；日期、版本号保留数字；不使用空格、中文或特殊字符。
+2. **拼出产物根目录**：
+   - 无迭代名称 → `case-lite-output/{需求slug}/`
+   - 有迭代名称 → `case-lite-output/{迭代slug}/{需求slug}/`
+3. **复用已有迭代目录**：若 `case-lite-output/{迭代slug}/` 已存在，直接复用，不要新建变体目录名。若存在语义相同但拼写不同的迭代目录（如 `ai-search-2026-09` vs `ai-search-202609`），先列给用户确认用哪一个。
+4. **旧扁平目录冲突检测**（仅在提供了迭代名称时执行）：如果 `case-lite-output/{需求slug}/` 已作为扁平目录存在，**不要自动移动，也不要静默新建**，先提示用户并等待回复：
+
+   ```
+   检测到已存在扁平产物目录：case-lite-output/{需求slug}/
+   本次指定了迭代「{迭代名称}」，目标目录为 case-lite-output/{迭代slug}/{需求slug}/
+
+   请选择：
+   - 回复「迁移」→ 将旧目录移动到迭代目录下，在已有产物基础上继续
+   - 回复「新建」→ 保留旧目录不动，在迭代目录下新建一份产物
+   ```
+
+   用户选择「迁移」后再执行移动；用户未明确回复前不要动任何已有产物。
+
+#### 1b. 初始化产物
+
+创建产物根目录，并初始化以下产物（如文件不存在则创建）：
 
 - `corpus/extra-context.md`
 - `style-ref/reference-cases.md`
@@ -153,7 +200,25 @@ case-lite-output/{slug}/
 
 初始化内容可使用简短占位说明，后续步骤再覆盖或追加。
 
-#### 1a. 递归发现 wiki 子文档 [HITL]
+**提供了迭代名称时**，还要维护 `case-lite-output/{迭代slug}/iteration-index.md`：
+
+- 文件不存在则按下方格式创建
+- 文件已存在则**追加或更新**本需求所在行，不要重写其他需求的行
+- Step 1b 写入本需求行时，caseId 填 `—`，状态填 `进行中`
+- 后续步骤中状态变化时回来更新对应行（Step 4 完成 → `用例已生成`；Step 6 写回成功 → 填入 caseId 并置为 `已写回`）
+
+```markdown
+# 迭代：{迭代名称}（{迭代slug}）
+
+| 需求 | 产物目录 | 搬山 caseId | 状态 | 更新时间 |
+|---|---|---|---|---|
+| AI审核模型变更 | ai-audit-model/ | 22841 | 已写回 | 2026-09-03 |
+| 新用户欢迎引导 | new-user-welcome-guide/ | — | 用例已生成 | 2026-09-03 |
+```
+
+状态取值：`进行中` / `用例已生成` / `已写回`。
+
+#### 1c. 递归发现 wiki 子文档 [HITL]
 
 在进入章节浏览前，对 Wiki/Docx 链接尝试发现子文档；直接 `/file/TOKEN` 的原生 Markdown 文件没有 Docx 子文档树，跳过发现并在 `chapters/child-documents.md` 记录“不适用”：
 
@@ -194,7 +259,7 @@ case-lite-output/{slug}/
 
 #### 2a. 逐文档浏览章节并完成选章
 
-对 Step 1 和 Step 1a 确认后的文档列表依次先进行**类型分流**，同一任务中允许同时包含原生 Markdown 和 Docx：
+对 Step 1 和 Step 1c 确认后的文档列表依次先进行**类型分流**，同一任务中允许同时包含原生 Markdown 和 Docx：
 
 1. **原生 Markdown 分流**：
    - `/file/TOKEN` URL：调用 `get_markdown_file_sections(url="{url}", max_level=4, preview_chars=0)`；首轮只返回章节元数据，不能读取正文。
@@ -429,6 +494,8 @@ download_board_as_image(board_tokens=["token_1"], document_id=document_id, board
 确认后，可选择先做 agent 自检，再决定是否进入回填。
 ```
 
+用户审核通过后，如果本次提供了迭代信息，将 `iteration-index.md` 中本需求的状态更新为 `用例已生成`。
+
 ### Step 5：用例检查 [HITL]
 
 在 `full.md` 生成并完成用户初审后，先主动询问：
@@ -556,7 +623,7 @@ download_board_as_image(board_tokens=["token_1"], document_id=document_id, board
 
 3. **dry-run 验证**（**必须先执行，不可跳过**）：
    ```bash
-   python {writeback.py路径} case-lite-output/{slug}/full.md \
+   python {writeback.py路径} {产物根目录}/full.md \
      --case-id {caseId} --dry-run
    ```
    脚本会执行以下检查：
@@ -569,7 +636,7 @@ download_board_as_image(board_tokens=["token_1"], document_id=document_id, board
 
 4. **用户确认后，执行写回**：
    ```bash
-   python {writeback.py路径} case-lite-output/{slug}/full.md \
+   python {writeback.py路径} {产物根目录}/full.md \
      --case-id {caseId} --modifier case-lite
    ```
    脚本自动完成：
@@ -581,6 +648,8 @@ download_board_as_image(board_tokens=["token_1"], document_id=document_id, board
 5. **产物**：
    - `writeback/node-tree.json` — 节点树 JSON
    - `writeback/writeback-log.json` — 写回日志
+
+6. **更新迭代索引**（仅在提供了迭代信息时）：写回成功后，将 `iteration-index.md` 中本需求行的 `搬山 caseId` 填为本次 caseId，状态置为 `已写回`，更新时间置为当天。写回失败或中止时不要改动索引。
 
 脚本源码：[scripts/writeback.py](scripts/writeback.py)。零外部依赖，纯 Python 标准库。
 MCP 端点可通过环境变量 `BANSHAN_MCP_ENDPOINT` 覆盖。
