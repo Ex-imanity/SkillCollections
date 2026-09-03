@@ -98,6 +98,18 @@
 
 主要产物保存在 `case-lite-output/{slug}/`，包括章节树、选定语料、参考用例、场景结构、完整用例、自检结果和写回日志。
 
+### case-reorganize
+
+`case-reorganize` 处理的是**已经存在于搬山的用例**，把过碎的用例整理成按业务链路组织的
+case：合并冗余用例、去除意义不大的边界 case、把本就该串联执行的操作收敛成一个场景。
+
+它与 `case-lite` 的输入端完全不同——`case-lite` 从飞书文档生成新用例，`case-reorganize`
+从搬山已有用例读取再重组。两者的 `full.md` 格式也不一致：`case-reorganize` 保留「前置条件」
+作为独立节点，串联在测试点与执行步骤之间，不可省略。
+
+写回支持两种模式：追加到目标 case，或替换原 case。**替换模式会调用 `deleteNode` 级联删除
+原有场景节点，不可逆**，执行前必须确认。与 `case-lite` 一样，写回前必须先 dry-run 校验节点数。
+
 ### context-resilient-task
 
 `context-resilient-task` 用 MRS（Minimum Recovery Set）把任务状态写到磁盘，避免复杂任务在会话中断、上下文压缩、agent 切换后无法继续。
@@ -155,6 +167,21 @@ Server 的 `serverInfo` 和三个 GAPM Tool 是否完整枚举。
 该 Skill 只允许调用三个 GAPM 只读查询 Tool，参数和原始结果必须保存在 Git 忽略的
 `.local/`，不会调用 `mainSearch` 或修改生产数据。详细安装、状态含义和 bridge 用法见
 `gapm-mcp-recovery/README.md`。
+
+### internal-api-cookie-auth
+
+`internal-api-cookie-auth` 解决内部 HTTPS 接口调用时的 CAS 认证问题，避免每次都让用户手动
+粘贴 session Cookie。适用于脚本或服务缺少 Cookie、会话过期、被重定向到 `cas.baijia.com` /
+`test-cas.baijia.com`、返回 HTTP 401 或 CAS 风格的 JSON code 700 等情况。
+
+它也覆盖另一个常见场景：用户从浏览器复制了一段 `copy as cURL`。此时不应照搬粘贴过来的
+Cookie，而是用新鲜 Cookie 加最小必要 header 重新组装请求——命令、bash 或 Python 形式均可。
+对 POST/PUT/PATCH/DELETE 这类有副作用的请求，重放前必须先向用户确认。
+
+适用域名限定在 `internal-ad.gaotu100.com`、`athena.baijia.com`、`dis.baijia.com` 及其
+`test-` 前缀版本。凭证不输出、不持久化。未知域名只有在用户明确授权做只读探测后才可尝试；
+HTTP 403 应视为可能的权限问题，而不是"刷新 Cookie 就能解决"的信号，禁止盲目重试写操作。
+详细流程见 `internal-api-cookie-auth/README.md`。
 
 ## 安装与使用建议
 
