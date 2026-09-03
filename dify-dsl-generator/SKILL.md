@@ -1,5 +1,6 @@
 ---
 name: dify-dsl-generator
+version: 1.0.0
 description: Generate, refactor, or review Dify workflow DSL/YML for chatflow, workflow, agent, or webhook-triggered apps. Use when translating business requirements, backend APIs, rule-based workflows, or existing Dify YAML into importable DSL; when choosing node types and graph structure; or when migrating complex repo workflows such as TCG_A/TCG_B/TCG_C into cleaner Dify designs.
 ---
 

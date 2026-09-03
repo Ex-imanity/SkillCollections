@@ -1,5 +1,6 @@
 ---
 name: case-design-strategy-skill
+version: 1.0.0
 description: Test design strategy and coverage-review guidance for requirement-based cases. Use when the user asks for 用例设计策略, 覆盖度补充, 用例评审, 边界/异常/权限/状态/埋点覆盖, telemetry/cross-end risk analysis, or when no end-to-end case generator is responsible. Also use during `case-lite` self-review when the active workflow explicitly enters coverage review / boundary-exception review. Do not trigger for `case-lite` document ingestion, chapter selection, full generation, or writeback steps.
 ---
 

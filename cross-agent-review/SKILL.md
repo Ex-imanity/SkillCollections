@@ -1,5 +1,6 @@
 ---
 name: cross-agent-review
+version: 1.0.0
 description: >-
   Use when one local AI agent (Codex or ClaudeCode) should have the OTHER local
   agent perform a review of a plan or code without changing the primary

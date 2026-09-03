@@ -1,5 +1,6 @@
 ---
 name: case-reorganize
+version: 1.0.0
 description: 将搬山中已有的测试用例整理为链路 case。支持合并冗余用例、去除边界 case、将串联操作合并为一个场景。输出 full.md 后写回搬山（替换原 case 或追加到目标 case）。当用户说"整理搬山用例"、"用例重构"、"链路case"、"合并冗余用例"时触发。
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: gapm-mcp-recovery
+version: 1.0.0
 description: Use when GAPM MCP tools are missing from Codex, gapm_agent_tools is unavailable, OAuth reports invalid_client or authentication_required, App Server shows serverInfo null or empty tools, or a GAPM log investigation appears to require restarting Codex or opening a new conversation.
 ---
 

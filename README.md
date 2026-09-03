@@ -57,15 +57,16 @@
 
 ## Skills 总览
 
-| Skill | 作用 | 适用场景 | 主要注意事项 |
-| --- | --- | --- | --- |
-| `case-design-strategy-skill` | 测试用例设计策略层，用于补强覆盖度、评审场景和设计边界/异常/权限/埋点等测试点 | 需求用例评审、覆盖度补充、事件埋点校验、跨端一致性风险分析 | 它不是端到端用例生成器；如果已经进入 `case-lite` 主流程，只在自检或覆盖度评审阶段借用其策略，不覆盖 `case-lite` 的产物格式和写回规则 |
-| `case-lite` | 小需求测试用例生成流程，从飞书文档选章到生成用例，再可选写回搬山 | 单一功能点、1-2 篇文档、无需模块拆分的小需求用例生成 | 依赖飞书文档 MCP；搬山 MCP 推荐配置；所有阶段产物必须落盘到 `case-lite-output/{slug}/`，章节选择和补充信息确认是人工检查点 |
-| `context-resilient-task` | 上下文弹性任务管理，用磁盘上的 MRS 文件恢复长期任务状态 | 多阶段开发、跨会话继续、`/clear` 后恢复、避免 agent 忘记待办或编造状态 | `task_state.md` 是 source of truth，必须原地更新；`progress.md` 和 `decisions.md` 只追加；缺少 Tier 0 文件时应先初始化 MRS |
-| `cross-agent-review` | 本机 Codex 与 ClaudeCode 互相做只读评审的双向 skill，primary 保连续性、reviewer 只读返回带证据的 verdict | 跨代理评审 handoff：Codex 写、ClaudeCode 审，或反向；计划/代码互审、防作者自漏 | 只依赖本机 `claude`+`codex` CLI（官方 plugin 仅可选 fallback）；reviewer 物理只读、fail-closed、并发 round-cap、脱敏；readiness 看真实信封不看 auth status；不用于单 agent 自审或普通 code review |
-| `dify-dsl-generator` | 生成、重构或评审 Dify workflow/chatflow/agent DSL | 把业务需求、后端接口、规则系统或已有 YAML 转为可导入的 Dify DSL | 先冻结输入输出和应用形态，再写 YAML；优先复用 `references/` 和已有示例中的验证模式；输出前检查节点类型、变量路径、edge 和结构化输出 |
-| `gapm-mcp-recovery` | 诊断并恢复 Codex 中的 GAPM MCP；当前对话未注入 Tool 时可通过 App Server bridge 直接调用 | GAPM Tool 缺失、`invalid_client` / `authentication_required`、`serverInfo` 为空、日志排查疑似需要重启 Codex | 依赖 Codex CLI、Python 3.9+ 和内部网络；OAuth 过期仍需浏览器授权；参数及原始日志只能放在 `.local/`；查询无结果不能断言未调用 |
-| `internal-api-cookie-auth` | 为受支持内部 API 获取短期 CAS Cookie，并规范认证失败后的处理 | Internal AD/UOS、Athena、Compass 的接口开发与排障，Cookie 缺失或 HTTP 401 | 仅限允许的内部域名；不输出或持久化凭证；403 视为可能的权限问题，禁止盲目重试写操作 |
+| Skill | Version | 作用 | 适用场景 | 主要注意事项 |
+| --- | --- | --- | --- | --- |
+| `case-design-strategy-skill` | 1.0.0 | 测试用例设计策略层，用于补强覆盖度、评审场景和设计边界/异常/权限/埋点等测试点 | 需求用例评审、覆盖度补充、事件埋点校验、跨端一致性风险分析 | 它不是端到端用例生成器；如果已经进入 `case-lite` 主流程，只在自检或覆盖度评审阶段借用其策略，不覆盖 `case-lite` 的产物格式和写回规则 |
+| `case-lite` | 1.1.0 | 小需求测试用例生成流程，从飞书文档选章到生成用例，再可选写回搬山 | 单一功能点、1-2 篇文档、无需模块拆分的小需求用例生成 | 依赖飞书文档 MCP；搬山 MCP 推荐配置；所有阶段产物必须落盘到 `case-lite-output/{slug}/`，章节选择和补充信息确认是人工检查点 |
+| `case-reorganize` | 1.0.0 | 将搬山中已有测试用例整理为链路 case：合并冗余用例、去除边界 case、将串联操作合并为一个场景 | 已有用例过碎、需要按业务链路重组；整理后替换原 case 或追加到目标 case | 与 `case-lite` 的区别是输入来自搬山已有用例而非文档；写回前必须 dry-run；替换模式会调用 `deleteNode` 级联删除且**不可逆**，执行前务必确认；其 `full.md` 格式保留「前置条件」独立节点，与 `case-lite` 不同 |
+| `context-resilient-task` | 1.0.0 | 上下文弹性任务管理，用磁盘上的 MRS 文件恢复长期任务状态 | 多阶段开发、跨会话继续、`/clear` 后恢复、避免 agent 忘记待办或编造状态 | `task_state.md` 是 source of truth，必须原地更新；`progress.md` 和 `decisions.md` 只追加；缺少 Tier 0 文件时应先初始化 MRS |
+| `cross-agent-review` | 1.0.0 | 本机 Codex 与 ClaudeCode 互相做只读评审的双向 skill，primary 保连续性、reviewer 只读返回带证据的 verdict | 跨代理评审 handoff：Codex 写、ClaudeCode 审，或反向；计划/代码互审、防作者自漏 | 只依赖本机 `claude`+`codex` CLI（官方 plugin 仅可选 fallback）；reviewer 物理只读、fail-closed、并发 round-cap、脱敏；readiness 看真实信封不看 auth status；不用于单 agent 自审或普通 code review |
+| `dify-dsl-generator` | 1.0.0 | 生成、重构或评审 Dify workflow/chatflow/agent DSL | 把业务需求、后端接口、规则系统或已有 YAML 转为可导入的 Dify DSL | 先冻结输入输出和应用形态，再写 YAML；优先复用 `references/` 和已有示例中的验证模式；输出前检查节点类型、变量路径、edge 和结构化输出 |
+| `gapm-mcp-recovery` | 1.0.0 | 诊断并恢复 Codex 中的 GAPM MCP；当前对话未注入 Tool 时可通过 App Server bridge 直接调用 | GAPM Tool 缺失、`invalid_client` / `authentication_required`、`serverInfo` 为空、日志排查疑似需要重启 Codex | 依赖 Codex CLI、Python 3.9+ 和内部网络；OAuth 过期仍需浏览器授权；参数及原始日志只能放在 `.local/`；查询无结果不能断言未调用 |
+| `internal-api-cookie-auth` | 1.0.0 | 为受支持内部 API 获取短期 CAS Cookie，并规范认证失败后的处理 | Internal AD/UOS、Athena、Compass 的接口开发与排障，Cookie 缺失或 HTTP 401 | 仅限允许的内部域名；不输出或持久化凭证；403 视为可能的权限问题，禁止盲目重试写操作 |
 
 ## 各 Skill 简介
 
@@ -181,3 +182,31 @@ cp -r gapm-mcp-recovery ~/.codex/skills/gapm-mcp-recovery
 - 示例、模板和脚本最好能独立运行或被快速验证，避免只停留在 prompt 描述。
 - 对外部平台的写回操作应保留 dry-run、日志或可复查产物。
 - 根目录 README 只做导航和简述，细节放回各 skill 自己的 README 或 references。
+
+## 版本与变更日志约定
+
+每个 skill 都要标注版本号并维护变更日志，方便使用者判断手上装的副本是否落后于仓库。
+
+**三处必须一致**（由 `tests/test_repo_conventions.py` 机械校验，新增 skill 自动纳入）：
+
+| 位置 | 角色 |
+| --- | --- |
+| `<skill>/SKILL.md` frontmatter 的 `version` | **唯一真相**。安装出去的副本靠它自报家门 |
+| `<skill>/CHANGELOG.md` 顶部条目 | 变更明细，必须与 frontmatter 版本一致，条目从新到旧 |
+| 根 README「Skills 总览」表的 Version 列 | 一览用 |
+
+**变更日志放独立 `CHANGELOG.md`，不要放进 `SKILL.md`。** SKILL.md 每次触发都会被完整
+加载进上下文，而变更日志只增不减且对 agent 执行任务毫无用处——放进去等于给每一次调用
+都上一道永久递增的 token 税。
+
+**版本语义按「对使用者坏了什么」判定**，不套代码 semver 的直觉：
+
+- **MAJOR** — 已有产物或用法失效，需要迁移（如产物目录结构不兼容、工作流步骤移除）
+- **MINOR** — 新增能力，向后兼容
+- **PATCH** — 修 bug、改文档、调 prompt 措辞，行为不变
+
+**规则是「版本与日志同进退」**：不是每个 commit 都要升版本，但**每次升版本必须留下日志
+条目**。这比判定「什么算重大更新」更好执行，也不会让日志出现空洞。
+
+新增 skill 时：frontmatter 写 `version: 1.0.0`，建 `CHANGELOG.md` 并写首条 `## 1.0.0 - <日期>`，
+在总览表补一行。跑 `python3 -m pytest tests/ -q` 确认。

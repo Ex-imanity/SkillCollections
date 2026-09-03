@@ -1,6 +1,18 @@
 ---
 name: internal-api-cookie-auth
-description: Handle Cookie (CAS) authentication for internal HTTPS API calls without asking users to manually paste session Cookies. Use this skill whenever a script, service, or API debugging task lacks a Cookie, reports a session expiry, redirects to cas.baijia.com or test-cas.baijia.com, returns HTTP 401, returns a CAS-style JSON code 700, or may have failed because of authentication. Also use it when the user pastes a browser "copy as cURL" command for an internal host (gaotu100.com, baijia.com): it teaches how to wrap the request in any form (command, bash, or Python) with a fresh Cookie and minimal headers instead of the pasted Cookie, and to confirm before replaying side-effecting POST/PUT/PATCH/DELETE calls. Use it before hardcoding a Cookie. Only probe an unknown host after the user authorizes a real read-only test; treat HTTP 403 as a possible authorization failure, not evidence that a Cookie refresh will help.
+version: 1.0.0
+description: >-
+  Handle Cookie (CAS) authentication for internal HTTPS API calls without asking users to
+  manually paste session Cookies. Use this skill whenever a script, service, or API
+  debugging task lacks a Cookie, reports a session expiry, redirects to cas.baijia.com or
+  test-cas.baijia.com, returns HTTP 401, returns a CAS-style JSON code 700, or may have
+  failed because of authentication. Also use it when the user pastes a browser "copy as
+  cURL" command for an internal host (gaotu100.com, baijia.com): it teaches how to wrap
+  the request in any form (command, bash, or Python) with a fresh Cookie and minimal
+  headers instead of the pasted Cookie, and to confirm before replaying side-effecting
+  POST/PUT/PATCH/DELETE calls. Use it before hardcoding a Cookie. Only probe an unknown
+  host after the user authorizes a real read-only test; treat HTTP 403 as a possible
+  authorization failure, not evidence that a Cookie refresh will help.
 ---
 
 # Internal API Cookie Authentication
