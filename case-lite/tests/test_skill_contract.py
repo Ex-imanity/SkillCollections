@@ -81,5 +81,16 @@ class CaseLiteSkillContractTest(unittest.TestCase):
         self.assertIn("/file/TOKEN", readme)
 
 
+    def test_skill_documents_nested_scene_contract(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("编号即路径", skill)
+        self.assertIn("场景分层规则", skill)
+        self.assertIn("何时拆子场景", skill)
+        # 混搭是硬约束，必须在 SKILL.md 里写明
+        self.assertIn("不允许混搭", skill)
+        # 标题级别不参与解析，必须写明以免生成时纠结层级
+        self.assertIn("标题级别只影响阅读观感", skill)
+
+
 if __name__ == "__main__":
     unittest.main()
