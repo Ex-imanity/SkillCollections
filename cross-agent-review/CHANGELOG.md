@@ -11,6 +11,12 @@
 
 规则：不是每个 commit 都要升版本，但每次升版本必须在此留下条目。
 
+## 2.1.0 - 2026-09-07
+
+- 抽出公共 `common.run_review_gate`：三向 gate 共享 lock → reserve → invoke → cost → cleanup → persist/commit 编排
+- Grok provenance 与 Codex 对称：成功须 `sessionId` **且** `usage.input_tokens/output_tokens` 非负完整对
+- 文档与回归同步（含 missing usage pair）
+
 ## 2.0.1 - 2026-09-07
 
 修复 ClaudeCode 互审 finding（F3/F1/F4/F5/F2）：

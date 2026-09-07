@@ -23,7 +23,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -34,19 +33,13 @@ from .common import (
     MODEL_FLAG,
     PROXY_ENV_KEYS,
     ReviewResult,
-    _commit_round_unlocked,
     _known_sensitive_values,
-    _reserve_attempt_unlocked,
     _safe_gate_id,
     build_reviewer_prompt,
-    check_attempt_cap,
-    emit_review_started,
     fail_closed as _fail_closed,
     gate_failure_result as _gate_failure_result,
     has_review_verdict,
-    log_cost,
-    persist_success,
-    round_cap_guard,
+    run_review_gate,
     validate_requested_model,
 )
 
@@ -484,135 +477,56 @@ def review_gate(
         )
         return ReviewResult("credential_missing", None, {}, exit_code=1)
 
-    try:
-        with round_cap_guard(marker_path, artifact_key) as decision:
-            if not decision.allowed:
-                failure_status = decision.reason or "round_cap_exceeded"
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    failure_status,
-                    f"round check refused at {decision.current}; max {decision.max_rounds}",
-                    request_prompt,
-                    sensitive_values,
-                )
-
-            argv = build_command(
-                request_prompt,
-                add_dirs,
-                max_budget_usd=max_budget_usd,
-                claude_executable=claude_executable,
-                model=requested_model,
-            )
-            attempt_decision = check_attempt_cap(marker_path, artifact_key)
-            if not attempt_decision.allowed:
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    attempt_decision.reason or "attempt_cap_exceeded",
-                    f"attempt check refused at {attempt_decision.current}; max {attempt_decision.max_rounds}",
-                    request_prompt,
-                    sensitive_values,
-                )
-            with tempfile.TemporaryDirectory(prefix="cross-agent-review-claude-") as config_dir:
-                child_env = resolve_subprocess_env(
-                    readiness,
-                    explicit_env,
-                    settings_path=settings_path,
-                    claude_config_dir=config_dir,
-                    claude_cli_identity=claude_identity,
-                )
-                attempt = _reserve_attempt_unlocked(marker_path, artifact_key)
-                emit_review_started(
-                    gate_id,
-                    artifact_key,
-                    attempt,
-                    timeout_seconds,
-                    sensitive_values,
-                )
-
-                start = time.monotonic()
-                result = run_review(
-                    argv,
-                    runner=runner,
-                    env=child_env,
-                    timeout_seconds=timeout_seconds,
-                    request_prompt=build_reviewer_prompt(request_prompt),
-                )
-            try:
-                log_cost(
-                    result.envelope,
-                    cost_log_path,
-                    gate_id,
-                    time.monotonic() - start,
-                    extra={"requested_model": requested_model},
-                )
-            except (OSError, ValueError) as exc:
-                detail = f"{type(exc).__name__}: {exc}"
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    "cost_log_failure",
-                    detail,
-                    request_prompt,
-                    sensitive_values,
-                    {"total_cost_usd": result.envelope.get("total_cost_usd")},
-                )
-
-            if result.status != "success":
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    result.status,
-                    str(result.envelope.get("result", "no result")),
-                    request_prompt,
-                    sensitive_values,
-                    result.envelope,
-                )
-
-            if output_path:
-                try:
-                    persist_success(
-                        output_path,
-                        gate_id=gate_id,
-                        result=result,
-                        sensitive_values=sensitive_values,
-                    )
-                except (OSError, ValueError) as exc:
-                    detail = f"{type(exc).__name__}: {exc}"
-                    return gate_failure_result(
-                        handoff_dir,
-                        gate_id,
-                        "persistence_failure",
-                        detail,
-                        request_prompt,
-                        sensitive_values,
-                        {"total_cost_usd": result.envelope.get("total_cost_usd")},
-                    )
-            try:
-                _commit_round_unlocked(marker_path, artifact_key)
-            except (OSError, ValueError) as exc:
-                detail = f"{type(exc).__name__}: {exc}"
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    "round_state_failure",
-                    detail,
-                    request_prompt,
-                    sensitive_values,
-                    {"total_cost_usd": result.envelope.get("total_cost_usd")},
-                )
-            return result
-    except (OSError, ValueError) as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-        return gate_failure_result(
-            handoff_dir,
-            gate_id,
-            "setup_failure",
-            detail,
+    def invoke(_state: object) -> ReviewResult:
+        argv = build_command(
             request_prompt,
-            sensitive_values,
+            add_dirs,
+            max_budget_usd=max_budget_usd,
+            claude_executable=claude_executable,
+            model=requested_model,
         )
+        with tempfile.TemporaryDirectory(prefix="cross-agent-review-claude-") as config_dir:
+            child_env = resolve_subprocess_env(
+                readiness,
+                explicit_env,
+                settings_path=settings_path,
+                claude_config_dir=config_dir,
+                claude_cli_identity=claude_identity,
+            )
+            return run_review(
+                argv,
+                runner=runner,
+                env=child_env,
+                timeout_seconds=timeout_seconds,
+                request_prompt=build_reviewer_prompt(request_prompt),
+            )
+
+    def failure_detail(result: ReviewResult) -> str:
+        value = result.envelope.get("result") if isinstance(result.envelope, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value
+        return "no result"
+
+    def cost_extra(_result: ReviewResult) -> dict:
+        # Claude cost log historically omits a provider key and usage block.
+        return {}
+
+    return run_review_gate(
+        request_prompt=request_prompt,
+        handoff_dir=handoff_dir,
+        marker_path=marker_path,
+        gate_id=gate_id,
+        artifact_key=artifact_key,
+        cost_log_path=cost_log_path,
+        sensitive_values=sensitive_values,
+        reviewer=_REVIEWER_NAME,
+        invoke=invoke,
+        output_path=output_path,
+        timeout_seconds=timeout_seconds,
+        requested_model=requested_model,
+        failure_detail=failure_detail,
+        cost_extra=cost_extra,
+    )
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a fail-closed any-primary -> ClaudeCode review gate")

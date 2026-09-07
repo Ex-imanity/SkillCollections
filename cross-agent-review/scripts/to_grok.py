@@ -24,25 +24,18 @@ import os
 import shutil
 import subprocess
 import tempfile
-import time
 from typing import Callable, Optional
 
 from .common import (
     MODEL_FLAG,
     ReviewResult,
-    _commit_round_unlocked,
     _known_sensitive_values,
-    _reserve_attempt_unlocked,
     _safe_gate_id,
     build_reviewer_prompt,
-    check_attempt_cap,
-    emit_review_started,
     fail_closed as _fail_closed,
     gate_failure_result as _gate_failure_result,
     has_review_verdict,
-    log_cost,
-    persist_success,
-    round_cap_guard,
+    run_review_gate,
     validate_requested_model,
 )
 
@@ -212,9 +205,35 @@ def _envelope_stop_reason(envelope: dict) -> Optional[str]:
     return None
 
 
+def _valid_usage_token_pair(usage: object) -> bool:
+    """True when usage carries a complete non-negative input/output token pair."""
+    if not isinstance(usage, dict):
+        return False
+    for key in ("input_tokens", "output_tokens"):
+        value = usage.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return False
+    return True
+
+
 def _valid_grok_provenance(envelope: dict) -> bool:
-    """Require a real session id on success; cost may be null when withheld."""
-    return _envelope_session_id(envelope) is not None
+    """Require session id + token pair, symmetric with the Codex route.
+
+    Cost may still be null when the provider withholds USD.
+    """
+    return (
+        _envelope_session_id(envelope) is not None
+        and _valid_usage_token_pair(envelope.get("usage"))
+    )
+
+
+def _grok_provenance_detail(envelope: dict) -> str:
+    missing = []
+    if _envelope_session_id(envelope) is None:
+        missing.append("sessionId")
+    if not _valid_usage_token_pair(envelope.get("usage")):
+        missing.append("usage.input_tokens/output_tokens")
+    return f"grok provenance incomplete: missing verified {missing}"
 
 
 def _valid_grok_completion(envelope: dict) -> bool:
@@ -298,7 +317,7 @@ def run_grok_review(
     total_cost = _normalize_total_cost(envelope.get("total_cost_usd"))
 
     if status == "provenance_failure":
-        detail = "grok provenance incomplete: missing verified sessionId"
+        detail = _grok_provenance_detail(envelope)
     elif status == "completion_failure":
         observed = stop_reason if stop_reason is not None else "<missing>"
         detail = f"grok completion incomplete: stopReason must be end_turn, got {observed!r}"
@@ -420,165 +439,48 @@ def grok_review_gate(
             sensitive_values,
         )
 
-    try:
-        with round_cap_guard(marker_path, artifact_key) as decision:
-            if not decision.allowed:
-                failure_status = decision.reason or "round_cap_exceeded"
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    failure_status,
-                    f"round check refused at {decision.current}; max {decision.max_rounds}",
-                    request_prompt,
-                    sensitive_values,
-                )
+    def prepare(marker_dir: str) -> str:
+        return _create_prompt_file(marker_dir, build_reviewer_prompt(request_prompt))
 
-            marker_dir = os.path.dirname(os.path.abspath(marker_path)) or "."
-            os.makedirs(marker_dir, exist_ok=True)
-            prompt_path = None
-            log_error = None
-            cleanup_error = None
-            try:
-                prompt_path = _create_prompt_file(
-                    marker_dir, build_reviewer_prompt(request_prompt)
-                )
-                argv = build_grok_command(
-                    prompt_file=prompt_path,
-                    cwd=cd,
-                    model=requested_model,
-                )
-                attempt_decision = check_attempt_cap(marker_path, artifact_key)
-                if not attempt_decision.allowed:
-                    return gate_failure_result(
-                        handoff_dir,
-                        gate_id,
-                        attempt_decision.reason or "attempt_cap_exceeded",
-                        f"attempt check refused at {attempt_decision.current}; max {attempt_decision.max_rounds}",
-                        request_prompt,
-                        sensitive_values,
-                    )
-                attempt = _reserve_attempt_unlocked(marker_path, artifact_key)
-                emit_review_started(
-                    gate_id,
-                    artifact_key,
-                    attempt,
-                    timeout_seconds,
-                    sensitive_values,
-                )
-                start = time.monotonic()
-                child_env = dict(os.environ)
-                if explicit_env:
-                    for key, value in explicit_env.items():
-                        if value is not None:
-                            child_env[key] = value
-                result = run_grok_review(
-                    argv,
-                    runner=runner,
-                    env=child_env,
-                    timeout_seconds=timeout_seconds,
-                )
-                usage = result.envelope.get("usage")
-                try:
-                    log_cost(
-                        result.envelope,
-                        cost_log_path,
-                        gate_id,
-                        time.monotonic() - start,
-                        extra={
-                            "provider": "grok",
-                            "requested_model": requested_model,
-                            **({"usage": usage} if usage is not None else {}),
-                        },
-                    )
-                except (OSError, ValueError) as exc:
-                    log_error = exc
-            finally:
-                if prompt_path is not None:
-                    try:
-                        if os.path.exists(prompt_path):
-                            os.unlink(prompt_path)
-                    except OSError as exc:
-                        cleanup_error = exc
-
-            if log_error is not None:
-                detail = f"{type(log_error).__name__}: {log_error}"
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    "cost_log_failure",
-                    detail,
-                    request_prompt,
-                    sensitive_values,
-                    {"total_cost_usd": result.envelope.get("total_cost_usd")},
-                )
-
-            if result.status != "success":
-                # Temp-file cleanup failure is secondary once the review already failed.
-                if cleanup_error is not None:
-                    result.envelope["cleanup_warning"] = (
-                        f"{type(cleanup_error).__name__}: {cleanup_error}"
-                    )
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    result.status,
-                    str(result.envelope.get("detail", "no result")),
-                    request_prompt,
-                    sensitive_values,
-                    result.envelope,
-                )
-
-            # A verified paid review must not be discarded solely because the
-            # temporary prompt file could not be unlinked.
-            if cleanup_error is not None:
-                result.envelope["cleanup_warning"] = (
-                    f"{type(cleanup_error).__name__}: {cleanup_error}"
-                )
-
-            if output_path:
-                try:
-                    persist_success(
-                        output_path,
-                        gate_id=gate_id,
-                        result=result,
-                        sensitive_values=sensitive_values,
-                        reviewer=_REVIEWER_NAME,
-                    )
-                except (OSError, ValueError) as exc:
-                    detail = f"{type(exc).__name__}: {exc}"
-                    return gate_failure_result(
-                        handoff_dir,
-                        gate_id,
-                        "persistence_failure",
-                        detail,
-                        request_prompt,
-                        sensitive_values,
-                        {"total_cost_usd": result.envelope.get("total_cost_usd")},
-                    )
-            try:
-                _commit_round_unlocked(marker_path, artifact_key)
-            except (OSError, ValueError) as exc:
-                detail = f"{type(exc).__name__}: {exc}"
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    "round_state_failure",
-                    detail,
-                    request_prompt,
-                    sensitive_values,
-                    {"total_cost_usd": result.envelope.get("total_cost_usd")},
-                )
-            return result
-    except (OSError, ValueError) as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-        return gate_failure_result(
-            handoff_dir,
-            gate_id,
-            "setup_failure",
-            detail,
-            request_prompt,
-            sensitive_values,
+    def invoke(prompt_path: object) -> ReviewResult:
+        argv = build_grok_command(
+            prompt_file=str(prompt_path),
+            cwd=cd,
+            model=requested_model,
         )
+        child_env = dict(os.environ)
+        if explicit_env:
+            for key, value in explicit_env.items():
+                if value is not None:
+                    child_env[key] = value
+        return run_grok_review(
+            argv,
+            runner=runner,
+            env=child_env,
+            timeout_seconds=timeout_seconds,
+        )
+
+    def cleanup(prompt_path: object) -> None:
+        if isinstance(prompt_path, str) and os.path.exists(prompt_path):
+            os.unlink(prompt_path)
+
+    return run_review_gate(
+        request_prompt=request_prompt,
+        handoff_dir=handoff_dir,
+        marker_path=marker_path,
+        gate_id=gate_id,
+        artifact_key=artifact_key,
+        cost_log_path=cost_log_path,
+        sensitive_values=sensitive_values,
+        reviewer=_REVIEWER_NAME,
+        invoke=invoke,
+        output_path=output_path,
+        timeout_seconds=timeout_seconds,
+        requested_model=requested_model,
+        provider="grok",
+        prepare=prepare,
+        cleanup=cleanup,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -19,24 +19,17 @@ import os
 import shutil
 import subprocess
 import tempfile
-import time
 from typing import Callable, Optional
 
 from .common import (
     ReviewResult,
-    _commit_round_unlocked,
     _known_sensitive_values,
-    _reserve_attempt_unlocked,
     _safe_gate_id,
-    check_attempt_cap,
-    emit_review_started,
     fail_closed as _fail_closed,
     gate_failure_result as _gate_failure_result,
-    log_cost,
     MODEL_FLAG,
     build_reviewer_prompt,
-    persist_success,
-    round_cap_guard,
+    run_review_gate,
     validate_requested_model,
 )
 
@@ -427,156 +420,44 @@ def codex_review_gate(
             sensitive_values,
         )
 
-    try:
-        with round_cap_guard(marker_path, artifact_key) as decision:
-            if not decision.allowed:
-                failure_status = decision.reason or "round_cap_exceeded"
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    failure_status,
-                    f"round check refused at {decision.current}; max {decision.max_rounds}",
-                    request_prompt,
-                    sensitive_values,
-                )
+    def prepare(marker_dir: str) -> str:
+        return _create_last_message_file(marker_dir)
 
-            marker_dir = os.path.dirname(os.path.abspath(marker_path)) or "."
-            os.makedirs(marker_dir, exist_ok=True)
-            last_message_path = _create_last_message_file(marker_dir)
-            log_error = None
-            cleanup_error = None
-            try:
-                argv = build_codex_command(
-                    cd=cd,
-                    last_message_path=last_message_path,
-                    model=requested_model,
-                )
-                attempt_decision = check_attempt_cap(marker_path, artifact_key)
-                if not attempt_decision.allowed:
-                    return gate_failure_result(
-                        handoff_dir,
-                        gate_id,
-                        attempt_decision.reason or "attempt_cap_exceeded",
-                        f"attempt check refused at {attempt_decision.current}; max {attempt_decision.max_rounds}",
-                        request_prompt,
-                        sensitive_values,
-                    )
-                attempt = _reserve_attempt_unlocked(marker_path, artifact_key)
-                emit_review_started(
-                    gate_id,
-                    artifact_key,
-                    attempt,
-                    timeout_seconds,
-                    sensitive_values,
-                )
-                start = time.monotonic()
-                result = run_codex_review(
-                    argv,
-                    last_message_path,
-                    runner=runner,
-                    timeout_seconds=timeout_seconds,
-                    prompt=build_reviewer_prompt(request_prompt),
-                )
-                usage = result.envelope.get("usage")
-                try:
-                    log_cost(
-                        result.envelope,
-                        cost_log_path,
-                        gate_id,
-                        time.monotonic() - start,
-                        extra={
-                            "provider": "codex",
-                            "requested_model": requested_model,
-                            **({"usage": usage} if usage is not None else {}),
-                        },
-                    )
-                except (OSError, ValueError) as exc:
-                    log_error = exc
-            finally:
-                try:
-                    if os.path.exists(last_message_path):
-                        os.unlink(last_message_path)
-                except OSError as exc:
-                    cleanup_error = exc
-
-            if log_error is not None:
-                detail = f"{type(log_error).__name__}: {log_error}"
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    "cost_log_failure",
-                    detail,
-                    request_prompt,
-                    sensitive_values,
-                    {"total_cost_usd": result.envelope.get("total_cost_usd")},
-                )
-
-            if result.status != "success":
-                if cleanup_error is not None:
-                    result.envelope["cleanup_warning"] = (
-                        f"{type(cleanup_error).__name__}: {cleanup_error}"
-                    )
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    result.status,
-                    str(result.envelope.get("detail", "no result")),
-                    request_prompt,
-                    sensitive_values,
-                    result.envelope,
-                )
-
-            # A verified review must not be discarded solely because the temp
-            # last-message file could not be unlinked.
-            if cleanup_error is not None:
-                result.envelope["cleanup_warning"] = (
-                    f"{type(cleanup_error).__name__}: {cleanup_error}"
-                )
-
-            if output_path:
-                try:
-                    persist_success(
-                        output_path,
-                        gate_id=gate_id,
-                        result=result,
-                        sensitive_values=sensitive_values,
-                        reviewer=_REVIEWER_NAME,
-                    )
-                except (OSError, ValueError) as exc:
-                    detail = f"{type(exc).__name__}: {exc}"
-                    return gate_failure_result(
-                        handoff_dir,
-                        gate_id,
-                        "persistence_failure",
-                        detail,
-                        request_prompt,
-                        sensitive_values,
-                        {"total_cost_usd": result.envelope.get("total_cost_usd")},
-                    )
-            try:
-                _commit_round_unlocked(marker_path, artifact_key)
-            except (OSError, ValueError) as exc:
-                detail = f"{type(exc).__name__}: {exc}"
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    "round_state_failure",
-                    detail,
-                    request_prompt,
-                    sensitive_values,
-                    {"total_cost_usd": result.envelope.get("total_cost_usd")},
-                )
-            return result
-    except (OSError, ValueError) as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-        return gate_failure_result(
-            handoff_dir,
-            gate_id,
-            "setup_failure",
-            detail,
-            request_prompt,
-            sensitive_values,
+    def invoke(last_message_path: object) -> ReviewResult:
+        argv = build_codex_command(
+            cd=cd,
+            last_message_path=str(last_message_path),
+            model=requested_model,
         )
+        return run_codex_review(
+            argv,
+            str(last_message_path),
+            runner=runner,
+            timeout_seconds=timeout_seconds,
+            prompt=build_reviewer_prompt(request_prompt),
+        )
+
+    def cleanup(last_message_path: object) -> None:
+        if isinstance(last_message_path, str) and os.path.exists(last_message_path):
+            os.unlink(last_message_path)
+
+    return run_review_gate(
+        request_prompt=request_prompt,
+        handoff_dir=handoff_dir,
+        marker_path=marker_path,
+        gate_id=gate_id,
+        artifact_key=artifact_key,
+        cost_log_path=cost_log_path,
+        sensitive_values=sensitive_values,
+        reviewer=_REVIEWER_NAME,
+        invoke=invoke,
+        output_path=output_path,
+        timeout_seconds=timeout_seconds,
+        requested_model=requested_model,
+        provider="codex",
+        prepare=prepare,
+        cleanup=cleanup,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -18,7 +18,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 # Cross-platform exclusive file locking. `fcntl` is POSIX-only and `msvcrt` is
 # Windows-only, so we bind whichever exists and expose one blocking primitive.
@@ -542,3 +542,220 @@ def log_cost(
     os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as fh:
         fh.write(line + "\n")
+
+
+# --- shared locked-gate orchestration ----------------------------------------
+
+
+def _default_failure_detail(result: ReviewResult) -> str:
+    envelope = result.envelope if isinstance(result.envelope, dict) else {}
+    for key in ("detail", "result", "message"):
+        value = envelope.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return "no result"
+
+
+def _default_cost_extra(result: ReviewResult) -> dict:
+    extra: dict = {}
+    usage = result.envelope.get("usage") if isinstance(result.envelope, dict) else None
+    if usage is not None:
+        extra["usage"] = usage
+    return extra
+
+
+def run_review_gate(
+    *,
+    request_prompt: str,
+    handoff_dir: str,
+    marker_path: str,
+    gate_id: str,
+    artifact_key: str,
+    cost_log_path: str,
+    sensitive_values: list,
+    reviewer: str,
+    invoke: Callable[[Any], ReviewResult],
+    output_path: Optional[str] = None,
+    timeout_seconds: float = 600,
+    requested_model: Optional[str] = None,
+    provider: Optional[str] = None,
+    prepare: Optional[Callable[[str], Any]] = None,
+    cleanup: Optional[Callable[[Any], None]] = None,
+    failure_detail: Optional[Callable[[ReviewResult], str]] = None,
+    cost_extra: Optional[Callable[[ReviewResult], dict]] = None,
+) -> ReviewResult:
+    """Shared locked orchestration for any reviewer peer.
+
+    Callers finish peer-specific setup (CLI availability, credentials, model
+    preflight), then hand off the paid path here:
+
+    round-cap lock → prepare(marker_dir) → attempt reserve → ``review_started``
+    → ``invoke(state)`` → cost log → optional cleanup → persist/commit.
+
+    ``prepare`` may return opaque state (temp paths, handles). ``cleanup`` runs
+    in ``finally`` and must not raise for success to be discarded: cleanup
+    errors become ``cleanup_warning`` on a verified review. ``invoke`` owns the
+    reviewer subprocess and classification.
+    """
+    detail_of = failure_detail or _default_failure_detail
+    extra_of = cost_extra or _default_cost_extra
+    try:
+        with round_cap_guard(marker_path, artifact_key) as decision:
+            if not decision.allowed:
+                failure_status = decision.reason or "round_cap_exceeded"
+                return gate_failure_result(
+                    handoff_dir,
+                    gate_id,
+                    failure_status,
+                    f"round check refused at {decision.current}; max {decision.max_rounds}",
+                    request_prompt,
+                    sensitive_values,
+                    reviewer=reviewer,
+                )
+
+            marker_dir = os.path.dirname(os.path.abspath(marker_path)) or "."
+            os.makedirs(marker_dir, exist_ok=True)
+            state: Any = None
+            log_error = None
+            cleanup_error = None
+            result: Optional[ReviewResult] = None
+            try:
+                if prepare is not None:
+                    state = prepare(marker_dir)
+                attempt_decision = check_attempt_cap(marker_path, artifact_key)
+                if not attempt_decision.allowed:
+                    return gate_failure_result(
+                        handoff_dir,
+                        gate_id,
+                        attempt_decision.reason or "attempt_cap_exceeded",
+                        (
+                            f"attempt check refused at {attempt_decision.current}; "
+                            f"max {attempt_decision.max_rounds}"
+                        ),
+                        request_prompt,
+                        sensitive_values,
+                        reviewer=reviewer,
+                    )
+                attempt = _reserve_attempt_unlocked(marker_path, artifact_key)
+                emit_review_started(
+                    gate_id,
+                    artifact_key,
+                    attempt,
+                    timeout_seconds,
+                    sensitive_values,
+                )
+                start = time.monotonic()
+                result = invoke(state)
+                extra: dict = {"requested_model": requested_model}
+                if provider is not None:
+                    extra["provider"] = provider
+                extra.update(extra_of(result))
+                try:
+                    log_cost(
+                        result.envelope,
+                        cost_log_path,
+                        gate_id,
+                        time.monotonic() - start,
+                        extra=extra,
+                    )
+                except (OSError, ValueError) as exc:
+                    log_error = exc
+            finally:
+                if cleanup is not None:
+                    try:
+                        cleanup(state)
+                    except OSError as exc:
+                        cleanup_error = exc
+
+            if result is None:
+                return gate_failure_result(
+                    handoff_dir,
+                    gate_id,
+                    "setup_failure",
+                    "review invoke did not return a result",
+                    request_prompt,
+                    sensitive_values,
+                    reviewer=reviewer,
+                )
+
+            if log_error is not None:
+                detail = f"{type(log_error).__name__}: {log_error}"
+                return gate_failure_result(
+                    handoff_dir,
+                    gate_id,
+                    "cost_log_failure",
+                    detail,
+                    request_prompt,
+                    sensitive_values,
+                    {"total_cost_usd": result.envelope.get("total_cost_usd")},
+                    reviewer=reviewer,
+                )
+
+            if result.status != "success":
+                if cleanup_error is not None and isinstance(result.envelope, dict):
+                    result.envelope["cleanup_warning"] = (
+                        f"{type(cleanup_error).__name__}: {cleanup_error}"
+                    )
+                return gate_failure_result(
+                    handoff_dir,
+                    gate_id,
+                    result.status,
+                    detail_of(result),
+                    request_prompt,
+                    sensitive_values,
+                    result.envelope,
+                    reviewer=reviewer,
+                )
+
+            if cleanup_error is not None and isinstance(result.envelope, dict):
+                result.envelope["cleanup_warning"] = (
+                    f"{type(cleanup_error).__name__}: {cleanup_error}"
+                )
+
+            if output_path:
+                try:
+                    persist_success(
+                        output_path,
+                        gate_id=gate_id,
+                        result=result,
+                        sensitive_values=sensitive_values,
+                        reviewer=reviewer,
+                    )
+                except (OSError, ValueError) as exc:
+                    detail = f"{type(exc).__name__}: {exc}"
+                    return gate_failure_result(
+                        handoff_dir,
+                        gate_id,
+                        "persistence_failure",
+                        detail,
+                        request_prompt,
+                        sensitive_values,
+                        {"total_cost_usd": result.envelope.get("total_cost_usd")},
+                        reviewer=reviewer,
+                    )
+            try:
+                _commit_round_unlocked(marker_path, artifact_key)
+            except (OSError, ValueError) as exc:
+                detail = f"{type(exc).__name__}: {exc}"
+                return gate_failure_result(
+                    handoff_dir,
+                    gate_id,
+                    "round_state_failure",
+                    detail,
+                    request_prompt,
+                    sensitive_values,
+                    {"total_cost_usd": result.envelope.get("total_cost_usd")},
+                    reviewer=reviewer,
+                )
+            return result
+    except (OSError, ValueError) as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        return gate_failure_result(
+            handoff_dir,
+            gate_id,
+            "setup_failure",
+            detail,
+            request_prompt,
+            sensitive_values,
+            reviewer=reviewer,
+        )

@@ -1,6 +1,6 @@
 ---
 name: cross-agent-review
-version: 2.0.1
+version: 2.1.0
 description: >-
   Use when one local AI agent (Codex, ClaudeCode, or Grok) should have a DIFFERENT
   local agent perform a review of a plan or code without changing the primary
@@ -32,7 +32,7 @@ from that directory so `scripts/` resolves as a Python package.
 - Protocol: `references/cross-agent-review-protocol.md`
 - Base checklist: `references/codex-primary-claudecode-review-loop.md`
 - ClaudeCode→Codex optional plugin mapping: `references/claude-to-codex-mapping.md`
-- Shared protocol runtime: `scripts/common.py`
+- Shared protocol runtime: `scripts/common.py` (incl. `run_review_gate`)
 - Claude reviewer adapter (any primary → ClaudeCode): `scripts/to_claude.py`
 - Codex reviewer adapter (any primary → Codex): `scripts/to_codex.py`
 - Grok reviewer adapter (any primary → Grok): `scripts/to_grok.py`

@@ -1280,6 +1280,27 @@ class GrokReviewerTests(unittest.TestCase):
         self.assertEqual("provenance_failure", result.status)
         self.assertIn("sessionId", result.envelope["detail"])
 
+
+    def test_grok_missing_usage_pair_is_provenance_failure(self) -> None:
+        def runner(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=["grok"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "text": "APPROVE",
+                        "sessionId": "sess-no-usage",
+                        "stopReason": "end_turn",
+                        "total_cost_usd": 0.01,
+                    }
+                ),
+                stderr="",
+            )
+
+        result = to_grok.run_grok_review(["grok"], runner=runner, timeout_seconds=1)
+        self.assertEqual("provenance_failure", result.status)
+        self.assertIn("usage.input_tokens/output_tokens", result.envelope["detail"])
+
     def test_grok_partial_cost_is_null_not_zero(self) -> None:
         def runner(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(
@@ -1290,6 +1311,7 @@ class GrokReviewerTests(unittest.TestCase):
                         "text": "APPROVE",
                         "sessionId": "sess-partial",
                         "stopReason": "end_turn",
+                        "usage": {"input_tokens": 1, "output_tokens": 1},
                         # Non-numeric cost must stay null — never fabricate 0.
                         "total_cost_usd": "unknown",
                     }
@@ -1423,6 +1445,7 @@ class GrokReviewerTests(unittest.TestCase):
                         "text": "APPROVE",
                         "sessionId": "sess-trunc",
                         "stopReason": "max_tokens",
+                        "usage": {"input_tokens": 1, "output_tokens": 1},
                         "total_cost_usd": 0.01,
                     }
                 ),
@@ -1441,6 +1464,7 @@ class GrokReviewerTests(unittest.TestCase):
                     "text": "APPROVE",
                     "sessionId": "sess-banner",
                     "stopReason": "end_turn",
+                    "usage": {"input_tokens": 2, "output_tokens": 2},
                     "total_cost_usd": 0.02,
                 }
             )
@@ -1467,6 +1491,7 @@ class GrokReviewerTests(unittest.TestCase):
                             "text": "APPROVE",
                             "sessionId": "sess-cost",
                             "stopReason": "end_turn",
+                            "usage": {"input_tokens": 1, "output_tokens": 1},
                             "total_cost_usd": raw,
                         },
                         allow_nan=True,
@@ -1488,6 +1513,7 @@ class GrokReviewerTests(unittest.TestCase):
                         "text": "APPROVE",
                         "sessionId": "sess-cleanup",
                         "stopReason": "end_turn",
+                        "usage": {"input_tokens": 3, "output_tokens": 3},
                         "total_cost_usd": 0.03,
                     }
                 ),

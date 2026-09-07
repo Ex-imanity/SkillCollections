@@ -18,7 +18,7 @@ cross-agent-review/
 │   ├── codex-primary-claudecode-review-loop.md # 基础协作清单（角色/停止条件/失败模式；agent 映射可换）
 │   └── claude-to-codex-mapping.md              # 可选官方 Codex plugin 映射（fallback）
 ├── scripts/                 # 作为 Python 包运行：`python -m scripts.<module>`
-    ├── common.py                    # 共享 fail-closed 协议运行时
+    ├── common.py                    # 共享 fail-closed 协议运行时 + run_review_gate 编排
     ├── to_claude.py                  # 任意 primary→ClaudeCode（claude -p）
     ├── to_codex.py                   # 任意 primary→Codex（codex exec 全权限无确认）
     ├── to_grok.py                    # 任意 primary→Grok（grok --prompt-file headless）
@@ -81,7 +81,7 @@ python -m scripts.to_grok <正常的必填 gate 参数> --model grok-4.5
 - `<marker-path>.lock` 是正常常驻的 flock 协调文件，不保存计数；它在正常结束后仍存在，并非 gate 正在运行或已失败的证据（not evidence of an active or failed gate）。将 marker 与 lock 放在忽略的 task-state 路径下；只有 marker JSON 损坏时才先保留证据、再手动删除 marker，gate 运行期间不要删除 lock。
 - attempt 已持久化预留、且 reviewer 子进程尚未启动时，所有 adapter 都会向 stderr 输出一条脱敏的 `review_started` JSON；它只说明 gate 已开始，最终结构化结果仍在 stdout。
 - 任何非成功 → fail closed 到**脱敏** durable handoff；禁止递归互审。
-- Codex 成功需真实 session/thread id + 真实非负 token 对，否则 fail closed；Grok 成功需真实 `sessionId` + `stopReason=end_turn` + 带标准 verdict 的非空 `text`；缺或非有限 USD 记 JSON `null`，绝不伪造 0。
+- Codex 成功需真实 session/thread id + 真实非负 token 对，否则 fail closed；Grok 成功需真实 `sessionId` + `usage` token 对 + `stopReason=end_turn` + 带标准 verdict 的非空 `text`；缺或非有限 USD 记 JSON `null`，绝不伪造 0。
 - 只持久化经校验的非空 reviewer 输出；落盘前对已知 endpoint/token 值与密钥模式脱敏。
 
 ## 依赖
