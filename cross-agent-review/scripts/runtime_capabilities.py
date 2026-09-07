@@ -10,9 +10,12 @@ import subprocess
 from typing import Callable, Optional
 
 
+# review_directions name the reviewer-side adapter module a primary can launch.
+# Adapters are primary-agnostic reviewer bridges named to_<peer>.
 _AGENT_CLI_CATALOG = (
-    ("claude", True, ("codex_to_claude",)),
-    ("codex", True, ("claude_to_codex",)),
+    ("claude", True, ("to_claude",)),
+    ("codex", True, ("to_codex",)),
+    ("grok", True, ("to_grok",)),
     ("gemini", False, ()),
     ("aider", False, ()),
     ("opencode", False, ()),
@@ -59,7 +62,7 @@ def _probe_claude_max_budget(
     with the same PATH-only environment as the version probe.
     """
     try:
-        from .codex_to_claude import claude_supports_max_budget
+        from .to_claude import claude_supports_max_budget
     except Exception:  # pragma: no cover - defensive: doctor must still report
         return None
     return claude_supports_max_budget(

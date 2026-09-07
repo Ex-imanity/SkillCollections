@@ -1,5 +1,4 @@
-"""Cross-agent review adapters (Codex <-> ClaudeCode).
+"""Cross-agent review adapters (to_claude / to_codex / to_grok).
 
-See docs/plans/2026-07-22-cross-agent-review-skill.md and
-docs/workflows/cross-agent-review-protocol.md.
+Shared protocol runtime: `common`. Public reviewer bridges: `to_*`.
 """

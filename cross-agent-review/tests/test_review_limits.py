@@ -16,7 +16,7 @@ from unittest import mock
 SKILL_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_DIR))
 
-from scripts import claude_to_codex, codex_to_claude
+from scripts import common, to_claude, to_codex, to_grok
 
 
 class ReviewLimitTests(unittest.TestCase):
@@ -59,11 +59,11 @@ class ReviewLimitTests(unittest.TestCase):
             captured_stderr = io.StringIO()
 
             with (
-                mock.patch.object(codex_to_claude, "claude_available", return_value=True),
+                mock.patch.object(to_claude, "claude_available", return_value=True),
                 contextlib.redirect_stderr(captured_stderr),
             ):
                 request_prompt = "Review the artifact and return a verdict."
-                result = codex_to_claude.review_gate(
+                result = to_claude.review_gate(
                     request_prompt=request_prompt,
                     add_dirs=[str(root)],
                     handoff_dir=str(root / "handoffs"),
@@ -124,10 +124,10 @@ class ReviewLimitTests(unittest.TestCase):
             captured_stderr = io.StringIO()
 
             with (
-                mock.patch.object(claude_to_codex, "codex_available", return_value=True),
+                mock.patch.object(to_codex, "codex_available", return_value=True),
                 contextlib.redirect_stderr(captured_stderr),
             ):
-                result = claude_to_codex.codex_review_gate(
+                result = to_codex.codex_review_gate(
                     request_prompt="Review the artifact and return a verdict.",
                     cd=str(root),
                     handoff_dir=str(root / "handoffs"),
@@ -219,7 +219,7 @@ class ReviewLimitTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = codex_to_claude.review_gate(
+            result = to_claude.review_gate(
                 request_prompt="Review the artifact and return a verdict.",
                 add_dirs=[str(root)],
                 handoff_dir=str(root / "handoffs"),
@@ -259,12 +259,12 @@ class ReviewLimitTests(unittest.TestCase):
             )
 
             with mock.patch.object(
-                codex_to_claude,
+                to_claude,
                 "claude_available",
                 return_value=False,
                 create=True,
             ):
-                result = codex_to_claude.review_gate(
+                result = to_claude.review_gate(
                     request_prompt="Review the artifact and return a verdict.",
                     add_dirs=[str(root)],
                     handoff_dir=str(root / "handoffs"),
@@ -332,10 +332,10 @@ class ReviewLimitTests(unittest.TestCase):
                 "CLAUDE_AGENT_SDK_VERSION": "0.3.218",
             }
             with (
-                mock.patch.object(codex_to_claude, "claude_available", return_value=True),
-                mock.patch.dict(codex_to_claude.os.environ, inherited_identity),
+                mock.patch.object(to_claude, "claude_available", return_value=True),
+                mock.patch.dict(to_claude.os.environ, inherited_identity),
             ):
-                result = codex_to_claude.review_gate(
+                result = to_claude.review_gate(
                     request_prompt="Review the artifact and return a verdict.",
                     add_dirs=[str(root)],
                     handoff_dir=str(root / "handoffs"),
@@ -402,10 +402,10 @@ class ReviewLimitTests(unittest.TestCase):
             )
 
             with (
-                mock.patch.object(codex_to_claude, "claude_available", return_value=True),
-                mock.patch.object(codex_to_claude.shutil, "which", return_value="/opt/claude"),
+                mock.patch.object(to_claude, "claude_available", return_value=True),
+                mock.patch.object(to_claude.shutil, "which", return_value="/opt/claude"),
             ):
-                result = codex_to_claude.review_gate(
+                result = to_claude.review_gate(
                     request_prompt="Review the artifact and return a verdict.",
                     add_dirs=[str(root)],
                     handoff_dir=str(root / "handoffs"),
@@ -451,10 +451,10 @@ class ReviewLimitTests(unittest.TestCase):
                 )
 
             with (
-                mock.patch.object(codex_to_claude, "claude_available", return_value=True),
-                mock.patch.object(codex_to_claude.shutil, "which", return_value="/opt/claude"),
+                mock.patch.object(to_claude, "claude_available", return_value=True),
+                mock.patch.object(to_claude.shutil, "which", return_value="/opt/claude"),
             ):
-                result = codex_to_claude.review_gate(
+                result = to_claude.review_gate(
                     request_prompt="Review the artifact and return a verdict.",
                     add_dirs=[str(root)],
                     handoff_dir=str(root / "handoffs"),
@@ -475,11 +475,11 @@ class ReviewLimitTests(unittest.TestCase):
             self.assertFalse((root / "rounds.json").exists())
 
     def test_forward_cli_accepts_local_cli_identity_compatibility_flag(self) -> None:
-        parser = codex_to_claude._build_parser()
+        parser = to_claude._build_parser()
         self.assertIn("--gateway-compat-cli-identity", parser.format_help())
 
     def test_forward_cli_rejects_caller_supplied_cli_user_agent(self) -> None:
-        parser = codex_to_claude._build_parser()
+        parser = to_claude._build_parser()
 
         with self.assertRaises(SystemExit):
             parser.parse_args(
@@ -501,14 +501,14 @@ class ReviewLimitTests(unittest.TestCase):
             marker_path = str(Path(directory) / "rounds.json")
 
             with self.assertRaises(ValueError):
-                codex_to_claude.check_round_cap(
+                common.check_round_cap(
                     marker_path,
                     "artifact-a",
                     max_rounds=3,
                 )
 
     def test_cli_does_not_accept_a_max_rounds_override(self) -> None:
-        parser = codex_to_claude._build_parser()
+        parser = to_claude._build_parser()
 
         with self.assertRaises(SystemExit):
             parser.parse_args(
@@ -563,14 +563,14 @@ class ReviewLimitTests(unittest.TestCase):
             }
 
             with mock.patch.object(
-                codex_to_claude,
+                to_claude,
                 "claude_available",
                 return_value=True,
                 create=True,
             ):
-                first = codex_to_claude.review_gate(**arguments)
-                second = codex_to_claude.review_gate(**arguments)
-                third = codex_to_claude.review_gate(**arguments)
+                first = to_claude.review_gate(**arguments)
+                second = to_claude.review_gate(**arguments)
+                third = to_claude.review_gate(**arguments)
 
             self.assertEqual("other_error", first.status)
             self.assertEqual("other_error", second.status)
@@ -626,14 +626,14 @@ class ReviewLimitTests(unittest.TestCase):
             }
 
             with mock.patch.object(
-                codex_to_claude,
+                to_claude,
                 "claude_available",
                 return_value=True,
                 create=True,
             ):
-                first = codex_to_claude.review_gate(**arguments)
-                second = codex_to_claude.review_gate(**arguments)
-                third = codex_to_claude.review_gate(**arguments)
+                first = to_claude.review_gate(**arguments)
+                second = to_claude.review_gate(**arguments)
+                third = to_claude.review_gate(**arguments)
 
             self.assertEqual("success", first.status)
             self.assertEqual("success", second.status)
@@ -664,16 +664,16 @@ class ReviewLimitTests(unittest.TestCase):
                 "timeout_seconds": 1,
             }
 
-            first = claude_to_codex.codex_review_gate(**arguments)
-            second = claude_to_codex.codex_review_gate(**arguments)
-            third = claude_to_codex.codex_review_gate(**arguments)
+            first = to_codex.codex_review_gate(**arguments)
+            second = to_codex.codex_review_gate(**arguments)
+            third = to_codex.codex_review_gate(**arguments)
 
             self.assertEqual("other_error", first.status)
             self.assertEqual("other_error", second.status)
             self.assertEqual("attempt_cap_exceeded", third.status)
 
     def test_reverse_cli_does_not_accept_a_max_rounds_override(self) -> None:
-        parser = claude_to_codex._build_parser()
+        parser = to_codex._build_parser()
 
         with self.assertRaises(SystemExit):
             parser.parse_args(
@@ -695,7 +695,7 @@ class CompatibilityTests(unittest.TestCase):
     """Portability guarantees for installers on non-proxy auth and Windows."""
 
     def test_readiness_falls_back_to_inherited_without_proxy_credentials(self) -> None:
-        readiness = codex_to_claude.check_readiness(
+        readiness = to_claude.check_readiness(
             settings_path="/does/not/exist.json", explicit_env={}
         )
         self.assertEqual("inherited", readiness.credential_source)
@@ -728,10 +728,10 @@ class CompatibilityTests(unittest.TestCase):
             # Clean ambient env so the test is independent of a proxy-configured
             # shell (this suite may itself run behind a gateway).
             with (
-                mock.patch.object(codex_to_claude, "claude_available", return_value=True),
-                mock.patch.dict(codex_to_claude.os.environ, {"PATH": "/usr/bin"}, clear=True),
+                mock.patch.object(to_claude, "claude_available", return_value=True),
+                mock.patch.dict(to_claude.os.environ, {"PATH": "/usr/bin"}, clear=True),
             ):
-                result = codex_to_claude.review_gate(
+                result = to_claude.review_gate(
                     request_prompt="Review the artifact and return a verdict.",
                     add_dirs=[str(root)],
                     handoff_dir=str(root / "handoffs"),
@@ -751,7 +751,7 @@ class CompatibilityTests(unittest.TestCase):
     def test_round_cap_guard_serializes_with_portable_lock(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             marker_path = str(Path(directory) / "rounds.json")
-            with codex_to_claude.round_cap_guard(marker_path, "artifact-a") as decision:
+            with common.round_cap_guard(marker_path, "artifact-a") as decision:
                 self.assertTrue(decision.allowed)
             self.assertTrue(Path(f"{marker_path}.lock").exists())
 
@@ -760,11 +760,11 @@ class CompatibilityTests(unittest.TestCase):
             lock_path = Path(directory) / "x.lock"
             with open(lock_path, "a+", encoding="utf-8") as handle:
                 with (
-                    mock.patch.object(codex_to_claude, "_fcntl", None),
-                    mock.patch.object(codex_to_claude, "_msvcrt", None),
+                    mock.patch.object(common, "_fcntl", None),
+                    mock.patch.object(common, "_msvcrt", None),
                 ):
                     with self.assertRaises(OSError):
-                        codex_to_claude._lock_exclusive(handle)
+                        common._lock_exclusive(handle)
 
     def test_windows_lock_retries_only_on_contention(self) -> None:
         import errno as _errno
@@ -785,11 +785,11 @@ class CompatibilityTests(unittest.TestCase):
             lock_path = Path(directory) / "x.lock"
             with open(lock_path, "a+", encoding="utf-8") as handle:
                 with (
-                    mock.patch.object(codex_to_claude, "_fcntl", None),
-                    mock.patch.object(codex_to_claude, "_msvcrt", fake),
-                    mock.patch.object(codex_to_claude.time, "sleep", lambda *_a: None),
+                    mock.patch.object(common, "_fcntl", None),
+                    mock.patch.object(common, "_msvcrt", fake),
+                    mock.patch.object(common.time, "sleep", lambda *_a: None),
                 ):
-                    codex_to_claude._lock_exclusive(handle)  # returns after retries
+                    common._lock_exclusive(handle)  # returns after retries
         self.assertEqual(3, fake.attempts)
 
     def test_windows_lock_reraises_non_contention_error(self) -> None:
@@ -805,12 +805,12 @@ class CompatibilityTests(unittest.TestCase):
             lock_path = Path(directory) / "x.lock"
             with open(lock_path, "a+", encoding="utf-8") as handle:
                 with (
-                    mock.patch.object(codex_to_claude, "_fcntl", None),
-                    mock.patch.object(codex_to_claude, "_msvcrt", FailMsvcrt()),
-                    mock.patch.object(codex_to_claude.time, "sleep", lambda *_a: None),
+                    mock.patch.object(common, "_fcntl", None),
+                    mock.patch.object(common, "_msvcrt", FailMsvcrt()),
+                    mock.patch.object(common.time, "sleep", lambda *_a: None),
                 ):
                     with self.assertRaises(OSError) as ctx:
-                        codex_to_claude._lock_exclusive(handle)
+                        common._lock_exclusive(handle)
         self.assertEqual(_errno.EACCES, ctx.exception.errno)
 
     def test_max_budget_probe_reads_help_text(self) -> None:
@@ -825,16 +825,16 @@ class CompatibilityTests(unittest.TestCase):
 
         self.assertIs(
             True,
-            codex_to_claude.claude_supports_max_budget(executable="claude", help_runner=with_flag),
+            to_claude.claude_supports_max_budget(executable="claude", help_runner=with_flag),
         )
         self.assertIs(
             False,
-            codex_to_claude.claude_supports_max_budget(
+            to_claude.claude_supports_max_budget(
                 executable="claude", help_runner=without_flag
             ),
         )
         self.assertIsNone(
-            codex_to_claude.claude_supports_max_budget(executable="claude", help_runner=unreadable)
+            to_claude.claude_supports_max_budget(executable="claude", help_runner=unreadable)
         )
 
     def test_forward_gate_fails_closed_when_claude_lacks_max_budget(self) -> None:
@@ -846,8 +846,8 @@ class CompatibilityTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with mock.patch.object(codex_to_claude, "claude_available", return_value=True):
-                result = codex_to_claude.review_gate(
+            with mock.patch.object(to_claude, "claude_available", return_value=True):
+                result = to_claude.review_gate(
                     request_prompt="Review the artifact and return a verdict.",
                     add_dirs=[str(root)],
                     handoff_dir=str(root / "handoffs"),
@@ -884,7 +884,7 @@ class ModelSelectionTests(unittest.TestCase):
                 stderr="",
             )
 
-        result = codex_to_claude.run_review(
+        result = to_claude.run_review(
             ["claude"], runner=file_reference_runner, request_prompt="Review the artifact."
         )
 
@@ -892,8 +892,9 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIsNone(result.text)
 
     def test_command_builders_enable_noninteractive_full_access(self) -> None:
-        forward = codex_to_claude.build_command("review", max_budget_usd=1.0)
-        reverse = claude_to_codex.build_codex_command("/repo", "/tmp/last.txt")
+        forward = to_claude.build_command("review", max_budget_usd=1.0)
+        reverse = to_codex.build_codex_command("/repo", "/tmp/last.txt")
+        grok = to_grok.build_grok_command("/tmp/prompt.txt", "/repo")
 
         self.assertEqual(
             ["--permission-mode", "bypassPermissions"],
@@ -906,9 +907,20 @@ class ModelSelectionTests(unittest.TestCase):
             reverse[reverse.index("--sandbox") : reverse.index("--sandbox") + 2],
         )
         self.assertIn("--dangerously-bypass-approvals-and-sandbox", reverse)
+        self.assertIn("--always-approve", grok)
+        self.assertEqual(
+            ["--prompt-file", "/tmp/prompt.txt"],
+            grok[grok.index("--prompt-file") : grok.index("--prompt-file") + 2],
+        )
+        self.assertEqual(
+            ["--output-format", "json"],
+            grok[grok.index("--output-format") : grok.index("--output-format") + 2],
+        )
+        self.assertEqual(["--cwd", "/repo"], grok[grok.index("--cwd") : grok.index("--cwd") + 2])
+        self.assertNotIn("-p", grok)
 
     def test_reviewer_prompt_requires_self_contained_final_verdict(self) -> None:
-        prompt = codex_to_claude.build_reviewer_prompt("Review the artifact.")
+        prompt = common.build_reviewer_prompt("Review the artifact.")
 
         self.assertIn("self-contained", prompt)
         self.assertIn("Do not reply only with a file path", prompt)
@@ -916,34 +928,40 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("Review the artifact.", prompt)
 
     def test_requested_model_validation_is_opaque_and_bounded(self) -> None:
-        self.assertIsNone(codex_to_claude.validate_requested_model(None))
-        self.assertEqual("sonnet", codex_to_claude.validate_requested_model("sonnet"))
+        self.assertIsNone(common.validate_requested_model(None))
+        self.assertEqual("sonnet", common.validate_requested_model("sonnet"))
         self.assertEqual(
             "claude-sonnet-4-5-20250929",
-            codex_to_claude.validate_requested_model("claude-sonnet-4-5-20250929"),
+            common.validate_requested_model("claude-sonnet-4-5-20250929"),
         )
         self.assertEqual(
-            "gpt-5.6-terra", codex_to_claude.validate_requested_model("gpt-5.6-terra")
+            "gpt-5.6-terra", common.validate_requested_model("gpt-5.6-terra")
         )
         for invalid in ("", "-not-a-model", "gpt-5\nmodel", "m" * 129):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(ValueError):
-                    codex_to_claude.validate_requested_model(invalid)
+                    common.validate_requested_model(invalid)
 
     def test_command_builders_preserve_default_or_emit_single_model_token(self) -> None:
-        forward_default = codex_to_claude.build_command("review", max_budget_usd=1.0)
-        reverse_default = claude_to_codex.build_codex_command("/repo", "/tmp/last.txt")
+        forward_default = to_claude.build_command("review", max_budget_usd=1.0)
+        reverse_default = to_codex.build_codex_command("/repo", "/tmp/last.txt")
+        grok_default = to_grok.build_grok_command("/tmp/prompt.txt", "/repo")
         self.assertFalse(any(token.startswith("--model") for token in forward_default))
         self.assertFalse(any(token.startswith("--model") for token in reverse_default))
+        self.assertFalse(any(token.startswith("--model") for token in grok_default))
 
-        forward_selected = codex_to_claude.build_command(
+        forward_selected = to_claude.build_command(
             "review", model="sonnet", max_budget_usd=1.0
         )
-        reverse_selected = claude_to_codex.build_codex_command(
+        reverse_selected = to_codex.build_codex_command(
             "/repo", "/tmp/last.txt", model="gpt-5.6-terra"
+        )
+        grok_selected = to_grok.build_grok_command(
+            "/tmp/prompt.txt", "/repo", model="grok-4.5"
         )
         self.assertIn("--model=sonnet", forward_selected)
         self.assertIn("--model=gpt-5.6-terra", reverse_selected)
+        self.assertIn("--model=grok-4.5", grok_selected)
 
     def test_invalid_model_fails_before_runner_or_marker(self) -> None:
         def runner_must_not_start(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -951,8 +969,8 @@ class ModelSelectionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with mock.patch.object(codex_to_claude, "claude_available", return_value=True):
-                result = codex_to_claude.review_gate(
+            with mock.patch.object(to_claude, "claude_available", return_value=True):
+                result = to_claude.review_gate(
                     request_prompt="Review the artifact.",
                     add_dirs=[str(root)],
                     handoff_dir=str(root / "handoffs"),
@@ -979,8 +997,8 @@ class ModelSelectionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with mock.patch.object(codex_to_claude, "claude_available", return_value=True):
-                result = codex_to_claude.review_gate(
+            with mock.patch.object(to_claude, "claude_available", return_value=True):
+                result = to_claude.review_gate(
                     request_prompt="Review the artifact.",
                     add_dirs=[str(root)],
                     handoff_dir=str(root / "handoffs"),
@@ -1008,8 +1026,8 @@ class ModelSelectionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with mock.patch.object(claude_to_codex, "codex_available", return_value=True):
-                result = claude_to_codex.codex_review_gate(
+            with mock.patch.object(to_codex, "codex_available", return_value=True):
+                result = to_codex.codex_review_gate(
                     request_prompt="Review the artifact.",
                     cd=str(root),
                     handoff_dir=str(root / "handoffs"),
@@ -1062,10 +1080,28 @@ class ModelSelectionTests(unittest.TestCase):
                 stderr="",
             )
 
+        def grok_runner(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            prompt_path = Path(argv[argv.index("--prompt-file") + 1])
+            self.assertTrue(prompt_path.is_file())
+            self.assertIn("Review execution contract", prompt_path.read_text(encoding="utf-8"))
+            return subprocess.CompletedProcess(
+                args=argv,
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "text": "APPROVE",
+                        "sessionId": "grok-model-session",
+                        "total_cost_usd": 0.01,
+                        "usage": {"input_tokens": 2, "output_tokens": 3},
+                    }
+                ),
+                stderr="",
+            )
+
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with mock.patch.object(codex_to_claude, "claude_available", return_value=True):
-                forward = codex_to_claude.review_gate(
+            with mock.patch.object(to_claude, "claude_available", return_value=True):
+                forward = to_claude.review_gate(
                     request_prompt="Review the artifact.",
                     add_dirs=[str(root)],
                     handoff_dir=str(root / "handoffs"),
@@ -1079,8 +1115,8 @@ class ModelSelectionTests(unittest.TestCase):
                     max_budget_usd=1.0,
                     model="sonnet",
                 )
-            with mock.patch.object(claude_to_codex, "codex_available", return_value=True):
-                reverse = claude_to_codex.codex_review_gate(
+            with mock.patch.object(to_codex, "codex_available", return_value=True):
+                reverse = to_codex.codex_review_gate(
                     request_prompt="Review the artifact.",
                     cd=str(root),
                     handoff_dir=str(root / "handoffs"),
@@ -1093,9 +1129,24 @@ class ModelSelectionTests(unittest.TestCase):
                     timeout_seconds=1,
                     model="gpt-5.6-terra",
                 )
+            with mock.patch.object(to_grok, "grok_available", return_value=True):
+                grok = to_grok.grok_review_gate(
+                    request_prompt="Review the artifact.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "grok-rounds.json"),
+                    gate_id="grok-model-audit",
+                    artifact_key="grok-model-audit",
+                    cost_log_path=str(root / "grok-cost.jsonl"),
+                    settings_path=str(root / "settings.json"),
+                    runner=grok_runner,
+                    timeout_seconds=1,
+                    model="grok-4.5",
+                )
 
             self.assertEqual("success", forward.status)
             self.assertEqual("success", reverse.status)
+            self.assertEqual("success", grok.status)
             self.assertEqual(
                 "sonnet",
                 json.loads((root / "forward-cost.jsonl").read_text(encoding="utf-8"))["requested_model"],
@@ -1104,6 +1155,257 @@ class ModelSelectionTests(unittest.TestCase):
                 "gpt-5.6-terra",
                 json.loads((root / "reverse-cost.jsonl").read_text(encoding="utf-8"))["requested_model"],
             )
+            grok_cost = json.loads((root / "grok-cost.jsonl").read_text(encoding="utf-8"))
+            self.assertEqual("grok-4.5", grok_cost["requested_model"])
+            self.assertEqual("grok", grok_cost["provider"])
+
+
+class GrokReviewerTests(unittest.TestCase):
+    """Any-primary -> Grok reviewer gate: envelope, provenance, caps."""
+
+    def test_grok_adapter_emits_started_event_and_uses_prompt_file(self) -> None:
+        observed_before_runner = ""
+        seen_argv: list[str] = []
+
+        def successful_runner(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            nonlocal observed_before_runner, seen_argv
+            observed_before_runner = captured_stderr.getvalue()
+            seen_argv = list(argv)
+            prompt_path = Path(argv[argv.index("--prompt-file") + 1])
+            body = prompt_path.read_text(encoding="utf-8")
+            self.assertIn("Review the artifact and return a verdict.", body)
+            self.assertIn("Review execution contract", body)
+            return subprocess.CompletedProcess(
+                args=argv,
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "text": "APPROVE\n\nLooks solid.",
+                        "sessionId": "sess-grok-1",
+                        "total_cost_usd": 0.02,
+                        "usage": {"input_tokens": 10, "output_tokens": 4},
+                    }
+                ),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            captured_stderr = io.StringIO()
+            output_path = root / "ByGrok" / "review.md"
+
+            with (
+                mock.patch.object(to_grok, "grok_available", return_value=True),
+                contextlib.redirect_stderr(captured_stderr),
+            ):
+                result = to_grok.grok_review_gate(
+                    request_prompt="Review the artifact and return a verdict.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-grok",
+                    artifact_key="artifact-grok",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    output_path=str(output_path),
+                    settings_path=str(root / "settings.json"),
+                    runner=successful_runner,
+                    timeout_seconds=1,
+                )
+
+            self.assertEqual("success", result.status)
+            self.assertEqual("sess-grok-1", result.envelope["session_id"])
+            self.assertEqual(0.02, result.envelope["total_cost_usd"])
+            self.assertEqual(captured_stderr.getvalue(), observed_before_runner)
+            self.assertEqual(
+                {
+                    "status": "review_started",
+                    "gate_id": "gate-grok",
+                    "artifact_key": "artifact-grok",
+                    "attempt": 1,
+                    "timeout_seconds": 1,
+                },
+                json.loads(captured_stderr.getvalue()),
+            )
+            self.assertIn("--always-approve", seen_argv)
+            self.assertIn("--prompt-file", seen_argv)
+            self.assertTrue(output_path.is_file())
+            body = output_path.read_text(encoding="utf-8")
+            self.assertIn("Reviewer: Grok", body)
+            self.assertIn("APPROVE", body)
+            # Prompt file is cleaned up after the gate.
+            prompt_tokens = seen_argv[seen_argv.index("--prompt-file") + 1]
+            self.assertFalse(Path(prompt_tokens).exists())
+
+    def test_grok_adapter_refuses_when_cli_missing(self) -> None:
+        calls = 0
+
+        def runner(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            nonlocal calls
+            calls += 1
+            raise AssertionError("runner must not execute when grok is unavailable")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(to_grok, "grok_available", return_value=False):
+                result = to_grok.grok_review_gate(
+                    request_prompt="Review the artifact.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-missing",
+                    artifact_key="artifact-missing",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "settings.json"),
+                    runner=runner,
+                    timeout_seconds=1,
+                )
+
+            self.assertEqual("grok_unavailable", result.status)
+            self.assertEqual(0, calls)
+            self.assertFalse((root / "rounds.json").exists())
+
+    def test_grok_missing_session_id_is_provenance_failure(self) -> None:
+        def runner(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=["grok"],
+                returncode=0,
+                stdout=json.dumps({"text": "APPROVE", "total_cost_usd": 0.01}),
+                stderr="",
+            )
+
+        result = to_grok.run_grok_review(["grok"], runner=runner, timeout_seconds=1)
+        self.assertEqual("provenance_failure", result.status)
+        self.assertIn("sessionId", result.envelope["detail"])
+
+    def test_grok_partial_cost_is_null_not_zero(self) -> None:
+        def runner(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=["grok"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "text": "APPROVE",
+                        "sessionId": "sess-partial",
+                        "cost_is_partial": True,
+                        "total_cost_usd": 0.0,
+                    }
+                ),
+                stderr="",
+            )
+
+        result = to_grok.run_grok_review(["grok"], runner=runner, timeout_seconds=1)
+        self.assertEqual("success", result.status)
+        self.assertIsNone(result.envelope["total_cost_usd"])
+
+    def test_grok_auth_error_envelope_classifies_as_auth_failure(self) -> None:
+        def runner(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=["grok"],
+                returncode=1,
+                stdout=json.dumps(
+                    {"type": "error", "message": "Unauthorized: invalid api key"}
+                ),
+                stderr="",
+            )
+
+        result = to_grok.run_grok_review(["grok"], runner=runner, timeout_seconds=1)
+        self.assertEqual("auth_failure", result.status)
+
+    def test_grok_third_failed_started_call_is_refused(self) -> None:
+        def failing_runner(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=["grok"],
+                returncode=1,
+                stdout=json.dumps({"type": "error", "message": "boom"}),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(to_grok, "grok_available", return_value=True):
+                for _ in range(2):
+                    result = to_grok.grok_review_gate(
+                        request_prompt="Review the artifact.",
+                        cd=str(root),
+                        handoff_dir=str(root / "handoffs"),
+                        marker_path=str(root / "rounds.json"),
+                        gate_id="gate-fail",
+                        artifact_key="artifact-fail",
+                        cost_log_path=str(root / "cost.jsonl"),
+                        settings_path=str(root / "settings.json"),
+                        runner=failing_runner,
+                        timeout_seconds=1,
+                    )
+                    self.assertEqual("other_error", result.status)
+
+                third = to_grok.grok_review_gate(
+                    request_prompt="Review the artifact.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-fail-3",
+                    artifact_key="artifact-fail",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "settings.json"),
+                    runner=failing_runner,
+                    timeout_seconds=1,
+                )
+
+            self.assertEqual("attempt_cap_exceeded", third.status)
+
+    def test_grok_cli_does_not_accept_a_max_rounds_override(self) -> None:
+        parser = to_grok._build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(
+                [
+                    "--request-file",
+                    "r.md",
+                    "--cd",
+                    ".",
+                    "--handoff-dir",
+                    "h",
+                    "--marker-path",
+                    "m.json",
+                    "--gate-id",
+                    "g",
+                    "--artifact-key",
+                    "a",
+                    "--cost-log",
+                    "c.jsonl",
+                    "--output",
+                    "o.md",
+                    "--max-rounds",
+                    "9",
+                ]
+            )
+
+    def test_grok_model_preflight_fails_closed_when_help_lacks_flag(self) -> None:
+        def runner_must_not_start(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            raise AssertionError("reviewer subprocess must not start for an unsupported CLI flag")
+
+        def help_without_model(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, 0, "--always-approve\n", "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(to_grok, "grok_available", return_value=True):
+                result = to_grok.grok_review_gate(
+                    request_prompt="Review the artifact.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="grok-model-help",
+                    artifact_key="grok-model-help",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "settings.json"),
+                    runner=runner_must_not_start,
+                    timeout_seconds=1,
+                    model_help_runner=help_without_model,
+                    model="grok-4.5",
+                )
+
+            self.assertEqual("setup_failure", result.status)
+            self.assertFalse((root / "rounds.json").exists())
 
 
 class CodexProvenanceTests(unittest.TestCase):
@@ -1116,10 +1418,10 @@ class CodexProvenanceTests(unittest.TestCase):
                 json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3, "output_tokens": 5}}),
             ]
         )
-        meta = claude_to_codex._parse_codex_json_stream(stdout)
+        meta = to_codex._parse_codex_json_stream(stdout)
         self.assertEqual("thread-a", meta["session_id"])
         self.assertEqual({"input_tokens": 3, "output_tokens": 5}, meta["usage"])
-        self.assertTrue(claude_to_codex._valid_codex_provenance(meta))
+        self.assertTrue(to_codex._valid_codex_provenance(meta))
 
     def test_alias_shapes_do_not_flip_failure_to_success(self) -> None:
         # A hypothetical renamed schema: session event + OpenAI-style token keys.
@@ -1133,10 +1435,10 @@ class CodexProvenanceTests(unittest.TestCase):
                 ),
             ]
         )
-        meta = claude_to_codex._parse_codex_json_stream(stdout)
+        meta = to_codex._parse_codex_json_stream(stdout)
         self.assertIsNone(meta.get("session_id"))
         self.assertIsNone(meta.get("usage"))
-        self.assertFalse(claude_to_codex._valid_codex_provenance(meta))
+        self.assertFalse(to_codex._valid_codex_provenance(meta))
         self.assertIn("session.created:session_id", meta["drift_hints"])
         self.assertIn("response.completed:usage.prompt_tokens", meta["drift_hints"])
 
@@ -1158,7 +1460,7 @@ class CodexProvenanceTests(unittest.TestCase):
                 ),
             ]
         )
-        meta = claude_to_codex._parse_codex_json_stream(stdout)
+        meta = to_codex._parse_codex_json_stream(stdout)
         self.assertEqual(
             {
                 "input_tokens": 10,
@@ -1168,11 +1470,11 @@ class CodexProvenanceTests(unittest.TestCase):
             },
             meta["usage"],
         )
-        self.assertTrue(claude_to_codex._valid_codex_provenance(meta))
+        self.assertTrue(to_codex._valid_codex_provenance(meta))
 
     def test_bare_id_on_non_session_event_is_not_a_session_id(self) -> None:
         stdout = json.dumps({"type": "item.completed", "id": "item-123"})
-        meta = claude_to_codex._parse_codex_json_stream(stdout)
+        meta = to_codex._parse_codex_json_stream(stdout)
         self.assertIsNone(meta.get("session_id"))
 
     def test_incomplete_token_pair_is_invalid(self) -> None:
@@ -1182,9 +1484,9 @@ class CodexProvenanceTests(unittest.TestCase):
                 json.dumps({"type": "turn.completed", "usage": {"input_tokens": 4}}),
             ]
         )
-        meta = claude_to_codex._parse_codex_json_stream(stdout)
+        meta = to_codex._parse_codex_json_stream(stdout)
         self.assertIsNone(meta.get("usage"))
-        self.assertFalse(claude_to_codex._valid_codex_provenance(meta))
+        self.assertFalse(to_codex._valid_codex_provenance(meta))
 
     def test_provenance_failure_detail_reports_observed_types(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1199,7 +1501,7 @@ class CodexProvenanceTests(unittest.TestCase):
                     stderr="",
                 )
 
-            result = claude_to_codex.run_codex_review(
+            result = to_codex.run_codex_review(
                 argv=["codex"],
                 last_message_path=str(last_message),
                 runner=runner,

@@ -24,6 +24,7 @@ class RuntimeCapabilityTests(unittest.TestCase):
         paths = {
             "claude": "/opt/bin/claude",
             "gemini": "/opt/bin/gemini",
+            "grok": "/opt/bin/grok",
         }
 
         def which(command: str) -> str | None:
@@ -33,7 +34,12 @@ class RuntimeCapabilityTests(unittest.TestCase):
             argv: list[str], **kwargs: object
         ) -> subprocess.CompletedProcess[str]:
             self.assertEqual({"PATH": "/test/bin"}, kwargs["env"])
-            version = "2.1.216 (Claude Code)" if argv[0].endswith("claude") else "0.17.1"
+            if argv[0].endswith("claude"):
+                version = "2.1.216 (Claude Code)"
+            elif argv[0].endswith("grok"):
+                version = "grok 1.0.13 (5e9a58528b76)"
+            else:
+                version = "0.17.1"
             return subprocess.CompletedProcess(argv, 0, stdout=version + "\n", stderr="")
 
         report = runtime_capabilities.discover_local_agents(
@@ -46,7 +52,12 @@ class RuntimeCapabilityTests(unittest.TestCase):
         self.assertEqual("/opt/bin/claude", agents["claude"]["path"])
         self.assertEqual("2.1.216 (Claude Code)", agents["claude"]["version"])
         self.assertTrue(agents["claude"]["review_supported"])
-        self.assertEqual(["codex_to_claude"], agents["claude"]["review_directions"])
+        self.assertEqual(["to_claude"], agents["claude"]["review_directions"])
+        self.assertEqual("/opt/bin/grok", agents["grok"]["path"])
+        self.assertEqual("grok 1.0.13 (5e9a58528b76)", agents["grok"]["version"])
+        self.assertTrue(agents["grok"]["review_supported"])
+        self.assertEqual(["to_grok"], agents["grok"]["review_directions"])
+        self.assertEqual("supported", agents["grok"]["status"])
         self.assertEqual("/opt/bin/gemini", agents["gemini"]["path"])
         self.assertFalse(agents["gemini"]["review_supported"])
         self.assertEqual("detected_not_supported", agents["gemini"]["status"])

@@ -63,7 +63,7 @@
 | `case-lite` | 1.1.0 | 小需求测试用例生成流程，从飞书文档选章到生成用例，再可选写回搬山 | 单一功能点、1-2 篇文档、无需模块拆分的小需求用例生成 | 依赖飞书文档 MCP；搬山 MCP 推荐配置；所有阶段产物必须落盘到 `case-lite-output/{slug}/`，章节选择和补充信息确认是人工检查点 |
 | `case-reorganize` | 1.0.0 | 将搬山中已有测试用例整理为链路 case：合并冗余用例、去除边界 case、将串联操作合并为一个场景 | 已有用例过碎、需要按业务链路重组；整理后替换原 case 或追加到目标 case | 与 `case-lite` 的区别是输入来自搬山已有用例而非文档；写回前必须 dry-run；替换模式会调用 `deleteNode` 级联删除且**不可逆**，执行前务必确认；其 `full.md` 格式保留「前置条件」独立节点，与 `case-lite` 不同 |
 | `context-resilient-task` | 1.0.0 | 上下文弹性任务管理，用磁盘上的 MRS 文件恢复长期任务状态 | 多阶段开发、跨会话继续、`/clear` 后恢复、避免 agent 忘记待办或编造状态 | `task_state.md` 是 source of truth，必须原地更新；`progress.md` 和 `decisions.md` 只追加；缺少 Tier 0 文件时应先初始化 MRS |
-| `cross-agent-review` | 1.0.0 | 本机 Codex 与 ClaudeCode 互相做只读评审的双向 skill，primary 保连续性、reviewer 只读返回带证据的 verdict | 跨代理评审 handoff：Codex 写、ClaudeCode 审，或反向；计划/代码互审、防作者自漏 | 只依赖本机 `claude`+`codex` CLI（官方 plugin 仅可选 fallback）；reviewer 物理只读、fail-closed、并发 round-cap、脱敏；readiness 看真实信封不看 auth status；不用于单 agent 自审或普通 code review |
+| `cross-agent-review` | 2.0.0 | 本机 Codex / ClaudeCode / Grok 互做跨代理评审：primary 保连续性与修复，reviewer 返回带证据的 verdict | 跨代理评审 handoff：任一 primary 请另一 peer 审计划/代码；防作者自漏 | 依赖本机 `claude`/`codex`/`grok` 中实际调用的 reviewer CLI；fail-closed、并发 round-cap、脱敏；readiness 看真实信封；不用于单 agent 自审或普通 code review |
 | `dify-dsl-generator` | 1.0.0 | 生成、重构或评审 Dify workflow/chatflow/agent DSL | 把业务需求、后端接口、规则系统或已有 YAML 转为可导入的 Dify DSL | 先冻结输入输出和应用形态，再写 YAML；优先复用 `references/` 和已有示例中的验证模式；输出前检查节点类型、变量路径、edge 和结构化输出 |
 | `gapm-mcp-recovery` | 1.0.0 | 诊断并恢复 Codex 中的 GAPM MCP；当前对话未注入 Tool 时可通过 App Server bridge 直接调用 | GAPM Tool 缺失、`invalid_client` / `authentication_required`、`serverInfo` 为空、日志排查疑似需要重启 Codex | 依赖 Codex CLI、Python 3.9+ 和内部网络；OAuth 过期仍需浏览器授权；参数及原始日志只能放在 `.local/`；查询无结果不能断言未调用 |
 | `internal-api-cookie-auth` | 1.0.0 | 为受支持内部 API 获取短期 CAS Cookie，并规范认证失败后的处理 | Internal AD/UOS、Athena、Compass 的接口开发与排障，Cookie 缺失或 HTTP 401 | 仅限允许的内部域名；不输出或持久化凭证；403 视为可能的权限问题，禁止盲目重试写操作 |
@@ -125,17 +125,23 @@ case：合并冗余用例、去除意义不大的边界 case、把本就该串�
 
 ### cross-agent-review
 
-`cross-agent-review` 让本机两个 AI CLI agent（Codex 与 ClaudeCode）互相做只读评审：任一 agent 作为 primary 产出计划/代码，调用另一个 agent 做带证据的只读 review，primary 保留连续性与修复责任。双向对称、去插件依赖，只依赖本机 `claude` 和 `codex` 两个 CLI。
+`cross-agent-review` 让本机 AI CLI agent（Codex、ClaudeCode、Grok）互相做跨代理评审：任一 agent 作为 primary 产出计划/代码，调用**另一个** agent 做带证据的 review，primary 保留连续性与修复责任。三角对称、去插件依赖；只依赖本机实际调用的 `claude` / `codex` / `grok` CLI。
 
-两个方向都由仓内直连适配器实现（`scripts/codex_to_claude.py` 走 `claude -p`；`scripts/claude_to_codex.py` 走 `codex exec --sandbox read-only`），官方 Codex plugin 仅作可选 fallback。
+仓内直连适配器（统一 `to_<peer>` reviewer 桥）：
+
+- `scripts/to_claude.py` → `claude -p`（任意 primary → ClaudeCode）
+- `scripts/to_codex.py` → `codex exec` 全权限无确认（任意 primary → Codex）
+- `scripts/to_grok.py` → `grok --prompt-file` headless + `--always-approve`（任意 primary → Grok）
+
+官方 Codex plugin 仅作 Codex 评审的可选 fallback。
 
 核心保证：
 
-- readiness 由真实结果信封判定，绝不用 `claude auth status`；reviewer 物理只读（plan 模式 + 固定 `Read,Grep,Glob` / codex 硬编码 read-only sandbox）。
-- 并发安全的硬性 round cap（marker 锁），仅成功 review 后计数，失败调用不吃轮次；任何非成功 fail closed 到脱敏 durable handoff。
-- codex 反向成功需真实 `thread_id`+`usage`，缺 USD 记 `null` 不伪造 0；只持久化经校验的非空 reviewer 输出。
+- readiness 由真实结果信封判定，绝不用 auth-status 命令；任务契约禁止 reviewer 改 primary 工件（子进程为非交互放行工具权限，仅可信工作区使用）。
+- 并发安全的固定 round/attempt cap（marker 锁）；已启动失败也消耗 attempt；任何非成功 fail closed 到脱敏 durable handoff。
+- Codex 成功需真实 `thread_id`+`usage`；Grok 成功需真实 `sessionId`+带 verdict 的 `text`；缺/partial USD 记 `null` 不伪造 0。
 
-验证：适配器 `124 passed`、6 安全 finding 闭环、双向端到端 PASS、压力 A/B uplift、真 skill 自动触发 9/10 正 + 10/10 负（0 误触发）。
+验证：以本 bundle `tests/` 为准；历史 play-book 数字仅为 provenance。Grok 方向需在本机再跑一次真实 gate 后再宣称 e2e。
 
 注意：不用于单 agent 自审、普通 code review 或认证排障；每个 review gate 需显式传入 request/artifact key/可读目录/输出路径/超时/用户批准的单次预算。
 

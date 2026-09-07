@@ -1,28 +1,28 @@
-# Codex Primary + ClaudeCode Review Loop
+# Primary + Cross-Agent Review Loop
 
-Status: historical validated checklist. Its 2026-06-14 first-use evidence is provenance; the containing `cross-agent-review` skill has its own installed-version validation state.
+Status: historical validated checklist (originally Codex primary + ClaudeCode reviewer). Its 2026-06-14 first-use evidence is provenance; the containing `cross-agent-review` skill has its own installed-version validation state. The functional split below is agent-agnostic: any of Codex / ClaudeCode / Grok may be primary or reviewer, as long as they are **different** local peers and the mechanical adapters in `scripts/` are used for the reviewer leg.
 
-This is a collaboration protocol for tasks where Codex should preserve continuity and do the main writing/implementation, while ClaudeCode should act as a source-grounded reviewer and risk finder.
+This is a collaboration protocol for tasks where one local agent should preserve continuity and do the main writing/implementation, while a different local agent should act as a source-grounded reviewer and risk finder.
 
 ## When To Use
 
 Use this workflow when:
 
 - A task spans multiple sessions, multiple agents, or multiple repos.
-- Codex has the richest continuity through the active thread, MRS, branch, and recent implementation context.
-- ClaudeCode can add value through source-path review, subagent fan-out, independent risk discovery, or evidence verification.
+- The primary has the richest continuity through the active thread, MRS, branch, and recent implementation context.
+- A different local peer can add value through source-path review, subagent fan-out, independent risk discovery, or evidence verification.
 - The expected output needs review closure, not just a quick answer.
 
 Do not use this workflow when:
 
 - The task is a small local edit with low risk.
 - No durable review artifact is needed.
-- ClaudeCode cannot access the required repo/files and no alternative evidence path is available.
+- The chosen reviewer cannot access the required repo/files and no alternative evidence path is available.
 - The user asks for an immediate answer rather than a reviewed artifact.
 
 ## Roles
 
-Current mapping: Codex is the primary continuity owner and ClaudeCode is the reviewer/risk-finder. If a future task has a different continuity owner, keep the functional split and update the agent mapping explicitly.
+Example mapping: Codex primary + ClaudeCode reviewer. Equivalent mappings include Grok primary + ClaudeCode/Codex reviewer, or Codex/ClaudeCode primary + Grok reviewer. Keep the functional split and name the mapping explicitly in the review request.
 
 ### Primary / Continuity Owner
 
@@ -42,7 +42,7 @@ The reviewer owns:
 - Reviewing the produced artifact without directly editing it.
 - Verifying citations, source paths, file/repo reach, evidence strength, and missing risks.
 - Using subagents when the review naturally decomposes by repo, layer, or concern.
-- Returning findings under `Review/ByClaudeCode/` with severity and concrete source paths.
+- Returning findings under the reviewer-owned directory (`Review/ByClaudeCode/`, `Review/ByCodex/`, or `Review/ByGrok/`) with severity and concrete source paths.
 
 The reviewer is not the primary continuity owner in this workflow. It should challenge, verify, and supplement; it should not silently replace the primary agent's MRS state or rewrite the artifact outside the agreed handoff.
 
@@ -59,16 +59,16 @@ The reviewer is not the primary continuity owner in this workflow. It should cha
   - if raw ClaudeCode sessions are absent after a live-store scan, mark them `verified-absent`, not merely "not found"
   - if a project-local `Review/ByClaudeCode/*.md` exists without a raw transcript, treat it as artifact evidence, not raw-session evidence
   - do not upgrade text mentions, review documents, or exported notes into transcript evidence
-- A target review output path under `Review/ByClaudeCode/`.
+- A target review output path under `Review/ByClaudeCode/`, `Review/ByCodex/`, or `Review/ByGrok/`.
 - Explicit review questions.
 
 For raw-session reading, use `/Users/gaotu/Projects/play-book/docs/reference/session-reading.md`. For evidence layering and artifact-only review handling, follow the Evidence Rules in `/Users/gaotu/Projects/play-book/docs/templates/evidence-indexed-retrospective.md`.
 
 ## Workflow
 
-### 1. Codex Reconstructs State
+### 1. Primary Reconstructs State
 
-Codex reads:
+The primary reads:
 
 - project `AGENTS.md`
 - `.task-state/task_state.md`

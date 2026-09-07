@@ -1,13 +1,11 @@
-"""ClaudeCode -> Codex direct review adapter.
+"""Any primary -> Codex direct review adapter.
 
-Symmetric to `codex_to_claude.py`, but for the reverse direction: a
-ClaudeCode-primary turn asks the local Codex CLI for an unattended full-access
-review via `codex exec`, WITHOUT depending on the official Codex plugin. This
-keeps the skill self-contained and distributable (it needs only the `claude`
-and `codex` CLIs), and sidesteps the plugin broker.
+Asks the local Codex CLI for an unattended full-access review via `codex exec`,
+WITHOUT depending on the official Codex plugin. Self-contained and
+distributable (needs only the `codex` CLI on PATH for this direction).
 
 Shared guards (round cap, redaction, fail-closed, cost log) are imported from
-`codex_to_claude` so both directions enforce the exact same protocol.
+`common` so every direction enforces the exact same protocol.
 
 Pure stdlib. The subprocess boundary is injectable (`runner`) so unit tests
 never make real Codex calls.
@@ -24,7 +22,7 @@ import tempfile
 import time
 from typing import Callable, Optional
 
-from .codex_to_claude import (
+from .common import (
     ReviewResult,
     _commit_round_unlocked,
     _known_sensitive_values,
@@ -334,7 +332,7 @@ def run_codex_review(
         hint = (
             f"; saw unverified alias fields {drift_hints} — codex may have "
             "renamed its schema, add them to the verified contract in "
-            "claude_to_codex.py only with fresh source evidence"
+            "to_codex.py only with fresh source evidence"
             if drift_hints
             else ""
         )
@@ -379,7 +377,7 @@ def codex_review_gate(
     model: Optional[str] = None,
     model_help_runner: Optional[Callable] = None,
 ) -> ReviewResult:
-    """End-to-end single reverse review gate (ClaudeCode primary -> Codex).
+    """End-to-end single Codex reviewer gate (any primary -> Codex).
 
     Order: codex-available -> fixed caps -> reserve attempt -> invoke ->
     classify -> log cost -> commit success. A started call consumes an attempt
@@ -570,7 +568,7 @@ def codex_review_gate(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run a fail-closed ClaudeCode->Codex review gate (direct codex CLI, no plugin)"
+        description="Run a fail-closed any-primary->Codex review gate (direct codex CLI, no plugin)"
     )
     parser.add_argument("--request-file", required=True)
     parser.add_argument("--cd", required=True, help="trusted repository/working dir Codex reviews")

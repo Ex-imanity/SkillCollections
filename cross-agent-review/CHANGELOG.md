@@ -11,6 +11,22 @@
 
 规则：不是每个 commit 都要升版本，但每次升版本必须在此留下条目。
 
+## 2.0.0 - 2026-09-07
+
+MAJOR：统一 reviewer 桥命名（历史模块路径移除），并新增 Grok 第三 peer：
+
+- 适配器统一为 `to_<peer>`：`scripts/to_claude.py`、`scripts/to_codex.py`、`scripts/to_grok.py`
+- 共享协议运行时抽到 `scripts/common.py`（caps / redaction / cost / handoff / completion contract）
+- 历史名 `codex_to_claude` / `claude_to_codex` 已移除；请改用 `python -m scripts.to_claude` / `to_codex`
+- 新适配器 `to_grok`：任意 primary → Grok reviewer（`grok --prompt-file` + `--output-format json` + `--always-approve`）
+- Grok headless 不读 stdin：adapter 写临时 prompt 文件，gate 结束后删除
+- 成功条件：非空带标准 verdict 的 `text` + 真实 `sessionId`；`total_cost_usd` 缺失/partial 记 `null`，不伪造 0
+- `runtime_capabilities`：`claude`→`to_claude`，`codex`→`to_codex`，`grok`→`to_grok`
+- 约定 `Review/ForGrok/`、`Review/ByGrok/` 输出目录
+- 回归测试覆盖三向命令拼装、started 事件、provenance、attempt cap、model preflight
+
+CLI 参数与 fail-closed 契约不变；调用方必须改用 `python -m scripts.to_claude|to_codex|to_grok`。
+
 ## 1.0.0 - 2026-09-03
 
 首个标注版本。此前变更见 git 历史，不追认为 release。
