@@ -114,6 +114,10 @@ def build_codex_command(
         "-C",
         cd,
     ]
+    if not isinstance(cd, str) or not cd.strip():
+        raise ValueError("cd must be a non-empty path")
+    if not isinstance(last_message_path, str) or not last_message_path.strip():
+        raise ValueError("last_message_path must be a non-empty path")
     if skip_git_repo_check:
         argv.append("--skip-git-repo-check")
     requested_model = validate_requested_model(model)
