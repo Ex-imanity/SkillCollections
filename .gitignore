@@ -1,11 +1,43 @@
-context-resilient-task/docs/
+# --- IDE / local agent ---
+.idea/
+.claude/
+.omc/
+**/.omc/
+.DS_Store
+**/.DS_Store
+
+# --- Python ---
 __pycache__/
 *.py[cod]
-.omc/
-context-resilient-task/.omc/
-.claude/
-.idea/
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+
+# --- Logs & process handles ---
+*.log
+*.log.*
+*.pid
+*.stderr
+*.stdout
+
+# --- Cross-agent-review / gate runtime ---
+# Gate stdout/stderr captures and runner metadata
+.task-state/**/runs/
+.task-state-*/**/runs/
+# Flock sentinels and adapter temp files (not durable review state)
+*.lock
+.task-state/**/.codex-last-*.txt
+.task-state/**/.grok-prompt-*.txt
+.task-state-*/**/.codex-last-*.txt
+.task-state-*/**/.grok-prompt-*.txt
+
+# --- Project-local scratch (do not commit) ---
+Review/
+context-resilient-task/docs/
+docs/plans/
 .test-mrs-scripts/
 .test-discovery/
-docs/plans/
-Review/
