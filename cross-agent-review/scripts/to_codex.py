@@ -420,24 +420,42 @@ def codex_review_gate(
             sensitive_values,
         )
 
-    def prepare(marker_dir: str) -> str:
-        return _create_last_message_file(marker_dir)
+    def prepare(marker_dir: str) -> dict:
+        # Fallible argv construction stays pre-reservation.
+        last_message_path = _create_last_message_file(marker_dir)
+        try:
+            argv = build_codex_command(
+                cd=cd,
+                last_message_path=last_message_path,
+                model=requested_model,
+            )
+        except Exception:
+            try:
+                if os.path.exists(last_message_path):
+                    os.unlink(last_message_path)
+            except OSError:
+                pass
+            raise
+        return {
+            "last_message_path": last_message_path,
+            "argv": argv,
+            "prompt": build_reviewer_prompt(request_prompt),
+        }
 
-    def invoke(last_message_path: object) -> ReviewResult:
-        argv = build_codex_command(
-            cd=cd,
-            last_message_path=str(last_message_path),
-            model=requested_model,
-        )
+    def invoke(state: object) -> ReviewResult:
+        payload = state if isinstance(state, dict) else {}
+        last_message_path = str(payload.get("last_message_path") or "")
         return run_codex_review(
-            argv,
-            str(last_message_path),
+            list(payload.get("argv") or []),
+            last_message_path,
             runner=runner,
             timeout_seconds=timeout_seconds,
-            prompt=build_reviewer_prompt(request_prompt),
+            prompt=payload.get("prompt"),
         )
 
-    def cleanup(last_message_path: object) -> None:
+    def cleanup(state: object) -> None:
+        payload = state if isinstance(state, dict) else {}
+        last_message_path = payload.get("last_message_path")
         if isinstance(last_message_path, str) and os.path.exists(last_message_path):
             os.unlink(last_message_path)
 

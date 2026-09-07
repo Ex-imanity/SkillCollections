@@ -477,7 +477,11 @@ def review_gate(
         )
         return ReviewResult("credential_missing", None, {}, exit_code=1)
 
-    def invoke(_state: object) -> ReviewResult:
+    def prepare(_marker_dir: str) -> dict:
+        # Fallible argv/env construction stays pre-reservation. The temporary
+        # CLAUDE_CONFIG_DIR is opened here and closed in cleanup so credentials
+        # isolation still spans the subprocess without burning attempts on
+        # setup errors.
         argv = build_command(
             request_prompt,
             add_dirs,
@@ -485,7 +489,9 @@ def review_gate(
             claude_executable=claude_executable,
             model=requested_model,
         )
-        with tempfile.TemporaryDirectory(prefix="cross-agent-review-claude-") as config_dir:
+        config_dir_cm = tempfile.TemporaryDirectory(prefix="cross-agent-review-claude-")
+        config_dir = config_dir_cm.name
+        try:
             child_env = resolve_subprocess_env(
                 readiness,
                 explicit_env,
@@ -493,13 +499,31 @@ def review_gate(
                 claude_config_dir=config_dir,
                 claude_cli_identity=claude_identity,
             )
-            return run_review(
-                argv,
-                runner=runner,
-                env=child_env,
-                timeout_seconds=timeout_seconds,
-                request_prompt=build_reviewer_prompt(request_prompt),
-            )
+        except Exception:
+            config_dir_cm.cleanup()
+            raise
+        return {
+            "argv": argv,
+            "env": child_env,
+            "prompt": build_reviewer_prompt(request_prompt),
+            "config_dir_cm": config_dir_cm,
+        }
+
+    def invoke(state: object) -> ReviewResult:
+        payload = state if isinstance(state, dict) else {}
+        return run_review(
+            list(payload.get("argv") or []),
+            runner=runner,
+            env=payload.get("env"),
+            timeout_seconds=timeout_seconds,
+            request_prompt=payload.get("prompt"),
+        )
+
+    def cleanup(state: object) -> None:
+        payload = state if isinstance(state, dict) else {}
+        config_dir_cm = payload.get("config_dir_cm")
+        if config_dir_cm is not None:
+            config_dir_cm.cleanup()
 
     def failure_detail(result: ReviewResult) -> str:
         value = result.envelope.get("result") if isinstance(result.envelope, dict) else None
@@ -524,6 +548,8 @@ def review_gate(
         output_path=output_path,
         timeout_seconds=timeout_seconds,
         requested_model=requested_model,
+        prepare=prepare,
+        cleanup=cleanup,
         failure_detail=failure_detail,
         cost_extra=cost_extra,
     )

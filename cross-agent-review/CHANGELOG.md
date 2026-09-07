@@ -13,9 +13,10 @@
 
 ## 2.1.0 - 2026-09-07
 
-- 抽出公共 `common.run_review_gate`：三向 gate 共享 lock → reserve → invoke → cost → cleanup → persist/commit 编排
-- Grok provenance 与 Codex 对称：成功须 `sessionId` **且** `usage.input_tokens/output_tokens` 非负完整对
-- 文档与回归同步（含 missing usage pair）
+- 抽出公共 `common.run_review_gate`：三向 gate 共享 lock → prepare → reserve → invoke → cost → cleanup → persist/commit 编排
+- 可失败的 argv/env 构建放在 `prepare`（预留 attempt 之前），避免 setup 错误烧 attempt / 假 `review_started`
+- Grok provenance 与 Codex 对称：成功须 `sessionId` **且** `usage.input_tokens/output_tokens` 非负完整对；`usage_is_incomplete` 写入 provenance 诊断
+- 文档与回归同步（含 missing usage pair、prepare 失败不烧 attempt）
 
 ## 2.0.1 - 2026-09-07
 

@@ -233,7 +233,12 @@ def _grok_provenance_detail(envelope: dict) -> str:
         missing.append("sessionId")
     if not _valid_usage_token_pair(envelope.get("usage")):
         missing.append("usage.input_tokens/output_tokens")
-    return f"grok provenance incomplete: missing verified {missing}"
+    detail = f"grok provenance incomplete: missing verified {missing}"
+    # Headless Grok may omit the usage object when usage_is_incomplete is true.
+    incomplete = envelope.get("usage_is_incomplete")
+    if incomplete is True:
+        detail += "; usage_is_incomplete=true"
+    return detail
 
 
 def _valid_grok_completion(envelope: dict) -> bool:
@@ -439,28 +444,42 @@ def grok_review_gate(
             sensitive_values,
         )
 
-    def prepare(marker_dir: str) -> str:
-        return _create_prompt_file(marker_dir, build_reviewer_prompt(request_prompt))
-
-    def invoke(prompt_path: object) -> ReviewResult:
-        argv = build_grok_command(
-            prompt_file=str(prompt_path),
-            cwd=cd,
-            model=requested_model,
-        )
+    def prepare(marker_dir: str) -> dict:
+        # Fallible argv/env construction stays pre-reservation so a setup error
+        # does not burn an attempt or emit a false review_started.
+        prompt_path = _create_prompt_file(marker_dir, build_reviewer_prompt(request_prompt))
+        try:
+            argv = build_grok_command(
+                prompt_file=prompt_path,
+                cwd=cd,
+                model=requested_model,
+            )
+        except Exception:
+            try:
+                if os.path.exists(prompt_path):
+                    os.unlink(prompt_path)
+            except OSError:
+                pass
+            raise
         child_env = dict(os.environ)
         if explicit_env:
             for key, value in explicit_env.items():
                 if value is not None:
                     child_env[key] = value
+        return {"prompt_path": prompt_path, "argv": argv, "env": child_env}
+
+    def invoke(state: object) -> ReviewResult:
+        payload = state if isinstance(state, dict) else {}
         return run_grok_review(
-            argv,
+            list(payload.get("argv") or []),
             runner=runner,
-            env=child_env,
+            env=payload.get("env"),
             timeout_seconds=timeout_seconds,
         )
 
-    def cleanup(prompt_path: object) -> None:
+    def cleanup(state: object) -> None:
+        payload = state if isinstance(state, dict) else {}
+        prompt_path = payload.get("prompt_path")
         if isinstance(prompt_path, str) and os.path.exists(prompt_path):
             os.unlink(prompt_path)
 

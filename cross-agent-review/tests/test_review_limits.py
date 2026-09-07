@@ -1590,6 +1590,75 @@ class GrokReviewerTests(unittest.TestCase):
 
 
 
+
+    def test_grok_setup_error_before_invoke_does_not_burn_attempt(self) -> None:
+        def runner_must_not_start(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            raise AssertionError("runner must not start when prepare fails")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(to_grok, "grok_available", return_value=True):
+                result = to_grok.grok_review_gate(
+                    request_prompt="Review the artifact.",
+                    cd="",  # fails build_grok_command in prepare
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-preflight",
+                    artifact_key="artifact-preflight",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "settings.json"),
+                    runner=runner_must_not_start,
+                    timeout_seconds=1,
+                )
+
+            self.assertEqual("setup_failure", result.status)
+            self.assertFalse((root / "rounds.json").exists())
+
+    def test_claude_env_resolve_failure_before_reserve_does_not_burn_attempt(self) -> None:
+        def runner_must_not_start(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            raise AssertionError("runner must not start when prepare fails")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings_path = root / "settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "env": {
+                            "ANTHROPIC_BASE_URL": "https://settings.example.invalid",
+                            "ANTHROPIC_AUTH_TOKEN": "settings-token",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def vanishing_resolve(*_a: object, **_k: object) -> dict:
+                raise ValueError("configured ANTHROPIC_BASE_URL disappeared before invocation")
+
+            with (
+                mock.patch.object(to_claude, "claude_available", return_value=True),
+                mock.patch.object(to_claude, "resolve_subprocess_env", side_effect=vanishing_resolve),
+            ):
+                result = to_claude.review_gate(
+                    request_prompt="Review the artifact.",
+                    add_dirs=[str(root)],
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-env",
+                    artifact_key="artifact-env",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(settings_path),
+                    runner=runner_must_not_start,
+                    timeout_seconds=1,
+                    max_budget_usd=1.0,
+                )
+
+            self.assertEqual("setup_failure", result.status)
+            self.assertFalse((root / "rounds.json").exists())
+
+
+
 class CodexProvenanceTests(unittest.TestCase):
     """Tolerant, fail-closed provenance extraction across codex schema drift."""
 
