@@ -41,14 +41,26 @@ from .common import (
     build_reviewer_prompt,
     check_attempt_cap,
     emit_review_started,
-    fail_closed,
-    gate_failure_result,
+    fail_closed as _fail_closed,
+    gate_failure_result as _gate_failure_result,
     has_review_verdict,
     log_cost,
     persist_success,
     round_cap_guard,
     validate_requested_model,
 )
+
+_REVIEWER_NAME = "ClaudeCode"
+
+
+def fail_closed(*args, **kwargs):
+    kwargs.setdefault("reviewer", _REVIEWER_NAME)
+    return _fail_closed(*args, **kwargs)
+
+
+def gate_failure_result(*args, **kwargs):
+    kwargs.setdefault("reviewer", _REVIEWER_NAME)
+    return _gate_failure_result(*args, **kwargs)
 
 INHERITED_CLAUDE_IDENTITY_KEYS = (
     "ANTHROPIC_CUSTOM_HEADERS",

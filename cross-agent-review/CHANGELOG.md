@@ -11,6 +11,17 @@
 
 规则：不是每个 commit 都要升版本，但每次升版本必须在此留下条目。
 
+## 2.0.1 - 2026-09-07
+
+修复 ClaudeCode 互审 finding（F3/F1/F4/F5/F2）：
+
+- `to_grok`：成功须 `stopReason == "end_turn"`，否则 `completion_failure`（防截断带 verdict 伪成功）
+- `to_grok`：stdout 从首个 `{` `raw_decode`，容忍 leading banner
+- `to_grok`：成本仅接受有限数值；缺省/非数/NaN/Inf 记 `null`（去掉未 empirically 验证的 `cost_is_partial` 分支）
+- `to_grok` / `to_codex`：临时文件 cleanup 失败不再丢弃已验证成功的 review（记 `cleanup_warning`）
+- `common.fail_closed` / `gate_failure_result`：按 `reviewer=` 标注方向，去掉写死的 Codex→ClaudeCode 文案
+- 回归：stopReason、banner JSON、cleanup-on-success、handoff 脱敏与 reviewer 文案
+
 ## 2.0.0 - 2026-09-07
 
 MAJOR：统一 reviewer 桥命名（历史模块路径移除），并新增 Grok 第三 peer：

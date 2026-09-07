@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import io
 import json
 import subprocess
@@ -1091,6 +1092,7 @@ class ModelSelectionTests(unittest.TestCase):
                     {
                         "text": "APPROVE",
                         "sessionId": "grok-model-session",
+                        "stopReason": "end_turn",
                         "total_cost_usd": 0.01,
                         "usage": {"input_tokens": 2, "output_tokens": 3},
                     }
@@ -1182,6 +1184,7 @@ class GrokReviewerTests(unittest.TestCase):
                     {
                         "text": "APPROVE\n\nLooks solid.",
                         "sessionId": "sess-grok-1",
+                        "stopReason": "end_turn",
                         "total_cost_usd": 0.02,
                         "usage": {"input_tokens": 10, "output_tokens": 4},
                     }
@@ -1286,8 +1289,9 @@ class GrokReviewerTests(unittest.TestCase):
                     {
                         "text": "APPROVE",
                         "sessionId": "sess-partial",
-                        "cost_is_partial": True,
-                        "total_cost_usd": 0.0,
+                        "stopReason": "end_turn",
+                        # Non-numeric cost must stay null — never fabricate 0.
+                        "total_cost_usd": "unknown",
                     }
                 ),
                 stderr="",
@@ -1406,6 +1410,158 @@ class GrokReviewerTests(unittest.TestCase):
 
             self.assertEqual("setup_failure", result.status)
             self.assertFalse((root / "rounds.json").exists())
+
+
+
+    def test_grok_requires_end_turn_stop_reason(self) -> None:
+        def runner(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=["grok"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "text": "APPROVE",
+                        "sessionId": "sess-trunc",
+                        "stopReason": "max_tokens",
+                        "total_cost_usd": 0.01,
+                    }
+                ),
+                stderr="",
+            )
+
+        result = to_grok.run_grok_review(["grok"], runner=runner, timeout_seconds=1)
+        self.assertEqual("completion_failure", result.status)
+        self.assertIn("end_turn", result.envelope["detail"])
+        self.assertIn("max_tokens", result.envelope["detail"])
+
+    def test_grok_parses_json_object_after_leading_banner(self) -> None:
+        def runner(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+            payload = json.dumps(
+                {
+                    "text": "APPROVE",
+                    "sessionId": "sess-banner",
+                    "stopReason": "end_turn",
+                    "total_cost_usd": 0.02,
+                }
+            )
+            return subprocess.CompletedProcess(
+                args=["grok"],
+                returncode=0,
+                stdout=f"warning: noisy banner\n{payload}\n",
+                stderr="",
+            )
+
+        result = to_grok.run_grok_review(["grok"], runner=runner, timeout_seconds=1)
+        self.assertEqual("success", result.status)
+        self.assertEqual("sess-banner", result.envelope["session_id"])
+        self.assertEqual(0.02, result.envelope["total_cost_usd"])
+
+    def test_grok_nan_or_inf_cost_is_null(self) -> None:
+        for raw in (float("nan"), float("inf"), float("-inf")):
+            def runner(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+                return subprocess.CompletedProcess(
+                    args=["grok"],
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "text": "APPROVE",
+                            "sessionId": "sess-cost",
+                            "stopReason": "end_turn",
+                            "total_cost_usd": raw,
+                        },
+                        allow_nan=True,
+                    ),
+                    stderr="",
+                )
+
+            result = to_grok.run_grok_review(["grok"], runner=runner, timeout_seconds=1)
+            self.assertEqual("success", result.status)
+            self.assertIsNone(result.envelope["total_cost_usd"])
+
+    def test_grok_cleanup_failure_does_not_drop_successful_review(self) -> None:
+        def successful_runner(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=argv,
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "text": "APPROVE",
+                        "sessionId": "sess-cleanup",
+                        "stopReason": "end_turn",
+                        "total_cost_usd": 0.03,
+                    }
+                ),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_path = root / "review.md"
+            real_unlink = os.unlink
+
+            def flaky_unlink(path: str, *args: object, **kwargs: object) -> None:
+                if ".grok-prompt-" in str(path):
+                    raise OSError("simulated unlink failure")
+                return real_unlink(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(to_grok, "grok_available", return_value=True),
+                mock.patch.object(to_grok.os, "unlink", side_effect=flaky_unlink),
+            ):
+                result = to_grok.grok_review_gate(
+                    request_prompt="Review the artifact.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-cleanup",
+                    artifact_key="artifact-cleanup",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    output_path=str(output_path),
+                    settings_path=str(root / "settings.json"),
+                    runner=successful_runner,
+                    timeout_seconds=1,
+                )
+
+            self.assertEqual("success", result.status)
+            self.assertIn("cleanup_warning", result.envelope)
+            self.assertTrue(output_path.is_file())
+            self.assertIn("APPROVE", output_path.read_text(encoding="utf-8"))
+            counts = json.loads((root / "rounds.json").read_text(encoding="utf-8"))
+            self.assertEqual(1, counts["artifact-cleanup"]["successes"])
+
+    def test_grok_sensitive_values_redact_xai_keys_in_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            handoff = common.fail_closed(
+                str(root),
+                "gate-secret",
+                "other_error",
+                "token leak xai-secret-value-123456",
+                "request mentions xai-secret-value-123456",
+                sensitive_values=["xai-secret-value-123456"],
+                reviewer="Grok",
+            )
+            body = Path(handoff).read_text(encoding="utf-8")
+            self.assertNotIn("xai-secret-value-123456", body)
+            self.assertIn("[REDACTED]", body)
+            self.assertIn("Grok adapter", body)
+            self.assertNotIn("Codex->ClaudeCode", body)
+
+    def test_fail_closed_names_reviewer_without_legacy_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = common.fail_closed(
+                str(root),
+                "gate-x",
+                "other_error",
+                "boom",
+                "request",
+                reviewer="Codex",
+            )
+            body = Path(path).read_text(encoding="utf-8")
+            self.assertIn("Codex adapter", body)
+            self.assertNotIn("Codex->ClaudeCode", body)
+
 
 
 class CodexProvenanceTests(unittest.TestCase):

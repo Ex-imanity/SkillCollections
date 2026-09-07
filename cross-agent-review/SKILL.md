@@ -1,6 +1,6 @@
 ---
 name: cross-agent-review
-version: 2.0.0
+version: 2.0.1
 description: >-
   Use when one local AI agent (Codex, ClaudeCode, or Grok) should have a DIFFERENT
   local agent perform a review of a plan or code without changing the primary

@@ -37,14 +37,26 @@ from .common import (
     build_reviewer_prompt,
     check_attempt_cap,
     emit_review_started,
-    fail_closed,
-    gate_failure_result,
+    fail_closed as _fail_closed,
+    gate_failure_result as _gate_failure_result,
     has_review_verdict,
     log_cost,
     persist_success,
     round_cap_guard,
     validate_requested_model,
 )
+
+_REVIEWER_NAME = "Grok"
+
+
+def fail_closed(*args, **kwargs):
+    kwargs.setdefault("reviewer", _REVIEWER_NAME)
+    return _fail_closed(*args, **kwargs)
+
+
+def gate_failure_result(*args, **kwargs):
+    kwargs.setdefault("reviewer", _REVIEWER_NAME)
+    return _gate_failure_result(*args, **kwargs)
 
 DEFAULT_SETTINGS_PATH = os.path.expanduser("~/.claude/settings.json")
 # Auth-failure signatures in grok stderr / error envelopes. Specific phrases only.
@@ -175,6 +187,8 @@ def classify_grok(exit_code: int, envelope: dict, stderr: str = "") -> str:
     """Classify a headless grok JSON result: success | auth_failure | other_error.
 
     Readiness is judged on the real envelope, never on an auth-status command.
+    A success classification still requires provenance + stopReason checks in
+    ``run_grok_review`` before the gate treats the review as verified.
     """
     if not isinstance(envelope, dict):
         return "other_error"
@@ -190,9 +204,48 @@ def classify_grok(exit_code: int, envelope: dict, stderr: str = "") -> str:
     return "other_error"
 
 
+def _envelope_stop_reason(envelope: dict) -> Optional[str]:
+    for key in ("stopReason", "stop_reason"):
+        value = envelope.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _valid_grok_provenance(envelope: dict) -> bool:
     """Require a real session id on success; cost may be null when withheld."""
     return _envelope_session_id(envelope) is not None
+
+
+def _valid_grok_completion(envelope: dict) -> bool:
+    """Require a complete-turn signal so truncated reviews cannot pass.
+
+    Live headless Grok reports ``stopReason: "end_turn"`` on a finished
+    successful turn. Other values (or absence) fail closed.
+    """
+    return _envelope_stop_reason(envelope) == "end_turn"
+
+
+def _parse_json_object(stdout: str) -> dict:
+    """Parse the first JSON object from stdout (tolerate leading banners)."""
+    text = stdout or ""
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("no json object in stdout")
+    obj, _end = json.JSONDecoder().raw_decode(text, start)
+    if not isinstance(obj, dict):
+        raise ValueError("envelope is not an object")
+    return obj
+
+
+def _normalize_total_cost(raw_cost: object) -> Optional[float]:
+    """Record provider cost only when it is a real finite number; never fake 0."""
+    if isinstance(raw_cost, bool) or not isinstance(raw_cost, (int, float)):
+        return None
+    value = float(raw_cost)
+    if value != value or value in (float("inf"), float("-inf")):  # NaN/Inf
+        return None
+    return value
 
 
 def run_grok_review(
@@ -221,9 +274,7 @@ def run_grok_review(
     stderr = getattr(completed, "stderr", "") or ""
     stdout = getattr(completed, "stdout", "") or ""
     try:
-        envelope = json.loads(stdout)
-        if not isinstance(envelope, dict):
-            raise ValueError("envelope is not an object")
+        envelope = _parse_json_object(stdout)
     except (ValueError, TypeError):
         return ReviewResult(
             status="other_error",
@@ -234,26 +285,23 @@ def run_grok_review(
 
     status = classify_grok(exit_code, envelope, stderr)
     text = _envelope_text(envelope)
+    stop_reason = _envelope_stop_reason(envelope)
     if status == "success" and not has_review_verdict(text):
         status = "other_error"
     if status == "success" and not _valid_grok_provenance(envelope):
         status = "provenance_failure"
+    if status == "success" and not _valid_grok_completion(envelope):
+        status = "completion_failure"
 
     session_id = _envelope_session_id(envelope)
     usage = _envelope_usage(envelope)
-    raw_cost = envelope.get("total_cost_usd")
-    if (
-        isinstance(raw_cost, (int, float))
-        and not isinstance(raw_cost, bool)
-        and envelope.get("cost_is_partial") is not True
-    ):
-        total_cost: Optional[float] = float(raw_cost)
-    else:
-        # Absent or partial cost stays null — never fabricate 0.
-        total_cost = None
+    total_cost = _normalize_total_cost(envelope.get("total_cost_usd"))
 
     if status == "provenance_failure":
         detail = "grok provenance incomplete: missing verified sessionId"
+    elif status == "completion_failure":
+        observed = stop_reason if stop_reason is not None else "<missing>"
+        detail = f"grok completion incomplete: stopReason must be end_turn, got {observed!r}"
     elif status == "success":
         detail = ""
     else:
@@ -265,7 +313,7 @@ def run_grok_review(
         "usage": usage,
         "total_cost_usd": total_cost,
         "text": text,
-        "stopReason": envelope.get("stopReason"),
+        "stopReason": stop_reason,
         "num_turns": envelope.get("num_turns"),
     }
     effective_exit_code = exit_code if status == "success" or exit_code != 0 else 1
@@ -452,16 +500,6 @@ def grok_review_gate(
                     except OSError as exc:
                         cleanup_error = exc
 
-            if cleanup_error is not None:
-                detail = f"{type(cleanup_error).__name__}: {cleanup_error}"
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    "cleanup_failure",
-                    detail,
-                    request_prompt,
-                    sensitive_values,
-                )
             if log_error is not None:
                 detail = f"{type(log_error).__name__}: {log_error}"
                 return gate_failure_result(
@@ -475,6 +513,11 @@ def grok_review_gate(
                 )
 
             if result.status != "success":
+                # Temp-file cleanup failure is secondary once the review already failed.
+                if cleanup_error is not None:
+                    result.envelope["cleanup_warning"] = (
+                        f"{type(cleanup_error).__name__}: {cleanup_error}"
+                    )
                 return gate_failure_result(
                     handoff_dir,
                     gate_id,
@@ -485,6 +528,13 @@ def grok_review_gate(
                     result.envelope,
                 )
 
+            # A verified paid review must not be discarded solely because the
+            # temporary prompt file could not be unlinked.
+            if cleanup_error is not None:
+                result.envelope["cleanup_warning"] = (
+                    f"{type(cleanup_error).__name__}: {cleanup_error}"
+                )
+
             if output_path:
                 try:
                     persist_success(
@@ -492,7 +542,7 @@ def grok_review_gate(
                         gate_id=gate_id,
                         result=result,
                         sensitive_values=sensitive_values,
-                        reviewer="Grok",
+                        reviewer=_REVIEWER_NAME,
                     )
                 except (OSError, ValueError) as exc:
                     detail = f"{type(exc).__name__}: {exc}"

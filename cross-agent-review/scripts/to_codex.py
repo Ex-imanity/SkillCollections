@@ -30,8 +30,8 @@ from .common import (
     _safe_gate_id,
     check_attempt_cap,
     emit_review_started,
-    fail_closed,
-    gate_failure_result,
+    fail_closed as _fail_closed,
+    gate_failure_result as _gate_failure_result,
     log_cost,
     MODEL_FLAG,
     build_reviewer_prompt,
@@ -39,6 +39,18 @@ from .common import (
     round_cap_guard,
     validate_requested_model,
 )
+
+_REVIEWER_NAME = "Codex"
+
+
+def fail_closed(*args, **kwargs):
+    kwargs.setdefault("reviewer", _REVIEWER_NAME)
+    return _fail_closed(*args, **kwargs)
+
+
+def gate_failure_result(*args, **kwargs):
+    kwargs.setdefault("reviewer", _REVIEWER_NAME)
+    return _gate_failure_result(*args, **kwargs)
 
 DEFAULT_SETTINGS_PATH = os.path.expanduser("~/.claude/settings.json")
 # Auth-failure signatures in codex stderr. Specific phrases only (no bare "login").
@@ -487,16 +499,6 @@ def codex_review_gate(
                 except OSError as exc:
                     cleanup_error = exc
 
-            if cleanup_error is not None:
-                detail = f"{type(cleanup_error).__name__}: {cleanup_error}"
-                return gate_failure_result(
-                    handoff_dir,
-                    gate_id,
-                    "cleanup_failure",
-                    detail,
-                    request_prompt,
-                    sensitive_values,
-                )
             if log_error is not None:
                 detail = f"{type(log_error).__name__}: {log_error}"
                 return gate_failure_result(
@@ -510,6 +512,10 @@ def codex_review_gate(
                 )
 
             if result.status != "success":
+                if cleanup_error is not None:
+                    result.envelope["cleanup_warning"] = (
+                        f"{type(cleanup_error).__name__}: {cleanup_error}"
+                    )
                 return gate_failure_result(
                     handoff_dir,
                     gate_id,
@@ -520,6 +526,13 @@ def codex_review_gate(
                     result.envelope,
                 )
 
+            # A verified review must not be discarded solely because the temp
+            # last-message file could not be unlinked.
+            if cleanup_error is not None:
+                result.envelope["cleanup_warning"] = (
+                    f"{type(cleanup_error).__name__}: {cleanup_error}"
+                )
+
             if output_path:
                 try:
                     persist_success(
@@ -527,7 +540,7 @@ def codex_review_gate(
                         gate_id=gate_id,
                         result=result,
                         sensitive_values=sensitive_values,
-                        reviewer="Codex",
+                        reviewer=_REVIEWER_NAME,
                     )
                 except (OSError, ValueError) as exc:
                     detail = f"{type(exc).__name__}: {exc}"

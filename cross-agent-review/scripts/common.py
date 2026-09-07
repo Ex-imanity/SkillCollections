@@ -430,24 +430,26 @@ def fail_closed(
     detail: str,
     request_prompt: str,
     sensitive_values: Optional[list] = None,
+    reviewer: str = "reviewer",
 ) -> str:
     """Write a durable handoff instead of fabricating a reviewer response.
 
     The primary must NOT invent reviewer output and must NOT mutate auth state.
-    A human continues the review in an interactive ClaudeCode session.
+    A human continues the review interactively on the named reviewer route.
     """
     os.makedirs(handoff_dir, exist_ok=True)
     path = os.path.join(handoff_dir, f"handoff-{_safe_gate_id(gate_id)}.md")
     safe_detail = _redact_sensitive_text(str(detail), sensitive_values)
     safe_request = _redact_sensitive_text(str(request_prompt), sensitive_values)
+    safe_reviewer = _redact_sensitive_text(str(reviewer or "reviewer"), sensitive_values)
     body = (
         f"# Cross-Agent Review Handoff — {gate_id}\n\n"
         f"Status: **{status}** (fail-closed)\n\n"
         f"Detail: {safe_detail}\n\n"
-        "The Codex->ClaudeCode adapter could not obtain a verified reviewer "
+        f"The {safe_reviewer} adapter could not obtain a verified reviewer "
         "envelope, so it did NOT fabricate a review and did NOT change auth "
-        "state. A human should continue this review in an interactive "
-        "ClaudeCode session (handoff), then hand the verdict back to the "
+        "state. A human should continue this review interactively on the "
+        f"{safe_reviewer} route (handoff), then hand the verdict back to the "
         "primary.\n\n"
         "## Original review request (verbatim)\n\n"
         f"{safe_request}\n"
@@ -464,6 +466,7 @@ def gate_failure_result(
     request_prompt: str,
     sensitive_values: Optional[list] = None,
     envelope: Optional[dict] = None,
+    reviewer: str = "reviewer",
 ) -> ReviewResult:
     """Return a structured failure and make a best effort to persist handoff."""
     failure_envelope = dict(envelope or {})
@@ -476,6 +479,7 @@ def gate_failure_result(
             detail,
             request_prompt,
             sensitive_values,
+            reviewer=reviewer,
         )
     except (OSError, ValueError) as exc:
         failure_envelope["handoff_error"] = f"{type(exc).__name__}: {exc}"
@@ -491,8 +495,8 @@ def persist_success(
 ) -> str:
     """Persist a verified reviewer result without serializing the raw envelope.
 
-    `reviewer` names the agent that produced the review (ClaudeCode for the
-    codex->claude direction, Codex for the claude->codex direction).
+    `reviewer` names the agent that produced the review (ClaudeCode, Codex,
+    Grok, or a future peer).
     """
     if result.status != "success" or not isinstance(result.text, str) or not result.text.strip():
         raise ValueError("only a verified non-empty review can be persisted")
