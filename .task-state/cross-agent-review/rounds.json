@@ -7,6 +7,30 @@
     "attempts": 1,
     "successes": 1
   },
+  "cross-agent-review-2.0.0-to-star-and-grok": {
+    "attempts": 2,
+    "successes": 0
+  },
+  "cross-agent-review-2.0.0-to-star-and-grok-claude": {
+    "attempts": 1,
+    "successes": 1
+  },
+  "cross-agent-review-2.0.0-to-star-and-grok-sol": {
+    "attempts": 2,
+    "successes": 0
+  },
+  "cross-agent-review-2.0.0-to-star-and-grok-sol-v2": {
+    "attempts": 1,
+    "successes": 0
+  },
+  "cross-agent-review-2.1.0-run-gate-rereview": {
+    "attempts": 1,
+    "successes": 1
+  },
+  "cross-agent-review-2.1.0-run-gate-rereview2": {
+    "attempts": 1,
+    "successes": 1
+  },
   "cross-agent-review-lifecycle-prompt-v1": {
     "attempts": 1,
     "successes": 1
@@ -18,6 +42,10 @@
   "cross-agent-review-p1-hardening": {
     "attempts": 1,
     "successes": 0
+  },
+  "cross-agent-review-terra-availability-probe": {
+    "attempts": 1,
+    "successes": 1
   },
   "cross-agent-review-unattended-execution-v1": {
     "attempts": 1,
