@@ -48,7 +48,11 @@ File naming, structure, and path conventions to ensure reliable recovery.
 - Append-only (new entries at bottom)
 - **Required** when: multi-session, multi-agent, or >10 phases
 - Optional for small/single-session tasks
-- This is where "Latest Stable Conclusions" belong — NOT in task_state.md
+
+**utils.md**
+- Stable pointers for developer tools, databases, servers, log platforms, local resources and their paths/endpoints.
+- Keep it separate from findings, decisions and deliverables; update sections in place.
+- Record credential names/access requirements and sensitivity, never secret values.
 
 ### Optional Files (Tier 2)
 
@@ -213,6 +217,7 @@ If other reference files need tracking, use a separate **Reference Index** secti
 | decisions.md | Stable conclusion reached, scope change, design decision | **Append only** |
 | findings.md | Immediately after any discovery | **Append only** |
 | progress.md | After each significant action | **Append only** |
+| utils.md | Tool/environment/resource profile changes | **In-place by section** |
 
 ## Validation Rules
 

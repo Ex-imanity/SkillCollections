@@ -32,8 +32,13 @@ from _state_probe import (  # noqa: E402
     project_root_for,
     read_mrs_metadata,
     read_state,
+    read_context_entries,
+    read_context_entry_records,
+    format_context_entry,
     snapshot_mtime,
     source_changes,
+    mrs_updated_mtime,
+    bounded_text,
 )
 
 MARKER = "🗂  context-resilient-task"
@@ -70,18 +75,19 @@ def render_single(mrs_dir: Path) -> str:
     lines.append("## Reconstructed Task State")
     lines.append("")
     lines.append(f"### Goal (from task_state.md, updated {state['updated']})")
-    lines.append(state["goal"])
+    lines.append(bounded_text(state["goal"], 700))
     lines.append("")
     lines.append(f"### Status\n{state['status']}")
     lines.append("")
     lines.append("### Active Todos (from task_state.md)")
-    lines.append(state["active_todos"] if is_meaningful(state["active_todos"]) else "_(none)_")
+    todos = state["active_todos"] if is_meaningful(state["active_todos"]) else "_(none)_"
+    lines.append(bounded_text(todos, 1200))
     lines.append("")
     if is_meaningful(state["current_phase"]):
         lines.append(f"### Current Phase\n{state['current_phase']}")
         lines.append("")
     lines.append("### Next Required Action")
-    lines.append(state["next_action"] if is_meaningful(state["next_action"]) else "(not recorded — read plan.md)")
+    lines.append(bounded_text(state["next_action"], 700) if is_meaningful(state["next_action"]) else "(not recorded — read plan.md)")
     lines.append("")
 
     artifacts = list_artifacts(mrs_dir)
@@ -97,21 +103,33 @@ def render_single(mrs_dir: Path) -> str:
         lines.append("")
         lines.append(drift)
 
+    context_blocks = (
+        ("Stable Decisions", "decisions.md"),
+        ("Key Findings", "findings.md"),
+        ("Utilities", "utils.md"),
+    )
+    for title, filename in context_blocks:
+        entries = read_context_entries(mrs_dir, filename)
+        if filename == "utils.md":
+            entries = [format_context_entry(record) for record in read_context_entry_records(mrs_dir, filename) if record["sensitivity"] in {"public", "internal"}]
+        if entries:
+            lines.append("")
+            lines.append(f"### {title} (latest entries from {filename})")
+            for entry in entries:
+                lines.append("\n".join("### " + line.lstrip("#").strip() if line.startswith("# ") else ("### " + line[3:] if line.startswith("## ") else line) for line in entry.splitlines()))
+
     if state["status"].strip().lower() == "completed":
         lines.append("")
         lines.append("ℹ Task is marked COMPLETED — prompt to archive, start a new task, or reopen.")
 
     lines.append("")
     lines.append("Reminder: reconstruct facts from these artifacts, cite sources, mark unknowns as Unknown.")
-    return "\n".join(lines)
+    return bounded_text("\n".join(lines))
 
 
 def render_multiple(mrs_dirs: list[Path]) -> str:
-    entries = sorted(
-        (read_mrs_metadata(p) for p in mrs_dirs),
-        key=lambda e: e["updated"] or 0,
-        reverse=True,
-    )
+    mrs_dirs = sorted(mrs_dirs, key=mrs_updated_mtime, reverse=True)
+    entries = [read_mrs_metadata(p) for p in mrs_dirs]
     lines = [
         f"{MARKER} — {len(entries)} task states found; DO NOT assume which is current.",
         "",
@@ -126,7 +144,23 @@ def render_multiple(mrs_dirs: list[Path]) -> str:
         )
     lines.append("")
     lines.append("* = most recently updated (recommended). ASK the user which task to resume before continuing.")
-    return "\n".join(lines)
+    if entries:
+        latest = mrs_dirs[0]
+        lines.append("")
+        lines.append("### Latest MRS Context (bounded)")
+        for filename, title in (("decisions.md", "Stable Decisions"), ("findings.md", "Key Findings"), ("utils.md", "Utilities")):
+            records = read_context_entry_records(latest, filename, limit=2, max_chars=700)
+            if filename == "utils.md":
+                records = [record for record in records if record["sensitivity"] in {"public", "internal"}]
+            if records:
+                lines.append(f"#### {title}")
+                for record in records:
+                    formatted = format_context_entry(record, 700)
+                    lines.append("\n".join("### " + line[3:] if line.startswith("## ") else line for line in formatted.splitlines()))
+    output = "\n".join(lines)
+    if len(output) > 4000:
+        return output[:3957].rstrip() + "\n… (digest truncated to 4000 characters)"
+    return output
 
 
 def build_output(start: Path, as_json: bool) -> str:

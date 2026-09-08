@@ -120,7 +120,8 @@ def render_task_state(goal: str, requirements: list[str], agent: str) -> str:
 
     artifacts = (
         "- plan.md (created at init)\n"
-        "- snapshot.md (created at init)"
+        "- snapshot.md (created at init)\n"
+        "- utils.md (created at init)"
     )
 
     return template.format(
@@ -160,6 +161,9 @@ def render_initial_snapshot(goal: str, requirements: list[str]) -> str:
         current_focus=current_focus,
         blockers="- (None)",
         files_modified="- (No source changes yet)",
+        stable_decisions="- (None recorded)",
+        key_findings="- (None recorded)",
+        utilities="- (None recorded)",
         next_session_notes=f"- Goal: {goal}\n- Next action: {current_focus}",
     )
 
@@ -201,6 +205,7 @@ def write_files(
             "# Progress\n\n"
             "<!-- Append chronological execution log entries below this line. -->\n"
         ),
+        "utils.md": load_template("utils.template.md"),
     }
 
     if needs_decisions(complexity, multi_agent, requirements):

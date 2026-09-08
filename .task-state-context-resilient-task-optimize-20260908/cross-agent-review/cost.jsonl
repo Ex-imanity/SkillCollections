@@ -1,0 +1,8 @@
+{"gate_id": "crt-optimization-20260908-claude-review", "requested_model": null, "total_cost_usd": 3.6830730000000003, "wall_seconds": 747.166}
+{"gate_id": "crt-optimization-20260908-claude-rereview", "requested_model": null, "total_cost_usd": 4.476977, "wall_seconds": 737.381}
+{"gate_id": "crt-optimization-20260908-claude-rereview-2", "requested_model": null, "total_cost_usd": 3.82120875, "wall_seconds": 691.407}
+{"gate_id": "crt-optimization-20260908-claude-final-review", "requested_model": null, "total_cost_usd": 6.3734655, "wall_seconds": 837.073}
+{"gate_id": "crt-optimization-20260908-claude-final-review-2", "requested_model": null, "total_cost_usd": 3.1048282499999993, "wall_seconds": 604.646}
+{"gate_id": "crt-optimization-20260908-claude-postfix-review", "requested_model": null, "total_cost_usd": 6.321716249999999, "wall_seconds": 942.37}
+{"gate_id": "crt-optimization-20260909-claude-review-1.5.0", "requested_model": null, "total_cost_usd": 3.3731347500000006, "wall_seconds": 622.978}
+{"gate_id": "crt-optimization-20260909-grok-compat", "provider": "grok", "requested_model": null, "total_cost_usd": 0.03075436, "usage": {"cache_creation_input_tokens": 0, "cache_read_input_tokens": 54400, "input_tokens": 32738, "output_tokens": 1443, "reasoning_tokens": 448, "total_tokens": 88581}, "wall_seconds": 30.337}

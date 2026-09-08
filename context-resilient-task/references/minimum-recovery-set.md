@@ -18,6 +18,7 @@ The MRS defines the minimum artifacts required to recover task context without r
 - `decisions.md` - Stable conclusions and design decisions
   - **Required** when: multi-session, multi-agent, or >10 phases
   - Optional for small/single-session tasks
+- `utils.md` - Stable tooling, environment, database/server/logging and local resource pointers (created for new MRS; optional for legacy MRS)
 
 **Failure Mode:** Missing Tier 1 → WARNING, ask user to confirm continuation
 
@@ -33,8 +34,12 @@ When skill starts:
 1. Check current directory for Tier 0 files
 2. If all Tier 0 present → Enter recovery mode
 3. If any Tier 0 missing → Enter initialization mode
-4. Check Tier 1, warn if missing
+4. Check Tier 1, warn if missing; include newest bounded decisions/findings/utils in recovery output
 5. Tier 2 is purely informational
+
+Suffixed legacy history headings such as `## Completed Items（第一轮）` are
+allowed with a warning; repeated exact `## Active Todos` or `## Completed Items`
+headings remain invalid.
 
 ## Recovery vs Initialization
 

@@ -37,10 +37,14 @@
 | `findings.md` | 关键发现与技术决策 | **仅追加** |
 | `progress.md` | 会话执行日志 | **仅追加** |
 | `architecture.md` | 架构说明（系统级任务用） | 按需更新 |
+| `decisions.md` | 稳定结论和设计决策（长任务必需） | **仅追加** |
+| `utils.md` | 开发工具、数据库/服务器、日志平台和本地资源指针 | **按区块原地更新** |
 
 **失败模式：** 缺少 → **警告**，降级模式恢复
 
 > **decisions.md**：当项目为多会话、多 agent 或 >10 phases 时，`decisions.md` 升级为 Tier 1 必需文件。它承接稳定结论和设计决策，防止 `task_state.md` 因追加决策历史而失控膨胀。
+
+> **utils.md**：把“如何访问环境/工具/资源”与“发现了什么、决定了什么、交付了什么”分开。记录名称、用途、路径或 endpoint、环境、访问条件和敏感级别；不要记录密钥值。恢复和压缩摘要会读取其最新有限内容。
 
 ### Tier 2：可选增强（MAY exist）
 - `blockers.md` — 当前阻塞问题
@@ -60,6 +64,7 @@
 - **`progress.md`** = Append-only 日志。每次行动追加一条记录，永不覆写。
 - **`snapshot.md`** = 最新快照。每次**覆写整个文件**，不追加新段落。覆写前先归档旧版本。
 - **`decisions.md`** = 稳定结论/决策。Append-only。这是"Latest Stable Conclusions"的正确归档地，不要放在 task_state.md 中。
+- **`utils.md`** = 稳定工具/环境/资源索引。按区块原地更新，不承载发现、决策或交付物。
 - **两者冲突时，`task_state.md` 优先。**
 
 > ⚠️ 常见错误：在 `task_state.md` 末尾追加 `## 2026-02-25 状态更新` 段落。这会导致同一条待办项在文件里出现多次，状态互相矛盾，AI 报告时拿到的是最早出现的"未完成"记录而不是后来的"已完成"记录。
@@ -219,6 +224,7 @@ project/
   │   ├── findings.md          # 发现（仅追加）
   │   ├── progress.md          # 执行日志（仅追加）
   │   ├── decisions.md         # 设计决策（可选）
+  │   ├── utils.md             # 工具/环境/资源指针（新 MRS 自动创建）
   │   ├── blockers.md          # 阻塞项（可选）
   │   └── archive/             # 已完成任务的归档快照
   │
@@ -478,6 +484,7 @@ skill 读取 `task_state.md`，从 `Active Todos` 和 `Next Action` 中还原工
 | [`assets/plan.template.md`](assets/plan.template.md) | plan.md 模板（含 Plan Registry / Reference Index 骨架） |
 | [`assets/snapshot.template.md`](assets/snapshot.template.md) | snapshot.md 模板（覆写式） |
 | [`assets/decisions.template.md`](assets/decisions.template.md) | decisions.md 模板（仅追加） |
+| [`assets/utils.template.md`](assets/utils.template.md) | utils.md 模板（工具/环境/资源指针） |
 | [`scripts/init_mrs.py`](scripts/init_mrs.py) | 初始化 MRS（CLI + 交互向导） |
 | [`scripts/verify_mrs.py`](scripts/verify_mrs.py) | 验证 MRS 健康度（支持 `--json`） |
 | [`scripts/list_mrs.py`](scripts/list_mrs.py) | 发现并列出当前 repo 内所有 MRS |

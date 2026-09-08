@@ -10,6 +10,9 @@ Field reference:
   current_focus     One-line description of the immediate next focus
   blockers          Bullet list of blockers, or "- (None)"
   files_modified    Bullet list of recently modified source files
+  stable_decisions  Bounded tail of decisions.md
+  key_findings      Bounded tail of findings.md
+  utilities         Bounded contents of utils.md
   next_session_notes Bullet list of facts a future session MUST know
 
 Anything above END_TEMPLATE_DOCS is stripped at render time.
@@ -32,6 +35,15 @@ Anything above END_TEMPLATE_DOCS is stripped at render time.
 
 ## Files Modified
 {files_modified}
+
+## Stable Decisions
+{stable_decisions}
+
+## Key Findings
+{key_findings}
+
+## Utilities
+{utilities}
 
 ## Next Session Should Know
 {next_session_notes}

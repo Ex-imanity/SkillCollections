@@ -15,12 +15,14 @@ This snippet ensures all agents (Claude Code, Codex, etc.) follow the same MRS u
 - `progress.md` — 执行日志。**仅追加**，不覆写已有内容。
 - `snapshot.md` — 最新检查点快照。每次**覆写整个文件**，不追加段落。覆写前先归档旧版本。
 - `decisions.md` — 稳定结论与决策记录。**仅追加**。当多会话/多 agent/>10 phases 时必需。
+- `utils.md` — 开发工具、数据库/服务器、日志平台及本地资源路径的稳定指针；按区块原地更新，禁止写入密钥。
 - `plan.md` — 任务计划 + Plan Registry。Registry 仅注册 `docs/plans/*.md`。
 
 ### 待办项规则
 - `task_state.md` 头部的 `Active Todos` 是唯一的待办真相源。
 - 完成待办 = 从 `Active Todos` **删除** + 追加到 `Completed Items`。
 - 不从 `progress.md` 推断待办状态，只读 `task_state.md`。
+- 恢复或压缩前优先读取 `decisions.md`、`findings.md`、`utils.md` 的最新有限条目，避免长日志遮蔽当前约束。
 - 每条待办限单行，详细上下文引用外部文件。
 
 ### 更新后

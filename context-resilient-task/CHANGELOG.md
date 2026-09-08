@@ -11,6 +11,36 @@
 
 规则：不是每个 commit 都要升版本，但每次升版本必须在此留下条目。
 
+## 1.5.0 - 2026-09-08
+
+- 敏感度解析覆盖粗体字段、中文全角冒号、表格行和未知高风险等级，默认 fail-closed。
+- 超长 snapshot 按区块压缩并保留恢复必需区块；统一 list/restore/precompact 的 MRS 新旧排序。
+- 补充 4000 字符预算、敏感度和结构保留回归测试。
+
+## 1.4.0 - 2026-09-08
+
+- 修复超长 task state 导致 snapshot 丢失必需区块、restore 丢失 Next Action 的问题。
+- 敏感度解析兼容 Markdown 粗体、等号和中文标签；`Pinned` 标记兼容模板写法。
+- 统一 MRS recency 信号，确保单/多 MRS 输出预算与必需恢复字段同时满足。
+
+## 1.3.0 - 2026-09-08
+
+- 修复 restricted utils 混合条目泄露、HTML comment/fenced code 源行号错位和单 MRS 输出超限。
+- 统一 restore/precompact 的 MRS 新旧排序，过滤模板脚手架，兼容 `Pinned: yes` 标记并修正嵌入标题层级。
+- 修正文档中的 Tier 1 条目归属与 pinned invariants 说明。
+
+## 1.2.0 - 2026-09-08
+
+- 修复多 MRS 摘要无全局预算、历史日志读取文件头部、轮次后缀权威区块漏检等长对话恢复缺陷。
+- 新增固定约束（`Invariants (pinned)`）优先恢复、utils 敏感度分级与疑似凭据校验。
+- 快照中的嵌入条目降级为三级标题，并在 Tier 1 更新晚于快照时发出漂移告警。
+
+## 1.1.0 - 2026-09-08
+
+- 新 MRS 自动创建 `utils.md`，独立保存工具、环境、数据库/服务器、日志和本地资源指针。
+- 恢复、压缩摘要和快照纳入 `decisions.md`、`findings.md`、`utils.md` 的最新有限条目，降低长对话遗忘风险。
+- 验证器拒绝 `task_state.md` 中重复的 `Active Todos` / `Completed Items` 权威区块；旧 MRS 缺少 `utils.md` 仅告警。
+
 ## 1.0.0 - 2026-09-03
 
 首个标注版本。此前变更见 git 历史，不追认为 release。

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -36,13 +37,24 @@ __all__ = [
     "source_changes",
     "newest_mtime",
     "human_time",
+    "read_context_entries",
+    "read_context_entry_records",
+    "format_context_entry",
+    "context_sensitivity",
+    "has_sensitive_value",
+    "mrs_updated_mtime",
+    "bounded_text",
 ]
 
 TIER0 = ["task_state.md", "plan.md", "snapshot.md"]
-TIER1 = ["findings.md", "progress.md", "decisions.md", "architecture.md"]
+TIER1 = ["findings.md", "progress.md", "decisions.md", "architecture.md", "utils.md"]
 
 _UNKNOWN = "(unknown)"
 _EMPTY_MARKERS = {"", "(unknown)", "(no content)", "_(none)_", "none", "(none)"}
+_NONE_CONTENT = {"(none recorded)", "- (none recorded)", "(none)", "- (none)", "_(none)_"}
+_SENSITIVITY_RE = re.compile(r"(?:\*\*)?\s*(?:sensitivity|敏感度|敏感级别)\s*(?:\*\*)?\s*[:=：]\s*(?:\*\*)?\s*([\w-]+)", re.I)
+_TABLE_SENSITIVITY_RE = re.compile(r"\|[^\n|]*\|\s*(public|internal|restricted|secret|confidential|top-secret|highly\s+confidential|受限)\b", re.I)
+_SECRET_RE = re.compile(r"(?:bearer\s+[A-Za-z0-9._~+/=-]{8,}|(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S+|(?:AKIA|ghp_|github_pat_)[A-Za-z0-9_-]{8,})", re.I)
 
 
 def configure_utf8_stdout() -> None:
@@ -109,6 +121,21 @@ def list_artifacts(mrs_dir: Path) -> list[tuple[str, str]]:
 def snapshot_mtime(mrs_dir: Path) -> float | None:
     path = mrs_dir / "snapshot.md"
     return path.stat().st_mtime if path.exists() else None
+
+
+def mrs_updated_mtime(mrs_dir: Path) -> float:
+    """Use the newest MRS markdown file as the canonical recency signal."""
+    try:
+        return max((item.stat().st_mtime for item in mrs_dir.glob("*.md")), default=0.0)
+    except OSError:
+        return 0.0
+
+
+def bounded_text(text: str, max_chars: int = 4000) -> str:
+    if len(text) <= max_chars:
+        return text
+    suffix = "\n… (output truncated to 4000 characters)"
+    return text[: max_chars - len(suffix)].rstrip() + suffix
 
 
 # Directory prefixes that are the agent's own bookkeeping, not "source drift".
@@ -185,3 +212,118 @@ def newest_mtime(root: Path, rel_paths: list[str]) -> float:
         except OSError:
             continue
     return latest
+
+
+def read_context_entries(
+    mrs_dir: Path,
+    filename: str,
+    limit: int = 3,
+    max_chars: int = 1200,
+) -> list[str]:
+    """Read a bounded tail of markdown ``##`` entries for recovery output.
+
+    Append-only context files can grow for months. Recovery needs the newest
+    entries, but must not flood a fresh context with the entire history.
+    Files without entry headings are treated as one bounded document.
+    """
+    return [format_context_entry(record, max_chars) for record in read_context_entry_records(mrs_dir, filename, limit, max_chars)]
+
+
+def _visible_lines(lines: list[str]) -> tuple[list[tuple[str, int, bool]], set[int]]:
+    """Remove HTML comments and ignore markdown headings inside fenced code.
+
+    The returned line numbers remain those from the original file so source
+    pointers are not shifted by removed template comments.
+    """
+    visible: list[tuple[str, int, bool]] = []
+    in_comment = False
+    in_fence = False
+    for index, line in enumerate(lines):
+        if in_comment:
+            end = line.find("-->")
+            if end < 0:
+                continue
+            line = line[end + 3:]
+            in_comment = False
+        while "<!--" in line:
+            start = line.find("<!--")
+            end = line.find("-->", start + 4)
+            if end < 0:
+                line = line[:start]
+                in_comment = True
+                break
+            line = line[:start] + line[end + 3:]
+        stripped = line.strip()
+        was_fenced = in_fence
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            was_fenced = False
+        visible.append((line, index, was_fenced))
+    return visible, set()
+
+
+def context_sensitivity(text: str) -> str:
+    levels = {group.lower() for match in _SENSITIVITY_RE.finditer(text) for group in match.groups() if group}
+    levels.update(match.group(1).lower() for match in _TABLE_SENSITIVITY_RE.finditer(text))
+    if re.search(r"(?:\bsensitivity\b|敏感度|敏感级别)", text, re.I) and not levels:
+        return "restricted"
+    if levels & {"restricted", "secret", "confidential", "top-secret", "highly confidential", "受限"} or (levels and not levels <= {"public", "internal"}):
+        return "restricted"
+    if "public" in levels:
+        return "public"
+    return "internal"
+
+
+def has_sensitive_value(text: str) -> bool:
+    return bool(_SECRET_RE.search(text))
+
+
+def read_context_entry_records(
+    mrs_dir: Path, filename: str, limit: int = 3, max_chars: int = 1200
+) -> list[dict]:
+    path = mrs_dir / filename
+    if not path.exists() or limit <= 0 or max_chars <= 0:
+        return []
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    visible, _ = _visible_lines(raw_lines)
+    lines = [item[0] for item in visible]
+    starts = [i for i, (_, _, fenced) in enumerate(visible) if not fenced and re.match(r"^##\s+", lines[i])]
+    records: list[dict] = []
+    if starts:
+        for position, start in enumerate(starts):
+            end = starts[position + 1] if position + 1 < len(starts) else len(lines)
+            chunk = "\n".join(lines[start:end]).strip()
+            body = "\n".join(chunk.splitlines()[1:]).strip()
+            if not body or body.lower() in _NONE_CONTENT:
+                continue
+            records.append({
+                "text": chunk,
+                "line": visible[start][1] + 1,
+                "filename": filename,
+                "pinned": bool(re.match(r"^##\s+invariants\s*\(pinned\)", lines[start], re.I)) or bool(re.search(r"^\s*(?:[-*]\s*)?(?:\*\*)?pinned(?:\*\*)?\s*:?\s*(?:\*\*)?\s*yes\b|^\s*(?:[-*]\s*)?pinned\s*:\s*yes\b", body, re.I | re.M)),
+                "sensitivity": context_sensitivity(chunk) if filename == "utils.md" else "internal",
+            })
+    else:
+        text = "\n".join(lines).strip()
+        body = "\n".join(text.splitlines()[1:]).strip() if text.startswith("# ") else text
+        if body and body.lower() not in _NONE_CONTENT:
+            records.append({"text": text, "line": 1, "filename": filename, "pinned": False, "sensitivity": context_sensitivity(text) if filename == "utils.md" else "internal"})
+    pinned = [record for record in records if record["pinned"]]
+    recent = [record for record in records if not record["pinned"]][-limit:]
+    return pinned + recent
+
+
+def format_context_entry(record: dict, max_chars: int = 1200) -> str:
+    text = record["text"].strip()
+    if len(text) <= max_chars:
+        return text
+    lines = text.splitlines()
+    heading = lines[0] if lines else ""
+    body = "\n".join(lines[1:]).strip()
+    pointer = f"… (truncated; full content in {record.get('filename', 'source')}:{record['line']})"
+    budget = max(0, max_chars - len(heading) - len(pointer) - 3)
+    tail = body[-budget:] if budget else ""
+    return f"{heading}\n{tail}\n{pointer}".strip()

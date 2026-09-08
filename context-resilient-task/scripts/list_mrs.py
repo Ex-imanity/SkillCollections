@@ -115,8 +115,8 @@ def main() -> int:
         print(f"Error: {start} is not a directory", file=sys.stderr)
         return 1
 
-    entries = [read_mrs_metadata(path) for path in find_mrs_dirs(start)]
-    entries.sort(key=lambda entry: entry["updated"] or 0, reverse=True)
+    paths = sorted(find_mrs_dirs(start), key=lambda path: max((item.stat().st_mtime for item in path.glob("*.md")), default=0.0), reverse=True)
+    entries = [read_mrs_metadata(path) for path in paths]
 
     if args.json:
         print(json.dumps({"mrs": entries, "count": len(entries)}, indent=2))

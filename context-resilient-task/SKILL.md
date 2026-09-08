@@ -1,6 +1,6 @@
 ---
 name: context-resilient-task
-version: 1.0.0
+version: 1.5.0
 description: Context-resilient task management via a filesystem Minimum Recovery Set (MRS in .task-state/). Reconstructs task state from on-disk artifacts so work survives /clear, session interruption, agent switches, and context-window loss. Use this skill whenever the user mentions multi-phase tasks, multi-session work, cross-session recovery, task state restoration, MRS, .task-state, lost context, hallucinated todos, forgotten work, 任务状态恢复, 跨会话任务, 多会话开发, 上下文丢失, /clear 后继续, 任务恢复, or asks the agent to remember a task across sessions. Also trigger proactively when starting any task likely to span more than one session, even if the user doesn't explicitly request recovery — the upfront MRS structure prevents context-loss surprises later.
 ---
 
@@ -14,7 +14,9 @@ description: Context-resilient task management via a filesystem Minimum Recovery
 - **`progress.md`** — Append-only chronological log. Never overwrite.
 - **`snapshot.md`** — Latest checkpoint. **Overwrite** entire file on each update (archive previous first).
 - **`decisions.md`** — Stable conclusions and decisions. Append-only. Required for long tasks (see Tier 1 below).
+- **`utils.md`** — Stable tooling, environment, database/server/logging and local resource pointers; not findings or deliverables.
 - On conflict between files, `task_state.md` wins.
+- Recovery always prioritizes `Invariants (pinned)` entries, then the newest bounded log entries. Multi-MRS output has a global 4000-character budget.
 
 ## Minimum Recovery Set (MRS)
 
@@ -30,6 +32,7 @@ description: Context-resilient task management via a filesystem Minimum Recovery
 - `progress.md` — Session execution log (append-only)
 - `architecture.md` — Architecture (for system-level tasks)
 - `decisions.md` — Stable conclusions/decisions (**required** when: multi-session, multi-agent, or >10 phases; otherwise optional)
+- `utils.md` — Tool/resource profile (optional for legacy MRS; created for new MRS)
 
 **If missing:** WARN, ask user to confirm continuation.
 
@@ -82,6 +85,10 @@ At key checkpoints (recovery, phase transition, major decision, status request, 
 <single concrete step>
 ### Artifact to Be Produced
 <filename> - <purpose>
+### Stable Context
+- Latest decisions (source: `decisions.md`)
+- Latest findings and explicit unknowns (source: `findings.md`)
+- Utilities profile (source: `utils.md`, when present)
 ```
 
 Full template specification: [references/output-template.md](references/output-template.md)
@@ -136,12 +143,12 @@ python <skill-root>/scripts/init_mrs.py
 Behavior:
 1. Collects: Task Goal, Complexity (small/medium/large), Key Requirements (optional)
 2. Renders Tier 0 from templates: `task_state.md`, `plan.md`, `snapshot.md`
-3. Creates empty Tier 1 core logs: `findings.md`, `progress.md`
+3. Creates empty Tier 1 core logs: `findings.md`, `progress.md`, and `utils.md`
 4. Auto-creates `decisions.md` if `--complexity large`, `--multi-agent`, or >10 requirements
 5. Refuses to write into a non-empty target unless `--force`
 6. **Reminds you to copy MRS rules to project AGENTS.md** for Codex/other agent compatibility (see [references/agents-md-snippet.md](references/agents-md-snippet.md))
 
-If you prefer manual setup, copy templates from `assets/` (`task_state.template.md`, `plan.template.md`, `snapshot.template.md`, `decisions.template.md`) and fill the `{...}` placeholders.
+If you prefer manual setup, copy templates from `assets/` (`task_state.template.md`, `plan.template.md`, `snapshot.template.md`, `decisions.template.md`, `utils.template.md`) and fill the `{...}` placeholders.
 
 ## Plan Registry
 
@@ -167,6 +174,7 @@ Full cross-skill protocol: [references/multi-skill-integration.md](references/mu
 | decisions.md | Stable conclusion reached | **Append only** |
 | findings.md | After discoveries | **Append only** |
 | progress.md | After each significant action | **Append only** |
+| utils.md | Tool/environment/resource profile changes | **In-place by section** |
 
 **Forbidden paths:** `/.cursor/`, `/agent-tools/`, `/temp/`, `/tmp/`, `/.cache/`
 
@@ -247,6 +255,11 @@ When initializing MRS for a project that uses multiple agents (Claude Code, Code
 - **Overwrite** `snapshot.md` on key events (never append sections)
 - Append stable conclusions to `decisions.md` (not `task_state.md`)
 - Cite source files in all statements
+- Before compaction or session handoff, surface bounded latest entries from `decisions.md`, `findings.md`, and `utils.md` in the digest/snapshot
+- Keep `utils.md` limited to stable pointers (tool name, purpose, path/endpoint, environment, access/sensitivity); never put secrets or task conclusions there
+- Mark each utility `Sensitivity: public|internal|restricted`; restricted entries are excluded from snapshots and recovery digests, and likely credential values fail validation.
+- Legacy suffixed `Completed Items` subsections (for example, per-round history) are preserved with a warning; only repeated exact authoritative sections invalidate `task_state.md`.
+- Regenerate `snapshot.md` after updating Tier 1 logs; verification warns when source context is newer than the snapshot.
 - Register every new `docs/plans/` file in Plan Registry immediately
 - Compress `task_state.md` when it exceeds 300 lines
 

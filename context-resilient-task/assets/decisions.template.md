@@ -10,7 +10,7 @@ Rules:
   NEVER append such content to task_state.md.
 - Required when: multi-session, multi-agent, or >10 phases. Optional otherwise.
 
-Entry shape (copy below the "## Entries" marker):
+Entry shape (copy below the "## Entries" marker; durable constraints belong in `## Invariants (pinned)`):
 
   ## YYYY-MM-DD: <short title>
   - **Decision:** <what was decided>
@@ -21,3 +21,8 @@ Entry shape (copy below the "## Entries" marker):
 ## Entries
 
 <!-- Append new entries below this line. -->
+
+## Invariants (pinned)
+
+<!-- Keep durable constraints here. They are restored before the newest entries. Use `- **Pinned:** yes` for pinned entries. -->
+- (none recorded)

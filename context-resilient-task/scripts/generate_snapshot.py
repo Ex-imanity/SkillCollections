@@ -16,6 +16,9 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import argparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _state_probe import read_context_entry_records, format_context_entry, bounded_text  # noqa: E402
+
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOT_TEMPLATE_PATH = SKILL_ROOT / "assets" / "snapshot.template.md"
 TEMPLATE_DOCS_MARKER = "<!--END_TEMPLATE_DOCS-->\n"
@@ -87,6 +90,15 @@ def read_progress(mrs_dir: Path, last_n_lines: int = 10) -> str:
     recent = lines[-last_n_lines:] if len(lines) > last_n_lines else lines
 
     return "\n".join(recent) or "- (No recent progress)"
+
+
+def context_block(mrs_dir: Path, filename: str) -> str:
+    records = read_context_entry_records(mrs_dir, filename)
+    if filename == "utils.md":
+        records = [record for record in records if record["sensitivity"] in {"public", "internal"}]
+    entries = [format_context_entry(record) for record in records]
+    entries = ["\n".join(("### " + line.lstrip("#").strip() if line.startswith("# ") else ("### " + line[3:] if line.startswith("## ") else line)) for line in entry.splitlines()) for entry in entries]
+    return "\n\n".join(entries) if entries else "- (None recorded)"
 
 
 def list_recent_files(project_root: Path, hours: int = 24) -> list[str]:
@@ -196,7 +208,7 @@ def generate_snapshot(mrs_dir: Path, project_root: Path | None = None) -> str:
 
     # Render via assets/snapshot.template.md (no inline duplication)
     template = load_snapshot_template()
-    return template.format(
+    rendered = template.format(
         timestamp=timestamp,
         context=context,
         recent_progress=recent_progress,
@@ -204,7 +216,35 @@ def generate_snapshot(mrs_dir: Path, project_root: Path | None = None) -> str:
         blockers=normalize_blockers(state.get("open_questions", "")),
         files_modified=files_str,
         next_session_notes=next_session_notes,
+        stable_decisions=context_block(mrs_dir, "decisions.md"),
+        key_findings=context_block(mrs_dir, "findings.md"),
+        utilities=context_block(mrs_dir, "utils.md"),
     )
+    if len(rendered) <= 4000:
+        return rendered
+    lines = rendered.splitlines()
+    sections: list[tuple[str, list[str]]] = []
+    header: list[str] = []
+    current: tuple[str, list[str]] | None = None
+    for line in lines:
+        if line.startswith("## "):
+            if current:
+                sections.append(current)
+            current = (line, [])
+        elif current:
+            current[1].append(line)
+        else:
+            header.append(line)
+    if current:
+        sections.append(current)
+    budgets = {"## Context": 450, "## Recent Progress": 400, "## Current Focus": 250,
+               "## Blockers": 300, "## Files Modified": 350, "## Stable Decisions": 500,
+               "## Key Findings": 550, "## Utilities": 450, "## Next Session Should Know": 500}
+    compact = "\n".join(header).rstrip()
+    for heading, body in sections:
+        block = heading + "\n" + "\n".join(body).strip()
+        compact += "\n\n" + bounded_text(block, budgets.get(heading, 350))
+    return bounded_text(compact + "\n\n… (snapshot sections compacted to 4000 characters)", 4000)
 
 
 def save_snapshot(directory: Path, content: str, archive: bool = False):

@@ -27,6 +27,7 @@ TIER_0 = ["task_state.md", "plan.md", "snapshot.md"]
 TIER_1_CORE = ["findings.md", "progress.md"]
 # Tier 1 conditional: only required for multi-session/multi-agent/>10 phases
 TIER_1_CONDITIONAL = ["architecture.md", "decisions.md"]
+TIER_1_OPTIONAL = ["utils.md"]
 TIER_2 = ["blockers.md"]
 
 FORBIDDEN_SUBSTRINGS = ["/.cursor/", "/agent-tools/", "/temp/", "/tmp/", "/.cache/"]
@@ -86,6 +87,17 @@ def validate_task_state(filepath: Path) -> tuple[bool, str, list[str]]:
 
         if missing:
             return False, f"Missing sections: {', '.join(missing)}", warnings
+
+        for section in ("Active Todos", "Completed Items"):
+            prefix = f"## {section}".lower()
+            exact_count = sum(1 for line in lines if line.strip().lower() == prefix)
+            suffixed = [line.strip() for line in lines if line.strip().lower().startswith(prefix) and line.strip().lower() != prefix]
+            if suffixed:
+                warnings.append(f"Suffixed {section} subsections preserved for legacy compatibility: {', '.join(suffixed[:3])}")
+            if exact_count > 1:
+                message = f"Duplicate authoritative section: {section} appears {exact_count} times"
+                warnings.append(message)
+                return False, message, warnings
 
         # Check for timestamp
         if "**Last Updated:**" not in content:
@@ -196,6 +208,11 @@ def validate_snapshot(filepath: Path) -> tuple[bool, str, list[str]]:
                 "Regenerate with generate_snapshot.py."
             )
 
+        allowed = {"Context", "Recent Progress", "Current Focus", "Blockers", "Files Modified", "Stable Decisions", "Key Findings", "Utilities", "Next Session Should Know"}
+        unknown = [match.group(1).strip() for match in re.finditer(r"^##\s+(.+?)\s*$", content, re.MULTILINE) if match.group(1).strip() not in allowed]
+        if unknown:
+            warnings.append("Snapshot has unexpected top-level sections: " + ", ".join(unknown[:5]))
+
         return True, "Valid", warnings
 
     except Exception as e:
@@ -213,6 +230,37 @@ def check_forbidden_paths(directory: Path) -> list[str]:
                 violations.append(f"{item}: contains forbidden substring '{forbidden}'")
 
     return violations
+
+
+def check_utils_sensitivity(directory: Path) -> list[str]:
+    """Reject likely credential values in the portable utilities profile."""
+    utils = directory / "utils.md"
+    if not utils.exists():
+        return []
+    try:
+        content = utils.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    secret_patterns = (
+        r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}",
+        r"\b(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S+",
+        r"\b(?:AKIA|ghp_|github_pat_)[A-Za-z0-9_-]{8,}",
+    )
+    return ["utils.md contains a likely secret value; record credential names/access requirements, never values"] \
+        if any(re.search(pattern, content, re.I) for pattern in secret_patterns) else []
+
+
+def check_snapshot_drift(directory: Path) -> list[str]:
+    snapshot = directory / "snapshot.md"
+    if not snapshot.exists():
+        return []
+    try:
+        snapshot_time = snapshot.stat().st_mtime
+        newer = [name for name in ("findings.md", "progress.md", "decisions.md", "utils.md")
+                 if (directory / name).exists() and (directory / name).stat().st_mtime > snapshot_time]
+    except OSError:
+        return []
+    return ["snapshot.md is older than: " + ", ".join(newer) + "; regenerate the snapshot"] if newer else []
 
 
 def verify_mrs(directory: Path) -> dict:
@@ -272,6 +320,16 @@ def verify_mrs(directory: Path) -> dict:
                 "required for multi-session/multi-agent/>10 phase tasks)."
             )
 
+    # Utilities are a portable context profile. Old MRS trees may not have it.
+    for filename in TIER_1_OPTIONAL:
+        if check_file_exists(directory, filename):
+            results["tier1"]["present"].append(filename)
+        else:
+            results["tier1"]["missing"].append(filename)
+            results["warnings"].append(
+                "utils.md not found (optional for legacy MRS; create it to preserve tooling, environment, and resource pointers)."
+            )
+
     # Check Tier 2 (informational)
     for filename in TIER_2:
         if check_file_exists(directory, filename):
@@ -283,6 +341,13 @@ def verify_mrs(directory: Path) -> dict:
     results["forbidden_paths"] = check_forbidden_paths(directory)
     if results["forbidden_paths"] and results["exit_code"] == 0:
         results["exit_code"] = 3
+
+    sensitivity_violations = check_utils_sensitivity(directory)
+    results["warnings"].extend(sensitivity_violations)
+    if sensitivity_violations:
+        results["exit_code"] = 3
+
+    results["warnings"].extend(check_snapshot_drift(directory))
 
     return results
 

@@ -40,6 +40,11 @@ Read the following files if present:
 - `progress.md`
 - `architecture.md`
 - `decisions.md`
+- `utils.md`
+
+For append-only files, load only the newest bounded entries first (for example
+the latest three decision/finding headings). Include the utilities profile as
+stable context, not as a finding or deliverable.
 
 If missing, emit warning:
 ```
@@ -81,6 +86,11 @@ Use the structured template:
 
 ### Artifact to Be Produced
 <expected output artifact>
+
+### Stable Context
+- Latest decisions (source: `decisions.md`)
+- Latest findings and explicit unknowns (source: `findings.md`)
+- Utilities profile (source: `utils.md`, when present)
 ```
 
 ### Step 5: Confirm and Continue
