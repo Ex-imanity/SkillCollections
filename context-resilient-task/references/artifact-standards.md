@@ -105,7 +105,8 @@ Type enumeration (open — extend with `other:<label>`, never invent a bare type
 | `other:<label>` | Anything the list does not cover |
 
 Emission and redaction (enforced by `scripts/_state_probe.py`):
-- `utils.md` sections are **pinned**: unlike append-only logs, the whole registry is replayed in recovery and pre-compaction digests — never a recency window — so a registered resource survives `/clear` and compaction.
+- `utils.md` sections are **pinned**: unlike append-only logs, no section is dropped by the recency window, so a registered resource survives `/clear` and compaction. The per-record (1800 chars) and whole-output (4000 chars) budgets still apply — pinning removes the recency cliff, not the budget.
+- An entry containing a **credential-shaped value** (`scheme://user:pass@host`, `?token=…`, `Bearer …`) is never emitted regardless of its stated level, and `verify_mrs.py` reports the file invalid: the value must be removed, not merely withheld. The same detector warns (does not invalidate) when `findings.md` / `progress.md` / `decisions.md` carry one, since those are replayed or committed.
 - Redaction is **per row**: a `restricted` row is dropped while its table siblings are still emitted. A row with no explicit level is dropped fail-closed as soon as any sibling row in the same section is restricted.
 - When a digest budget forces truncation, the table header and the **earliest** rows are kept (IDs are cited elsewhere, so registration order beats recency), plus a `utils.md:<line>` pointer to the full file.
 - Legacy `## Tooling` / `## Environments` / `## Resources` sections remain valid and are still emitted; `verify_mrs.py` warns when no `## Resource Registry` table exists so the layout can be migrated.
@@ -120,7 +121,7 @@ Sub-resources (a Base's table inventory, a document's chapter outline, a dataset
 
 What does **not** belong in the registry: single source files cited as evidence for a finding (`.../AppUtils.java:42`). Those are the finding's citation and stay with the finding; the registry holds what an agent must *reach*, not what it once read.
 
-Migrating a legacy MRS: `python <skill-root>/scripts/scan_resources.py <mrs-dir>` scans every MRS document for pointers, classifies them, ranks reachable resources above local file noise, flags local paths that no longer exist, and prints a draft table with `file:line` provenance. It is read-only until `--write`, and never fills in `Name / Purpose`, `Access` or `Sensitivity` for you.
+Migrating a legacy MRS: `python <skill-root>/scripts/scan_resources.py <mrs-dir>` scans every MRS document for pointers, classifies them, ranks reachable resources above local file noise, flags local paths that no longer exist, and prints a draft table with `file:line` provenance. It is read-only until `--write`. Drafted rows are written as `Sensitivity: restricted` — recorded on disk but withheld from every digest until a human fills in `Name / Purpose` + `Access` and sets the real level; a machine guess must not publish an unclassified resource into a registry that is always replayed. A pointer carrying an embedded credential is redacted to `user:***@` before it is written, and the draft output names the source file that still contains the raw value.
 
 ### Optional Files (Tier 2)
 

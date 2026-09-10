@@ -59,7 +59,21 @@ _LEVEL_MENTION_RE = re.compile(r"(?:\bsensitivity\b|敏感度|敏感级别)", re
 _TABLE_ROW_RE = re.compile(r"^\s*\|")
 _TABLE_SEP_RE = re.compile(r"^\s*\|[\s:|\-—–]+\|\s*$")
 _BULLET_RE = re.compile(r"^ {0,1}[-*+]\s+")
-_SECRET_RE = re.compile(r"(?:bearer\s+[A-Za-z0-9._~+/=-]{8,}|(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S+|(?:AKIA|ghp_|github_pat_)[A-Za-z0-9_-]{8,})", re.I)
+    # A value only counts as a secret if it looks like one: something with a
+    # digit or symbol (>=6 chars), or a long opaque alphabetic run (>=13).
+    # Prose such as "Bearer credentials" or "token: token" must not match,
+    # because a false positive here silently drops a legitimate registry row.
+_SECRET_VALUE = r"(?:[A-Za-z0-9._~+/=-]*[\d._~+/=-][A-Za-z0-9._~+/=-]{5,}|[A-Za-z]{13,})"
+_SECRET_RE = re.compile(
+    r"(?:bearer\s+" + _SECRET_VALUE
+    + r"|(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*" + _SECRET_VALUE
+    + r"|(?:AKIA|ghp_|github_pat_)[A-Za-z0-9_-]{8,}"
+    # scheme://user:password@host — a credential embedded in a pointer
+    r"|[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s/@]*[A-Za-z0-9][^\s/@]*@"
+    # ?token=... / &api_key=... query credentials
+    r"|[?&](?:token|access[_-]?token|api[_-]?key|apikey|secret|password|passwd|sig|signature)=[^\s&#|]{6,})",
+    re.I,
+)
 
 
 def configure_utf8_stdout() -> None:
@@ -353,6 +367,12 @@ def filter_utils_section(chunk: str) -> tuple[str, str]:
         text = "\n".join(entry["lines"])
         if entry["structural"] or not text.strip():
             entry["level"] = None
+            continue
+        if has_sensitive_value(text):
+            # A credential-shaped value must never reach a digest, whatever the
+            # row claims its sensitivity is. verify_mrs.py rejects the file too;
+            # this is the emission-side half of that guard.
+            entry["level"] = "restricted"
             continue
         mentions = bool(
             _SENSITIVITY_RE.search(text) or _TABLE_SENSITIVITY_RE.search(text) or _LEVEL_MENTION_RE.search(text)

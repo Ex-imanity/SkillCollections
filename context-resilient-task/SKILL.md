@@ -130,10 +130,19 @@ uncovered is registered as `other:<label>` rather than a bare invented type, so 
 resource kind is never a reason to file it somewhere else. `verify_mrs.py` warns on
 unknown types and on rows missing a sensitivity level.
 
-Because it is an index and not a log, `utils.md` sections are **pinned**: recovery and
-pre-compaction digests replay the whole registry, never a recency window. Redaction is
-**per row** — one `restricted` resource is dropped without hiding its table siblings —
-and a row with no level is dropped fail-closed once any sibling row is restricted.
+Because it is an index and not a log, `utils.md` sections are **pinned**: no section is
+dropped by the recency window that trims append-only logs. The per-record (1800 chars)
+and whole-output (4000 chars) budgets still apply, so a very long registry is truncated
+from the tail with a `utils.md:<line>` pointer — pinning removes the recency cliff, not
+the budget.
+
+Redaction is **per row**: one `restricted` resource is dropped without hiding its table
+siblings, and a row with no level is dropped fail-closed once any sibling row is
+restricted. Independently of any label, an entry containing a **credential-shaped
+value** (`scheme://user:pass@host`, `?token=…`, `Bearer …`) is never emitted, and
+`verify_mrs.py` reports the file as invalid — the value must be removed, not just
+withheld from digests. It also warns when another MRS document (`findings.md`,
+`progress.md`, …) carries such a value, because those are replayed or committed too.
 
 Register a resource the first time it is used, keep rows to one line, and prune dead
 entries (~25 rows is the working limit before a digest starts truncating).
@@ -148,7 +157,10 @@ each. Single source files cited as evidence for a finding are **not** resources.
 
 **Legacy MRS:** `python <skill-root>/scripts/scan_resources.py <mrs-dir>` drafts the
 registry from the pointers already scattered in the MRS documents (read-only until
-`--write`).
+`--write`). Drafts are machine-guessed, so they are written as `restricted` — on disk
+but withheld from every digest until a human fills in purpose/access and sets the real
+level. A pointer carrying an embedded credential is redacted (`user:***@`) before it is
+written, and the scanner names the source file that still holds the raw value.
 
 Full schema and type reference: [references/artifact-standards.md](references/artifact-standards.md)
 

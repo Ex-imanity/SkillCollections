@@ -27,6 +27,10 @@
     "attempts": 1,
     "successes": 1
   },
+  "context-resilient-task-1.6.0": {
+    "attempts": 1,
+    "successes": 1
+  },
   "context-resilient-task-grok-compat-20260909": {
     "attempts": 1,
     "successes": 1

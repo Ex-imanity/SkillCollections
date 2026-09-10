@@ -6,9 +6,10 @@
      cite a resource by its ID (e.g. "(res: R3)") instead of repeating the
      pointer, so an agent never has to guess which document holds it.
 
-     Recovery and pre-compaction digests always replay this file (its sections
-     are pinned, never recency-trimmed), so anything registered here survives
-     /clear and context compaction.
+     Recovery and pre-compaction digests replay this file without the recency
+     window that trims append-only logs (its sections are pinned), so anything
+     registered here survives /clear and context compaction. Per-record and
+     whole-output character budgets still apply to a very long registry.
 
      Column notes:
      - Access:   凭据名称 / 角色 / open / **读取命令或工具**
@@ -26,6 +27,10 @@
      - Every row needs an explicit Sensitivity. `restricted` rows are omitted
        from snapshots and recovery digests; a row with no level is treated as
        restricted (dropped) whenever any row in the same section is restricted.
+     - A credential-shaped value is never emitted whatever the row's level
+       says, and fails verification: a password in a URL's userinfo segment,
+       an auth token in a query parameter, or a bearer token. Remove the
+       value and keep only the credential name.
      - Register a resource the first time it is used, not at the end of the task.
 
      Type enumeration (extend via `other:<label>` — never invent a bare type):

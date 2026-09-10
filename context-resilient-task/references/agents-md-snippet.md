@@ -18,7 +18,7 @@ This snippet ensures all agents (Claude Code, Codex, etc.) follow the same MRS u
 - `utils.md` — **唯一资源注册表**：飞书文档、外部网页、仓库、本地路径、接口、数据库、日志平台、看板、本地进程、静态页、CLI/MCP 工具、工单、测试数据、凭据名称，全部登记在此。按行原地更新，禁止写入密钥值。
   - 表头：`| ID | Type | Name / Purpose | Pointer | Env | Access | Sensitivity | Verified |`
   - Type 取自枚举 `feishu-doc | web-page | repo | local-path | service-api | database | log-platform | dashboard | local-process | static-site | cli-tool | mcp-tool | ticket | test-asset | credential-ref`，未覆盖的用 `other:<label>`。
-  - 每行必须写 `Sensitivity: public|internal|restricted`；`restricted` 行不进快照与恢复摘要。
+  - 每行必须写 `Sensitivity: public|internal|restricted`；`restricted` 行不进快照与恢复摘要。含凭据形态（`scheme://user:pass@host`、`?token=…`、`Bearer …`）的条目无论标什么级别都不会被输出，且校验直接判 invalid —— 必须删值只留凭据名。
   - `Access` 写凭据名/角色/`open`/**读取命令**（如 `lark-cli docs +fetch --doc <url>`）；`Verified` 写日期 + **读到的版本**（如 `2026-09-07 (rev 607)`）。
   - 子资源清单（Base 表清单、文档章节）挂 `## Notes` 并以 ID 开头，不一行一条；作为证据引用的单个源码文件不登记。
   - 其他文件（findings/decisions/plan/task_state）**只按 ID 引用**（如 `(res: R3)`），不复制链接或路径。资源首次使用时立即登记。

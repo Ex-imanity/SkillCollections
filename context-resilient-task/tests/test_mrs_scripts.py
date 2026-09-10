@@ -599,5 +599,165 @@ class MrsScriptsTest(unittest.TestCase):
         self.assertFalse([w for w in warnings if "no pinned invariants" in w], warnings)
 
 
+    # --- Grok review 2026-09-10 (gate crt-1.6.0-grok-20260910): P1 regressions ---
+
+    def test_credential_shaped_pointer_is_never_emitted_even_unlabeled(self):
+        """P1: a registry with no Sensitivity column must not leak a credential."""
+        project_dir = self.work_root / "project"
+        mrs_dir = project_dir / ".task-state"
+        self.run_script("init_mrs.py", "--dir", mrs_dir, "--goal", "Unlabeled leak", "--complexity", "medium")
+        (mrs_dir / "utils.md").write_text(
+            "# Utilities\n\n## Resource Registry\n"
+            "| ID | Type | Name / Purpose | Pointer | Env | Access |\n"
+            "|----|------|----------------|---------|-----|--------|\n"
+            "| R1 | database | 线上库 | mysql://svc:SuperSecretPass@db.internal:3306/app | prod | svc |\n"
+            "| R2 | service-api | 回调 | https://x.test/cb?token=abc123def456 | prod | open |\n"
+            "| R3 | feishu-doc | PRD | https://xx.feishu.cn/docx/keepme | prod | login |\n",
+            encoding="utf-8",
+        )
+        restored = self.run_script("restore_context.py", project_dir).stdout
+        digest = self.run_script("precompact_digest.py", project_dir).stdout
+        self.run_script("generate_snapshot.py", mrs_dir)
+        snapshot = (mrs_dir / "snapshot.md").read_text(encoding="utf-8")
+        for emitted in (restored, digest, snapshot):
+            self.assertNotIn("SuperSecretPass", emitted)
+            self.assertNotIn("abc123def456", emitted)
+            # R3 is unlabeled and sits beside credential-shaped rows, so
+            # fail-closed inheritance drops it too.
+            self.assertNotIn("docx/keepme", emitted)
+
+        payload = json.loads(self.run_script("verify_mrs.py", "--json", mrs_dir, check=False).stdout)
+        self.assertEqual(payload["status"], "invalid")
+        self.assertTrue(any("likely secret value" in w for w in payload["warnings"]), payload["warnings"])
+
+        # With explicit levels, per-row redaction keeps the clean siblings.
+        (mrs_dir / "utils.md").write_text(
+            "# Utilities\n\n## Resource Registry\n"
+            "| ID | Type | Name / Purpose | Pointer | Env | Access | Sensitivity | Verified |\n"
+            "|----|------|----------------|---------|-----|--------|-------------|----------|\n"
+            "| R1 | database | 线上库 | mysql://svc:SuperSecretPass@db.internal:3306/app | prod | svc | internal | 2026-09-10 |\n"
+            "| R3 | feishu-doc | PRD | https://xx.feishu.cn/docx/keepme | prod | login | internal | 2026-09-10 |\n",
+            encoding="utf-8",
+        )
+        restored = self.run_script("restore_context.py", project_dir).stdout
+        self.assertNotIn("SuperSecretPass", restored)  # label cannot override the secret guard
+        self.assertIn("docx/keepme", restored)
+
+    def test_verify_warns_about_secrets_in_replayed_documents(self):
+        """P1: findings/progress are replayed or committed, so flag credentials there too."""
+        mrs_dir = self.work_root / "project" / ".task-state"
+        self.run_script("init_mrs.py", "--dir", mrs_dir, "--goal", "Doc secrets", "--complexity", "medium")
+        (mrs_dir / "findings.md").write_text(
+            "# Findings\n\n## 2026-01-02: env\n- db mysql://svc:Passw0rdXYZ@db.internal:3306/app\n",
+            encoding="utf-8",
+        )
+        warnings = json.loads(self.run_script("verify_mrs.py", "--json", mrs_dir, check=False).stdout)["warnings"]
+        self.assertTrue(any("findings.md" in w and "likely secret value" in w for w in warnings), warnings)
+
+    def test_redaction_placeholders_are_not_reported_as_secrets(self):
+        mrs_dir = self.work_root / "project" / ".task-state"
+        self.run_script("init_mrs.py", "--dir", mrs_dir, "--goal", "Placeholders", "--complexity", "medium")
+        (mrs_dir / "utils.md").write_text(
+            "# Utilities\n\n## Resource Registry\n"
+            "| ID | Type | Name / Purpose | Pointer | Env | Access | Sensitivity | Verified |\n"
+            "|----|------|----------------|---------|-----|--------|-------------|----------|\n"
+            "| R1 | database | 线上库 | mysql://svc:***@db.internal:3306/app | prod | svc_user | internal | 2026-09-10 |\n",
+            encoding="utf-8",
+        )
+        payload = json.loads(self.run_script("verify_mrs.py", "--json", mrs_dir, check=False).stdout)
+        self.assertFalse([w for w in payload["warnings"] if "likely secret value" in w], payload["warnings"])
+        self.assertIn("db.internal", self.run_script("restore_context.py", mrs_dir.parent).stdout)
+
+    def test_secret_detector_ignores_prose_and_keeps_real_values(self):
+        """A false positive silently drops a legitimate registry row, so the
+        detector must not fire on prose like "Bearer credentials"."""
+        from importlib.util import spec_from_file_location, module_from_spec
+        spec = spec_from_file_location("state_probe", SKILL_ROOT / "scripts" / "_state_probe.py")
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for text, expected in (
+            ("token=8f3c6d12b5f0", True),
+            ("Authorization: Bearer sk-abc12345678", True),
+            ("password: SuperSecretPass", True),
+            ("api_key = a1b2c3d4e5", True),
+            ("mysql://u:P@ss1@h/db", True),
+            ("Bearer credentials", False),
+            ("token: token", False),
+            ("bearer credential handling", False),
+            ("token=***", False),
+            ("mysql://u:***@h/db", False),
+            ("mysql://prod-host:3306/app", False),
+        ):
+            self.assertEqual(module.has_sensitive_value(text), expected, text)
+
+        # a row whose Access column is prose must still be emitted
+        project_dir = self.work_root / "project"
+        mrs_dir = project_dir / ".task-state"
+        self.run_script("init_mrs.py", "--dir", mrs_dir, "--goal", "Prose access", "--complexity", "medium")
+        (mrs_dir / "utils.md").write_text(
+            "# Utilities\n\n## Resource Registry\n"
+            "| ID | Type | Name / Purpose | Pointer | Env | Access | Sensitivity | Verified |\n"
+            "|----|------|----------------|---------|-----|--------|-------------|----------|\n"
+            "| R1 | service-api | 订单查询 | https://api.test/orders | prod | bearer credentials | internal | 2026-09-10 |\n",
+            encoding="utf-8",
+        )
+        self.assertIn("api.test/orders", self.run_script("restore_context.py", project_dir).stdout)
+
+    def test_scan_drafts_are_restricted_and_credentials_redacted(self):
+        """P1: machine drafts must not publish unclassified resources or write secrets."""
+        project_dir = self.work_root / "project"
+        mrs_dir = project_dir / ".task-state"
+        self.run_script("init_mrs.py", "--dir", mrs_dir, "--goal", "Draft policy", "--complexity", "medium")
+        (mrs_dir / "utils.md").unlink()
+        (mrs_dir / "findings.md").write_text(
+            "# Findings\n\n## 2026-01-02: env\n"
+            "- db mysql://svc:Passw0rdXYZ@db.internal:3306/app\n"
+            "- PRD https://xx.feishu.cn/wiki/ABC123456\n",
+            encoding="utf-8",
+        )
+        self.run_script("scan_resources.py", mrs_dir, "--write")
+        utils = (mrs_dir / "utils.md").read_text(encoding="utf-8")
+        self.assertNotIn("Passw0rdXYZ", utils)          # secret never written
+        self.assertIn("mysql://svc:***@db.internal", utils)  # resource still registered
+        rows = [line for line in utils.splitlines() if line.startswith("| R")]
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all("| restricted |" in row for row in rows), rows)  # nothing unreviewed published
+        # drafts stay out of every digest until a human classifies them
+        # (the raw pointer still shows up via findings.md replay — that is the
+        # source file the scanner tells the user to clean, covered separately)
+        restored = self.run_script("restore_context.py", project_dir).stdout
+        self.assertNotIn("mysql://svc:***@", restored)
+        self.assertNotIn("| R1 |", restored)
+        self.assertNotIn("| R2 |", restored)
+
+    def test_scan_write_places_notes_after_the_template_comment(self):
+        """P1: provenance must not be swallowed by the template's HTML comment."""
+        mrs_dir = self.work_root / "project" / ".task-state"
+        self.run_script("init_mrs.py", "--dir", mrs_dir, "--goal", "Notes placement", "--complexity", "medium")
+        (mrs_dir / "findings.md").write_text(
+            "# Findings\n\n## 2026-01-02: env\n- PRD https://xx.feishu.cn/wiki/ABC123456\n", encoding="utf-8",
+        )
+        self.run_script("scan_resources.py", mrs_dir, "--write")
+        notes = (mrs_dir / "utils.md").read_text(encoding="utf-8").split("## Notes", 1)[1]
+        comment_end = notes.index("-->")
+        provenance = notes.index("草稿来源")
+        self.assertLess(comment_end, provenance)          # outside the comment
+        self.assertNotIn("(none recorded)", notes)        # placeholder replaced
+
+    def test_chinese_sensitivity_label_is_not_reported_unlabeled(self):
+        mrs_dir = self.work_root / "project" / ".task-state"
+        self.run_script("init_mrs.py", "--dir", mrs_dir, "--goal", "CN label", "--complexity", "medium")
+        (mrs_dir / "utils.md").write_text(
+            "# Utilities\n\n## Resource Registry\n"
+            "| ID | Type | Name / Purpose | Pointer | Env | Access | Sensitivity | Verified |\n"
+            "|----|------|----------------|---------|-----|--------|-------------|----------|\n"
+            "| R1 | database | 线上库 | mysql://prod-host:3306/app | prod | ro_user | 受限 | 2026-09-10 |\n",
+            encoding="utf-8",
+        )
+        warnings = json.loads(self.run_script("verify_mrs.py", "--json", mrs_dir, check=False).stdout)["warnings"]
+        self.assertFalse([w for w in warnings if "without an explicit Sensitivity" in w], warnings)
+        self.assertNotIn("prod-host", self.run_script("restore_context.py", mrs_dir.parent).stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

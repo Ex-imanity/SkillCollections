@@ -109,6 +109,24 @@ def guess_env(pointer: str) -> str:
     return "—"
 
 
+CREDENTIAL_USERINFO_RE = re.compile(r"^([a-z][a-z0-9+.-]*://)([^\s/:@]+):([^\s/@]{1,})@", re.I)
+CREDENTIAL_PARAM_RE = re.compile(
+    r"([?&](?:token|access[_-]?token|api[_-]?key|apikey|secret|password|passwd|sig|signature)=)[^\s&#|]+",
+    re.I,
+)
+
+
+def redact_pointer(pointer: str) -> tuple[str, bool]:
+    """Strip embedded credentials out of a pointer before it is ever written.
+
+    The resource is still worth registering; the password inside its URL is
+    not. Returns the safe pointer and whether anything was removed.
+    """
+    redacted = CREDENTIAL_USERINFO_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}:***@", pointer)
+    redacted = CREDENTIAL_PARAM_RE.sub(lambda m: f"{m.group(1)}***", redacted)
+    return redacted, redacted != pointer
+
+
 def normalize(pointer: str) -> str:
     return pointer.rstrip(TRAILING_PUNCT).rstrip("/")
 
@@ -134,8 +152,10 @@ def scan_file(path: Path) -> list[dict]:
             pointer = normalize(raw)
             if len(pointer) < 8:
                 continue
+            pointer, redacted = redact_pointer(pointer)
             hits.append({
                 "pointer": pointer,
+                "redacted": redacted,
                 "context": heading,
                 "source": f"{path.name}:{number}",
             })
@@ -173,6 +193,7 @@ def collect(mrs_dir: Path, limit: int, include_files: bool = False) -> list[dict
                 "type": classify(pointer),
                 "env": guess_env(pointer),
                 "context": hit["context"],
+                "redacted": hit.get("redacted", False),
                 "sources": [],
                 "count": 0,
             })
@@ -194,12 +215,18 @@ def render_rows(records: list[dict], start_index: int) -> tuple[list[str], list[
     for offset, record in enumerate(records):
         rid = f"R{start_index + offset}"
         purpose = (record["context"] or "(待填写用途)").replace("|", "/")[:40]
-        verified = "— (draft)"
+        flags = ["draft"]
         if record["pointer"].startswith(("/Users/", "~/")) and not Path(record["pointer"]).expanduser().exists():
-            verified = "— (draft, 路径不存在)"
+            flags.append("路径不存在")
+        if record.get("redacted"):
+            flags.append("凭据已脱敏")
+        # Drafts are machine-guessed and unreviewed, so they start `restricted`:
+        # they stay on disk but are withheld from every digest until a human
+        # confirms the level. Defaulting to `internal` would publish a resource
+        # nobody has classified into a registry that is always replayed.
         rows.append(
             f"| {rid} | {record['type']} | {purpose} | {record['pointer']} | {record['env']} "
-            f"| (待填写) | internal | {verified} |"
+            f"| (待填写) | restricted | — ({', '.join(flags)}) |"
         )
         notes.append(f"- {rid} 草稿来源: {', '.join(record['sources'][:3])}（出现 {record['count']} 次）")
     return rows, notes
@@ -247,8 +274,19 @@ def write_rows(utils: Path, rows: list[str], notes: list[str]) -> str:
         if re.search(r"^##\s*Notes\b", "\n".join(lines), re.M):
             note_at = next(i for i, line in enumerate(lines) if re.match(r"^##\s*Notes\b", line))
             insert_at = note_at + 1
-            while insert_at < len(lines) and (not lines[insert_at].strip() or lines[insert_at].lstrip().startswith("<!--")):
-                insert_at += 1
+            # Skip blank lines and *entire* HTML comment blocks; a multi-line
+            # comment must not be split, or the provenance lands inside it.
+            while insert_at < len(lines):
+                stripped = lines[insert_at].strip()
+                if not stripped:
+                    insert_at += 1
+                    continue
+                if stripped.startswith("<!--"):
+                    while insert_at < len(lines) and "-->" not in lines[insert_at]:
+                        insert_at += 1
+                    insert_at += 1  # step past the comment terminator
+                    continue
+                break
             if insert_at < len(lines) and "(none recorded)" in lines[insert_at]:
                 lines.pop(insert_at)
             lines[insert_at:insert_at] = notes
@@ -291,8 +329,13 @@ def main() -> int:
         return 0
 
     rows, notes = render_rows(records, next_index(target / "utils.md"))
+    redacted = [r for r in records if r.get("redacted")]
     print(f"# Draft Resource Registry for {target}")
-    print(f"# {len(records)} unregistered pointers found. Review Name/Purpose, Access and Sensitivity before trusting them.")
+    print(f"# {len(records)} unregistered pointers found. Drafts are written as `restricted` so they stay out of")
+    print("# every digest until a human fills in Name/Purpose + Access and sets the real Sensitivity.")
+    if redacted:
+        print(f"# {len(redacted)} pointer(s) carried an embedded credential: the draft is redacted, but the SOURCE")
+        print("# file still contains the raw value — clean it there too (see the 草稿来源 notes below).")
     print()
     print("| ID | Type | Name / Purpose | Pointer | Env | Access | Sensitivity | Verified |")
     print("|----|------|----------------|---------|-----|--------|-------------|----------|")

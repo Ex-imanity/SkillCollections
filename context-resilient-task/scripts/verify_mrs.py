@@ -251,6 +251,50 @@ def check_forbidden_paths(directory: Path) -> list[str]:
     return violations
 
 
+# A value only counts as a secret if it looks like one: something with a
+# digit or symbol (>=6 chars), or a long opaque alphabetic run (>=13).
+# Prose such as "Bearer credentials" or "token: token" must not match,
+# because a false positive here silently drops a legitimate registry row.
+_SECRET_VALUE = r"(?:[A-Za-z0-9._~+/=-]*[\d._~+/=-][A-Za-z0-9._~+/=-]{5,}|[A-Za-z]{13,})"
+
+SECRET_PATTERNS = (
+    r"\bBearer\s+" + _SECRET_VALUE,
+    r"\b(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*" + _SECRET_VALUE,
+    r"\b(?:AKIA|ghp_|github_pat_)[A-Za-z0-9_-]{8,}",
+    # scheme://user:password@host — a credential embedded in a pointer
+    r"[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s/@]*[A-Za-z0-9][^\s/@]*@",
+    # ?token=... / &api_key=... query credentials
+    r"[?&](?:token|access[_-]?token|api[_-]?key|apikey|secret|password|passwd|sig|signature)=[^\s&#|]{6,}",
+)
+
+
+def check_document_secrets(directory: Path) -> list[str]:
+    """Warn about likely credential values in any MRS document.
+
+    `findings.md` and `decisions.md` are replayed into every recovery digest
+    and `progress.md` is committed like the rest of the MRS, so a credential
+    parked in one of them keeps re-entering context. utils.md is handled
+    separately and harder (see check_utils_sensitivity), because the registry
+    is pinned and always replayed.
+    """
+    hits: list[str] = []
+    for path in sorted(directory.glob("*.md")):
+        if path.name == "utils.md":
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if any(re.search(pattern, content, re.I) for pattern in SECRET_PATTERNS):
+            hits.append(path.name)
+    if not hits:
+        return []
+    return [
+        f"likely secret value(s) in {', '.join(hits[:5])}; these files are replayed or committed, "
+        "so remove the value and keep only the credential name (see utils.md 'Access')"
+    ]
+
+
 def check_utils_sensitivity(directory: Path) -> list[str]:
     """Reject likely credential values in the portable utilities profile."""
     utils = directory / "utils.md"
@@ -260,13 +304,8 @@ def check_utils_sensitivity(directory: Path) -> list[str]:
         content = utils.read_text(encoding="utf-8")
     except OSError:
         return []
-    secret_patterns = (
-        r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}",
-        r"\b(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S+",
-        r"\b(?:AKIA|ghp_|github_pat_)[A-Za-z0-9_-]{8,}",
-    )
     return ["utils.md contains a likely secret value; record credential names/access requirements, never values"] \
-        if any(re.search(pattern, content, re.I) for pattern in secret_patterns) else []
+        if any(re.search(pattern, content, re.I) for pattern in SECRET_PATTERNS) else []
 
 
 RESOURCE_TYPES = {
@@ -274,7 +313,10 @@ RESOURCE_TYPES = {
     "log-platform", "dashboard", "local-process", "static-site", "cli-tool",
     "mcp-tool", "ticket", "test-asset", "credential-ref",
 }
-_SENSITIVITY_LEVELS = {"public", "internal", "restricted"}
+# Levels the emission filter understands (scripts/_state_probe.py), so that a
+# row it redacts is never reported here as unlabeled.
+_SENSITIVITY_LEVELS = {"public", "internal", "restricted", "secret", "confidential",
+                       "top-secret", "highly confidential", "受限"}
 _PLACEHOLDER_CELLS = {"", "-", "—", "–", "n/a", "none", "(none)", "(none recorded)", "tbd"}
 
 
@@ -475,6 +517,7 @@ def verify_mrs(directory: Path) -> dict:
     if sensitivity_violations:
         results["exit_code"] = 3
 
+    results["warnings"].extend(check_document_secrets(directory))
     results["warnings"].extend(check_resource_registry(directory))
     results["warnings"].extend(check_pinned_invariants(directory))
     results["warnings"].extend(check_snapshot_drift(directory))
