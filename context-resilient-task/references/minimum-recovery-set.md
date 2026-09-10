@@ -18,7 +18,7 @@ The MRS defines the minimum artifacts required to recover task context without r
 - `decisions.md` - Stable conclusions and design decisions
   - **Required** when: multi-session, multi-agent, or >10 phases
   - Optional for small/single-session tasks
-- `utils.md` - Stable tooling, environment, database/server/logging and local resource pointers (created for new MRS; optional for legacy MRS)
+- `utils.md` - The single resource registry: every internal/external resource pointer, cited by ID from other artifacts (created for new MRS; optional for legacy MRS)
 
 **Failure Mode:** Missing Tier 1 → WARNING, ask user to confirm continuation
 

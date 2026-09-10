@@ -28,6 +28,7 @@ from _state_probe import (  # noqa: E402
     read_state,
     read_context_entries,
     read_context_entry_records,
+    utils_records,
     format_context_entry,
     mrs_updated_mtime,
     bounded_text,
@@ -62,8 +63,7 @@ def render(mrs_dir: Path) -> str:
         ("Utilities", "utils.md"),
     ):
         if filename == "utils.md":
-            records = [r for r in read_context_entry_records(mrs_dir, filename, limit=2, max_chars=500) if r["sensitivity"] in {"public", "internal"}]
-            entries = [format_context_entry(r, 500) for r in records]
+            entries = [format_context_entry(r, 1400) for r in utils_records(mrs_dir, max_chars=1400)]
         else:
             entries = read_context_entries(mrs_dir, filename, limit=2, max_chars=500)
         if entries:

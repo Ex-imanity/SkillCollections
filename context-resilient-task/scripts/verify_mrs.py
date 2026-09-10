@@ -179,8 +179,21 @@ def validate_snapshot(filepath: Path) -> tuple[bool, str, list[str]]:
     try:
         content = filepath.read_text(encoding="utf-8")
 
-        # Extract timestamp from header (supports optional timezone like CST)
+        # Extract timestamp from header (supports optional timezone like CST).
+        # Hand-written snapshots predating the template use a "# Latest Snapshot"
+        # title with a **Timestamp:** / **Last Updated:** field instead; those are
+        # recoverable, so accept them rather than reporting the file as invalid.
         match = re.search(r"# Snapshot:\s*(\d{4}-\d{2}-\d{2})\s+(?:[A-Z]{2,5}\s+)?(\d{2}:\d{2})", content)
+        if not match:
+            match = re.search(
+                r"\*\*(?:Timestamp|Last Updated|时间戳|更新时间)[:：]?\*\*\s*(\d{4}-\d{2}-\d{2})[ T]+(\d{2}:\d{2})",
+                content,
+            )
+            if match:
+                warnings.append(
+                    "snapshot.md uses a legacy header (no '# Snapshot: <timestamp>' line); "
+                    "regenerate with generate_snapshot.py to match the current template."
+                )
         if not match:
             return False, "Missing or invalid timestamp in header", warnings
 
@@ -192,12 +205,18 @@ def validate_snapshot(filepath: Path) -> tuple[bool, str, list[str]]:
         if age > timedelta(days=7):
             warnings.append(f"Snapshot is {age.days} days old (stale). Consider regenerating.")
 
-        # Check required sections
+        # Check required sections. A snapshot carrying a timestamp and prose is
+        # still recoverable context, so a section mismatch is a repair signal,
+        # never a reason to treat the file as absent (which routes an agent to
+        # initialization over a live MRS).
         required = ["## Context", "## Next Session Should Know"]
         missing = [sec for sec in required if sec not in content]
 
         if missing:
-            return False, f"Missing sections: {', '.join(missing)}", warnings
+            warnings.append(
+                f"snapshot.md is missing sections: {', '.join(missing)}. "
+                "Regenerate with generate_snapshot.py; do NOT re-initialize the MRS."
+            )
 
         # WARNING: multiple ## Context sections (improper appending)
         context_count = len(re.findall(r"^## Context\b", content, re.MULTILINE))
@@ -248,6 +267,113 @@ def check_utils_sensitivity(directory: Path) -> list[str]:
     )
     return ["utils.md contains a likely secret value; record credential names/access requirements, never values"] \
         if any(re.search(pattern, content, re.I) for pattern in secret_patterns) else []
+
+
+RESOURCE_TYPES = {
+    "feishu-doc", "web-page", "repo", "local-path", "service-api", "database",
+    "log-platform", "dashboard", "local-process", "static-site", "cli-tool",
+    "mcp-tool", "ticket", "test-asset", "credential-ref",
+}
+_SENSITIVITY_LEVELS = {"public", "internal", "restricted"}
+_PLACEHOLDER_CELLS = {"", "-", "—", "–", "n/a", "none", "(none)", "(none recorded)", "tbd"}
+
+
+def check_resource_registry(directory: Path) -> list[str]:
+    """Keep the single resource registry usable: typed rows, explicit sensitivity.
+
+    Rows are the unit of redaction downstream, so a row without a level is a
+    real risk (it is dropped fail-closed once any sibling row is restricted).
+    """
+    utils = directory / "utils.md"
+    if not utils.exists():
+        return []
+    try:
+        lines = utils.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+    warnings: list[str] = []
+    in_registry = False
+    saw_registry = False
+    untyped: list[str] = []
+    unlabeled: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("##"):
+            in_registry = bool(re.match(r"^#+\s*resource registry\b", stripped, re.I))
+            saw_registry = saw_registry or in_registry
+            continue
+        if not in_registry or not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if len(cells) < 3 or re.fullmatch(r"[\s:|\-—–]+", stripped.strip("|")):
+            continue
+        lowered = [cell.lower() for cell in cells]
+        if all(cell in _PLACEHOLDER_CELLS for cell in lowered):
+            continue
+        if lowered[0] in {"id"} or "sensitivity" in lowered:
+            continue  # header row
+        row_id = cells[0] or "(no id)"
+        resource_type = lowered[1] if len(cells) > 1 else ""
+        if resource_type not in RESOURCE_TYPES and not resource_type.startswith("other:"):
+            untyped.append(row_id)
+        if not any(cell in _SENSITIVITY_LEVELS for cell in lowered):
+            unlabeled.append(row_id)
+
+    if not saw_registry:
+        warnings.append(
+            "utils.md has no '## Resource Registry' table (legacy layout); add one so every "
+            "internal/external resource is registered in a single place."
+        )
+    if untyped:
+        warnings.append(
+            "Resource Registry rows with an unknown Type (use the documented enumeration or "
+            f"'other:<label>'): {', '.join(untyped[:8])}"
+        )
+    if unlabeled:
+        warnings.append(
+            "Resource Registry rows without an explicit Sensitivity (public|internal|restricted); "
+            f"they are dropped fail-closed from digests once a sibling row is restricted: {', '.join(unlabeled[:8])}"
+        )
+    return warnings
+
+
+def check_pinned_invariants(directory: Path) -> list[str]:
+    """Nudge long logs toward pinning, which is what survives the recency window.
+
+    Recovery replays the newest few entries plus everything pinned. A long
+    decisions.md with nothing pinned therefore rehydrates a few percent of its
+    own content, and durable constraints silently fall out of context.
+    """
+    warnings: list[str] = []
+    for filename, threshold in (("decisions.md", 10), ("findings.md", 20)):
+        path = directory / filename
+        if not path.exists():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        entries = [
+            match for match in re.findall(r"^##\s+(.*\S)\s*$", content, re.M)
+            if not re.match(r"^invariants\s*\(pinned\)", match, re.I) and not match.lower().startswith("entries")
+        ]
+        if len(entries) < threshold:
+            continue
+        section = re.search(r"^##\s+Invariants \(pinned\)\s*$(.*?)(?=^##\s|\Z)", content, re.M | re.S)
+        body = (section.group(1) if section else "").strip()
+        pinned_lines = [
+            line for line in body.splitlines()
+            if line.strip() and "(none recorded)" not in line and not line.strip().startswith("<!--")
+        ]
+        if not pinned_lines:
+            replayed = min(3, len(entries))
+            warnings.append(
+                f"{filename} has {len(entries)} entries but no pinned invariants; recovery replays only "
+                f"the newest {replayed} (~{round(replayed / len(entries) * 100)}%). Move durable constraints "
+                "into '## Invariants (pinned)' so they survive the recency window."
+            )
+    return warnings
 
 
 def check_snapshot_drift(directory: Path) -> list[str]:
@@ -327,7 +453,9 @@ def verify_mrs(directory: Path) -> dict:
         else:
             results["tier1"]["missing"].append(filename)
             results["warnings"].append(
-                "utils.md not found (optional for legacy MRS; create it to preserve tooling, environment, and resource pointers)."
+                "utils.md not found (optional for legacy MRS). Resource pointers are then scattered "
+                "across findings/progress/decisions, where recovery truncates or never replays them; "
+                "draft a registry with scripts/scan_resources.py <mrs-dir>."
             )
 
     # Check Tier 2 (informational)
@@ -347,6 +475,8 @@ def verify_mrs(directory: Path) -> dict:
     if sensitivity_violations:
         results["exit_code"] = 3
 
+    results["warnings"].extend(check_resource_registry(directory))
+    results["warnings"].extend(check_pinned_invariants(directory))
     results["warnings"].extend(check_snapshot_drift(directory))
 
     return results

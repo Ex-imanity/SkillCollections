@@ -34,6 +34,7 @@ from _state_probe import (  # noqa: E402
     read_state,
     read_context_entries,
     read_context_entry_records,
+    utils_records,
     format_context_entry,
     snapshot_mtime,
     source_changes,
@@ -109,9 +110,10 @@ def render_single(mrs_dir: Path) -> str:
         ("Utilities", "utils.md"),
     )
     for title, filename in context_blocks:
-        entries = read_context_entries(mrs_dir, filename)
         if filename == "utils.md":
-            entries = [format_context_entry(record) for record in read_context_entry_records(mrs_dir, filename) if record["sensitivity"] in {"public", "internal"}]
+            entries = [format_context_entry(record) for record in utils_records(mrs_dir)]
+        else:
+            entries = read_context_entries(mrs_dir, filename)
         if entries:
             lines.append("")
             lines.append(f"### {title} (latest entries from {filename})")
@@ -149,9 +151,8 @@ def render_multiple(mrs_dirs: list[Path]) -> str:
         lines.append("")
         lines.append("### Latest MRS Context (bounded)")
         for filename, title in (("decisions.md", "Stable Decisions"), ("findings.md", "Key Findings"), ("utils.md", "Utilities")):
-            records = read_context_entry_records(latest, filename, limit=2, max_chars=700)
-            if filename == "utils.md":
-                records = [record for record in records if record["sensitivity"] in {"public", "internal"}]
+            records = (utils_records(latest, max_chars=900) if filename == "utils.md"
+                       else read_context_entry_records(latest, filename, limit=2, max_chars=700))
             if records:
                 lines.append(f"#### {title}")
                 for record in records:

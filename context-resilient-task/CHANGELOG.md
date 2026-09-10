@@ -11,6 +11,19 @@
 
 规则：不是每个 commit 都要升版本，但每次升版本必须在此留下条目。
 
+## 1.6.0 - 2026-09-10
+
+- `utils.md` 升级为**唯一资源注册表**：飞书文档、外部网页、本地进程、静态页面、接口、数据库、看板、工单等一律登记在同一张表，Type 为开放枚举并提供 `other:<label>` 逃逸口；其他 MRS 文件只按 ID 引用（`(res: R3)`），不再复制指针。
+- 修复"登记了也看不见"：`utils.md` 区块改为 pinned，不再受 restore(3 段)/precompact(2 段) 的近期裁剪而静默丢段。
+- 敏感度过滤从**整段丢弃**改为**按行丢弃**：单行 `restricted` 不再连带整张表消失；未标级别的行在同区块存在 `restricted` 时仍按 fail-closed 丢弃。
+- 预算不足时保留表头 + 最早登记的行（登记顺序优先于新鲜度），并放宽 utils 摘要预算。
+- `verify_mrs.py` 新增注册表校验：未知 Type、缺失 Sensitivity、缺少 `## Resource Registry` 表（旧布局）均告警，不改变退出码。
+- 新增 `scripts/scan_resources.py`：扫描遗留 MRS 内已散落的指针，分类并生成注册表草稿（默认只读，`--write` 写入 utils.md）；可达资源排序优先于本地文件噪音，跳过"作为证据引用的源码文件"和容器目录，标注已失效的本地路径，保留 `file:line` 出处。
+- 依据 16 个真实 MRS 的形态调整列语义：`Access` 显式容纳**读取命令/工具**，`Verified` 容纳**读到的版本**（如 `2026-09-07 (rev 607)`）；子资源清单挂 `## Notes` 不占行。
+- 恢复输出的 `Current Artifacts` 改为列出 MRS 目录内**全部**文档（含 Tier 2 与自定义文件，如 `evidence-index.md`），归档快照除外 —— 此前它们在恢复时完全不可见。
+- `verify_mrs.py` 新增 pinned invariants 采纳提示：长日志（decisions ≥10 条 / findings ≥20 条）若没有 pinned 条目则告警并给出实际回放比例（真实数据中 16 个 MRS 的采纳率为 0，qa-ai-search 的 106 条 decisions 只回放 3 条）。
+- Tier 0 文件"存在但格式不合规"不再判定 invalid：接受手写 `**Timestamp:**` 快照头，缺区块降级为修复告警，并在文档中明确**修复而非重新初始化**（真实数据中有 1/16 的 MRS 因此被误判）。
+
 ## 1.5.0 - 2026-09-08
 
 - 敏感度解析覆盖粗体字段、中文全角冒号、表格行和未知高风险等级，默认 fail-closed。

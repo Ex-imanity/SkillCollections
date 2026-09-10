@@ -38,13 +38,13 @@
 | `progress.md` | 会话执行日志 | **仅追加** |
 | `architecture.md` | 架构说明（系统级任务用） | 按需更新 |
 | `decisions.md` | 稳定结论和设计决策（长任务必需） | **仅追加** |
-| `utils.md` | 开发工具、数据库/服务器、日志平台和本地资源指针 | **按区块原地更新** |
+| `utils.md` | **唯一资源注册表**：内部/外部、远程/本地的所有资源指针 | **按行原地更新** |
 
 **失败模式：** 缺少 → **警告**，降级模式恢复
 
 > **decisions.md**：当项目为多会话、多 agent 或 >10 phases 时，`decisions.md` 升级为 Tier 1 必需文件。它承接稳定结论和设计决策，防止 `task_state.md` 因追加决策历史而失控膨胀。
 
-> **utils.md**：把“如何访问环境/工具/资源”与“发现了什么、决定了什么、交付了什么”分开。记录名称、用途、路径或 endpoint、环境、访问条件和敏感级别；不要记录密钥值。恢复和压缩摘要会读取其最新有限内容。
+> **utils.md**：把“如何访问环境/工具/资源”与“发现了什么、决定了什么、交付了什么”分开。它是**所有资源的唯一注册点**，其他文件只按 ID 引用（如 `(res: R3)`），不复制链接。恢复和压缩摘要会**完整回放**整张注册表（区块 pinned，不做近期裁剪）。详见下文「资源注册表」。
 
 ### Tier 2：可选增强（MAY exist）
 - `blockers.md` — 当前阻塞问题
@@ -64,7 +64,7 @@
 - **`progress.md`** = Append-only 日志。每次行动追加一条记录，永不覆写。
 - **`snapshot.md`** = 最新快照。每次**覆写整个文件**，不追加新段落。覆写前先归档旧版本。
 - **`decisions.md`** = 稳定结论/决策。Append-only。这是"Latest Stable Conclusions"的正确归档地，不要放在 task_state.md 中。
-- **`utils.md`** = 稳定工具/环境/资源索引。按区块原地更新，不承载发现、决策或交付物。
+- **`utils.md`** = 唯一资源注册表。按行原地更新，不承载发现、决策或交付物。所有资源指针只在此登记一次。
 - **两者冲突时，`task_state.md` 优先。**
 
 > ⚠️ 常见错误：在 `task_state.md` 末尾追加 `## 2026-02-25 状态更新` 段落。这会导致同一条待办项在文件里出现多次，状态互相矛盾，AI 报告时拿到的是最早出现的"未完成"记录而不是后来的"已完成"记录。
@@ -74,6 +74,50 @@
 当 `task_state.md` 超过 **300 行**时，AI 可能在 recovery 时只读到文件前半部分，导致忽略较新的状态更新。应当执行"压缩"操作：将已完成阶段的详细内容归纳为一行摘要，详细内容保留在 `progress.md` 中。
 
 ---
+
+## 资源注册表（utils.md）
+
+资源是**最贵的上下文**：`/clear` 或 compact 之后，agent 找不到 PRD 链接、日志查询入口、本地 dev server 端口，就会让你把信息再贴一遍。所以它们只有**一个**登记点，而不是按类型分散在多个文档里。
+
+**单一索引规则：** 无论什么类型，一律登记在 `utils.md` —— 飞书文档、外部网页、代码仓库、本地路径、服务接口、数据库、日志平台、看板、本地进程、静态页面、CLI/MCP 工具、需求或用例条目、测试数据、凭据名称。其他文件（`findings.md` / `decisions.md` / `plan.md` / `task_state.md`）**只按 ID 引用**（`(res: R3)`），绝不复制指针。写只写一处，找只找一处。
+
+```markdown
+## Resource Registry
+
+| ID | Type | Name / Purpose | Pointer | Env | Access | Sensitivity | Verified |
+|----|------|----------------|---------|-----|--------|-------------|----------|
+| R1 | feishu-doc | 需求 PRD | https://xx.feishu.cn/docx/abc | prod | 飞书登录 | internal | 2026-09-10 |
+| R2 | local-process | 本地 dev server | http://localhost:3000 (pnpm dev) | local | — | internal | 2026-09-10 |
+| R3 | database | 线上库只读账号 | mysql://prod-host:3306/app | prod | ro_app_user | restricted | 2026-09-10 |
+```
+
+**Type 是开放枚举**：`feishu-doc`、`web-page`、`repo`、`local-path`、`service-api`、`database`、`log-platform`、`dashboard`、`local-process`、`static-site`、`cli-tool`、`mcp-tool`、`ticket`、`test-asset`、`credential-ref`；枚举没覆盖的类型用 `other:<label>` 登记，**不要自造裸类型，也不要因此换个文件存**。`verify_mrs.py` 会对未知类型和缺失敏感级别的行告警。
+
+它是索引而不是日志，因此：
+
+- **区块 pinned**：恢复和 pre-compact 摘要**完整回放**整张注册表，不走"只保留最近 N 段"的裁剪。
+- **按行脱敏**：单行 `restricted` 只丢自己，不再连带整张表消失；未标级别的行在同区块存在 `restricted` 时按 fail-closed 丢弃。
+- **预算不足时**保留表头 + **最早登记**的若干行（ID 被其他文件引用，登记顺序比新鲜度更重要），并附 `utils.md:<行号>` 指针。
+
+实践约束：资源**首次使用时**就登记，一行一条，及时清理失效条目（约 25 行是摘要开始截断前的工作上限）。
+
+两个列比看起来承载更多（来自真实 MRS 的形态）：
+
+- `Access` 除了凭据名/角色，更常写**读取命令或工具**（如 `lark-cli docs +fetch --doc <url> --scope full`）—— 这才是 agent 猜不出来的部分。
+- `Verified` 写"最后确认可达的日期 + **读到的版本**"（如 `2026-09-07 (rev 607)`）—— 文档换了 revision，基于旧版的结论就失效了，版本号必须紧贴指针而不是埋在某条 finding 里。
+
+**子资源不占行**：Base 的表清单、文档的章节目录、数据集的文件列表 —— 容器登记为一行，清单挂到 `## Notes` 并以 ID 开头。**作为 finding 证据引用的单个源码文件不是资源**，它属于引用它的那条 finding。
+
+### 遗留 MRS 迁移
+
+已有 MRS（1.5.0 之前创建的都没有 `utils.md`）不需要手工补：
+
+```bash
+python <skill-root>/scripts/scan_resources.py .task-state          # 只读，打印草稿
+python <skill-root>/scripts/scan_resources.py .task-state --write   # 写入 utils.md
+```
+
+它扫描 MRS 内所有文档里的指针，按类型分类，把"可达资源"排在"本地文件噪音"之前，标出**已不存在的本地路径**，并给每行附 `file:line` 出处。`Name / Purpose`、`Access`、`Sensitivity` 一律留空待填 —— 不替你编凭据和敏感级别。
 
 ## 待办项管理
 
@@ -224,7 +268,7 @@ project/
   │   ├── findings.md          # 发现（仅追加）
   │   ├── progress.md          # 执行日志（仅追加）
   │   ├── decisions.md         # 设计决策（可选）
-  │   ├── utils.md             # 工具/环境/资源指针（新 MRS 自动创建）
+  │   ├── utils.md             # 唯一资源注册表（新 MRS 自动创建）
   │   ├── blockers.md          # 阻塞项（可选）
   │   └── archive/             # 已完成任务的归档快照
   │

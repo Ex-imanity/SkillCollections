@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 import argparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _state_probe import read_context_entry_records, format_context_entry, bounded_text  # noqa: E402
+from _state_probe import read_context_entry_records, utils_records, format_context_entry, bounded_text  # noqa: E402
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOT_TEMPLATE_PATH = SKILL_ROOT / "assets" / "snapshot.template.md"
@@ -93,9 +93,7 @@ def read_progress(mrs_dir: Path, last_n_lines: int = 10) -> str:
 
 
 def context_block(mrs_dir: Path, filename: str) -> str:
-    records = read_context_entry_records(mrs_dir, filename)
-    if filename == "utils.md":
-        records = [record for record in records if record["sensitivity"] in {"public", "internal"}]
+    records = utils_records(mrs_dir) if filename == "utils.md" else read_context_entry_records(mrs_dir, filename)
     entries = [format_context_entry(record) for record in records]
     entries = ["\n".join(("### " + line.lstrip("#").strip() if line.startswith("# ") else ("### " + line[3:] if line.startswith("## ") else line)) for line in entry.splitlines()) for entry in entries]
     return "\n\n".join(entries) if entries else "- (None recorded)"

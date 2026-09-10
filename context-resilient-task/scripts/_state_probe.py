@@ -39,6 +39,7 @@ __all__ = [
     "human_time",
     "read_context_entries",
     "read_context_entry_records",
+    "utils_records",
     "format_context_entry",
     "context_sensitivity",
     "has_sensitive_value",
@@ -54,6 +55,10 @@ _EMPTY_MARKERS = {"", "(unknown)", "(no content)", "_(none)_", "none", "(none)"}
 _NONE_CONTENT = {"(none recorded)", "- (none recorded)", "(none)", "- (none)", "_(none)_"}
 _SENSITIVITY_RE = re.compile(r"(?:\*\*)?\s*(?:sensitivity|敏感度|敏感级别)\s*(?:\*\*)?\s*[:=：]\s*(?:\*\*)?\s*([\w-]+)", re.I)
 _TABLE_SENSITIVITY_RE = re.compile(r"\|[^\n|]*\|\s*(public|internal|restricted|secret|confidential|top-secret|highly\s+confidential|受限)\b", re.I)
+_LEVEL_MENTION_RE = re.compile(r"(?:\bsensitivity\b|敏感度|敏感级别)", re.I)
+_TABLE_ROW_RE = re.compile(r"^\s*\|")
+_TABLE_SEP_RE = re.compile(r"^\s*\|[\s:|\-—–]+\|\s*$")
+_BULLET_RE = re.compile(r"^ {0,1}[-*+]\s+")
 _SECRET_RE = re.compile(r"(?:bearer\s+[A-Za-z0-9._~+/=-]{8,}|(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S+|(?:AKIA|ghp_|github_pat_)[A-Za-z0-9_-]{8,})", re.I)
 
 
@@ -108,13 +113,34 @@ def read_state(mrs_dir: Path) -> dict:
     }
 
 
-def list_artifacts(mrs_dir: Path) -> list[tuple[str, str]]:
-    """Present MRS files (Tier 0 + Tier 1) with human-readable mtimes."""
+def list_artifacts(mrs_dir: Path, max_extra: int = 12) -> list[tuple[str, str]]:
+    """Present every MRS document with human-readable mtimes.
+
+    Tier 0 + Tier 1 come first in canonical order, then Tier 2 and any
+    domain-specific document the task created (`evidence-index.md`,
+    `test-observability.md`, meeting notes, ...). Real MRS trees accumulate
+    these, and a recovery output that lists only the canonical set makes an
+    agent behave as if they do not exist.
+
+    Archived snapshots (`snapshot_*.md`) are excluded — they are history, not
+    current state.
+    """
     artifacts: list[tuple[str, str]] = []
     for name in TIER0 + TIER1:
         path = mrs_dir / name
         if path.exists():
             artifacts.append((name, human_time(path.stat().st_mtime)))
+    known = set(TIER0 + TIER1)
+    try:
+        extra = sorted(
+            (p for p in mrs_dir.glob("*.md")
+             if p.name not in known and not p.name.startswith("snapshot_")),
+            key=lambda p: p.stat().st_mtime, reverse=True,
+        )
+    except OSError:
+        extra = []
+    for path in extra[:max_extra]:
+        artifacts.append((path.name, human_time(path.stat().st_mtime)))
     return artifacts
 
 
@@ -278,6 +304,82 @@ def has_sensitive_value(text: str) -> bool:
     return bool(_SECRET_RE.search(text))
 
 
+def _split_utils_entries(lines: list[str]) -> list[dict]:
+    """Group a utils.md section body into individually filterable entries.
+
+    ``utils.md`` is a registry, not a prose log: one table row or one top-level
+    bullet is one resource. Splitting at that granularity lets a single
+    ``restricted`` resource be dropped without taking every sibling resource in
+    the same table with it.
+
+    Table header/separator rows are marked ``structural`` — they carry no
+    pointer, and are emitted only when at least one data row survives.
+    """
+    entries: list[dict] = []
+    for index, line in enumerate(lines):
+        if _TABLE_ROW_RE.match(line):
+            following = next((lines[j] for j in range(index + 1, len(lines)) if lines[j].strip()), "")
+            structural = bool(_TABLE_SEP_RE.match(line)) or bool(_TABLE_SEP_RE.match(following))
+            entries.append({"lines": [line], "structural": structural, "closed": True})
+            continue
+        if _BULLET_RE.match(line):
+            entries.append({"lines": [line], "structural": False, "closed": False})
+            continue
+        if not line.strip():
+            for entry in entries:
+                entry["closed"] = True
+            entries.append({"lines": [line], "structural": True, "closed": True})
+            continue
+        if entries and not entries[-1]["closed"]:
+            entries[-1]["lines"].append(line)
+            continue
+        entries.append({"lines": [line], "structural": False, "closed": True})
+    return entries
+
+
+def filter_utils_section(chunk: str) -> tuple[str, str]:
+    """Redact restricted resources from one utils.md section, row by row.
+
+    Returns ``(text, sensitivity)``. ``sensitivity`` is ``restricted`` when
+    nothing survived, so callers can drop the section entirely.
+
+    Fail-closed: an entry that states no level inherits ``restricted`` whenever
+    any sibling entry in the same section is restricted.
+    """
+    lines = chunk.splitlines()
+    heading, body = (lines[0], lines[1:]) if lines else ("", [])
+    entries = _split_utils_entries(body)
+    for entry in entries:
+        text = "\n".join(entry["lines"])
+        if entry["structural"] or not text.strip():
+            entry["level"] = None
+            continue
+        mentions = bool(
+            _SENSITIVITY_RE.search(text) or _TABLE_SENSITIVITY_RE.search(text) or _LEVEL_MENTION_RE.search(text)
+        )
+        entry["level"] = context_sensitivity(text) if mentions else None
+    has_restricted = any(entry["level"] == "restricted" for entry in entries)
+    kept = [
+        entry for entry in entries
+        if entry["structural"] or entry["level"] in {"public", "internal"} or (entry["level"] is None and not has_restricted)
+    ]
+    survivors = [entry for entry in kept if not entry["structural"] and entry["lines"] and "".join(entry["lines"]).strip()]
+    if not survivors:
+        return "", "restricted"
+    kept_lines = [line for entry in kept for line in entry["lines"]]
+    text = "\n".join([heading] + kept_lines).rstrip()
+    levels = {entry["level"] for entry in survivors}
+    return text, "public" if levels == {"public"} else "internal"
+
+
+def utils_records(mrs_dir: Path, limit: int = 3, max_chars: int = 1800) -> list[dict]:
+    """Emittable utils.md sections: pinned, restricted rows already redacted."""
+    return [
+        record for record in read_context_entry_records(mrs_dir, "utils.md", limit=limit, max_chars=max_chars)
+        if record["sensitivity"] in {"public", "internal"}
+    ]
+
+
 def read_context_entry_records(
     mrs_dir: Path, filename: str, limit: int = 3, max_chars: int = 1200
 ) -> list[dict]:
@@ -299,18 +401,41 @@ def read_context_entry_records(
             body = "\n".join(chunk.splitlines()[1:]).strip()
             if not body or body.lower() in _NONE_CONTENT:
                 continue
+            if filename == "utils.md":
+                # The resource registry is a profile, not a chronological log:
+                # every section is pinned so a growing registry is never
+                # recency-trimmed, and restricted rows are redacted per row.
+                text, sensitivity = filter_utils_section(chunk)
+                if sensitivity == "restricted":
+                    continue
+                records.append({
+                    "text": text,
+                    "line": visible[start][1] + 1,
+                    "filename": filename,
+                    "pinned": True,
+                    "sensitivity": sensitivity,
+                })
+                continue
             records.append({
                 "text": chunk,
                 "line": visible[start][1] + 1,
                 "filename": filename,
                 "pinned": bool(re.match(r"^##\s+invariants\s*\(pinned\)", lines[start], re.I)) or bool(re.search(r"^\s*(?:[-*]\s*)?(?:\*\*)?pinned(?:\*\*)?\s*:?\s*(?:\*\*)?\s*yes\b|^\s*(?:[-*]\s*)?pinned\s*:\s*yes\b", body, re.I | re.M)),
-                "sensitivity": context_sensitivity(chunk) if filename == "utils.md" else "internal",
+                "sensitivity": "internal",
             })
     else:
         text = "\n".join(lines).strip()
         body = "\n".join(text.splitlines()[1:]).strip() if text.startswith("# ") else text
         if body and body.lower() not in _NONE_CONTENT:
-            records.append({"text": text, "line": 1, "filename": filename, "pinned": False, "sensitivity": context_sensitivity(text) if filename == "utils.md" else "internal"})
+            if filename == "utils.md":
+                title = text.splitlines()[0] if text.startswith("# ") else ""
+                filtered, sensitivity = filter_utils_section("# (synthetic heading)\n" + body)
+                if sensitivity != "restricted":
+                    kept_body = "\n".join(filtered.splitlines()[1:]).strip()
+                    records.append({"text": f"{title}\n{kept_body}".strip() if title else kept_body,
+                                    "line": 1, "filename": filename, "pinned": True, "sensitivity": sensitivity})
+            else:
+                records.append({"text": text, "line": 1, "filename": filename, "pinned": False, "sensitivity": "internal"})
     pinned = [record for record in records if record["pinned"]]
     recent = [record for record in records if not record["pinned"]][-limit:]
     return pinned + recent
@@ -322,8 +447,27 @@ def format_context_entry(record: dict, max_chars: int = 1200) -> str:
         return text
     lines = text.splitlines()
     heading = lines[0] if lines else ""
-    body = "\n".join(lines[1:]).strip()
+    # A truncated table is unreadable without its header row, so keep the
+    # header/separator pair as part of the heading and tail-trim only the rows.
+    header: list[str] = []
+    rest = lines[1:]
+    for index, line in enumerate(rest):
+        if _TABLE_SEP_RE.match(line) and index >= 1 and _TABLE_ROW_RE.match(rest[index - 1]):
+            header = rest[index - 1:index + 1]
+            rest = rest[index + 1:]
+            break
+        if line.strip() and not _TABLE_ROW_RE.match(line):
+            break
+    prefix = "\n".join([heading] + header)
+    body = "\n".join(rest).strip()
     pointer = f"… (truncated; full content in {record.get('filename', 'source')}:{record['line']})"
-    budget = max(0, max_chars - len(heading) - len(pointer) - 3)
-    tail = body[-budget:] if budget else ""
-    return f"{heading}\n{tail}\n{pointer}".strip()
+    budget = max(0, max_chars - len(prefix) - len(pointer) - 3)
+    if not budget:
+        kept = ""
+    elif record.get("filename") == "utils.md":
+        # The registry has no recency order and IDs are cited from other files,
+        # so keep the earliest-registered rows instead of the tail.
+        kept = body[:budget].rsplit("\n", 1)[0] if len(body) > budget else body
+    else:
+        kept = body[-budget:]
+    return f"{prefix}\n{kept}\n{pointer}".strip()

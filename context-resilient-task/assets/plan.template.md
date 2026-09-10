@@ -17,6 +17,7 @@ Field reference:
 
 Structural rules:
 - "## Plan Registry (docs/plans)" MUST stay at the bottom.
+- Resource pointers/links are NEVER registered here; they live in utils.md.
 - Plan Registry registers ONLY files under docs/plans/*.md. NEVER register
   CLAUDE.md, AGENTS.md, .task-state/* (MRS files), or docs/runbooks/*.
 - Reference Index is optional; delete the section if unused.
@@ -47,8 +48,11 @@ Status values: pending | in_progress | completed | abandoned
 ## Reference Index
 
 <!--
-Optional. For non-plan reference files (runbooks, external design docs).
-NOT for CLAUDE.md / AGENTS.md (auto-loaded) or MRS files. Delete this section if unused.
+Optional. For non-plan LOCAL reference files under version control (runbooks,
+committed design docs). NOT for CLAUDE.md / AGENTS.md (auto-loaded) or MRS files.
+Links and pointers (飞书文档, external pages, endpoints, local processes, ...) belong
+in the utils.md Resource Registry — cite them here by ID, not by URL.
+Delete this section if unused.
 -->
 
 | File | Purpose |

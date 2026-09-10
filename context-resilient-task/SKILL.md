@@ -1,6 +1,6 @@
 ---
 name: context-resilient-task
-version: 1.5.0
+version: 1.6.0
 description: Context-resilient task management via a filesystem Minimum Recovery Set (MRS in .task-state/). Reconstructs task state from on-disk artifacts so work survives /clear, session interruption, agent switches, and context-window loss. Use this skill whenever the user mentions multi-phase tasks, multi-session work, cross-session recovery, task state restoration, MRS, .task-state, lost context, hallucinated todos, forgotten work, 任务状态恢复, 跨会话任务, 多会话开发, 上下文丢失, /clear 后继续, 任务恢复, or asks the agent to remember a task across sessions. Also trigger proactively when starting any task likely to span more than one session, even if the user doesn't explicitly request recovery — the upfront MRS structure prevents context-loss surprises later.
 ---
 
@@ -14,7 +14,7 @@ description: Context-resilient task management via a filesystem Minimum Recovery
 - **`progress.md`** — Append-only chronological log. Never overwrite.
 - **`snapshot.md`** — Latest checkpoint. **Overwrite** entire file on each update (archive previous first).
 - **`decisions.md`** — Stable conclusions and decisions. Append-only. Required for long tasks (see Tier 1 below).
-- **`utils.md`** — Stable tooling, environment, database/server/logging and local resource pointers; not findings or deliverables.
+- **`utils.md`** — The **single resource registry**: every resource an agent may need to reach, internal or external, remote or local. Not findings, not deliverables.
 - On conflict between files, `task_state.md` wins.
 - Recovery always prioritizes `Invariants (pinned)` entries, then the newest bounded log entries. Multi-MRS output has a global 4000-character budget.
 
@@ -32,7 +32,7 @@ description: Context-resilient task management via a filesystem Minimum Recovery
 - `progress.md` — Session execution log (append-only)
 - `architecture.md` — Architecture (for system-level tasks)
 - `decisions.md` — Stable conclusions/decisions (**required** when: multi-session, multi-agent, or >10 phases; otherwise optional)
-- `utils.md` — Tool/resource profile (optional for legacy MRS; created for new MRS)
+- `utils.md` — Resource registry (optional for legacy MRS; created for new MRS)
 
 **If missing:** WARN, ask user to confirm continuation.
 
@@ -56,8 +56,9 @@ Full MRS specification: [references/minimum-recovery-set.md](references/minimum-
    - Recommend most recently updated (*) but never assume
 5. Scan selected MRS for Tier 0 files
 6. If status=completed → Skip recovery, prompt archival
-7. If all Tier 0 present → Recovery mode
-8. If any Tier 0 missing → Initialization mode
+7. If all Tier 0 present → Recovery mode (a present-but-malformed Tier 0 file is a
+   repair task, never a reason to initialize over an existing MRS)
+8. If any Tier 0 file is **absent** → Initialization mode
 9. Check Tier 1, emit warnings if missing
 10. Output "Reconstructed Task State"
 11. Continue from last checkpoint
@@ -101,6 +102,56 @@ Full template specification: [references/output-template.md](references/output-t
 4. **Single Next Action:** Only one concrete step at a time
 5. **Output Artifact:** Every action produces/updates an artifact
 
+## Resource Registry (utils.md)
+
+Resources are the context most expensive to lose: after `/clear` or compaction an
+agent that cannot find the PRD link, the log query or the dev-server port asks the
+user to paste it all again. So they get **one** registration point, not one per kind.
+
+**Single index rule:** every resource is registered in `utils.md`, whatever its kind —
+飞书文档, external web pages, repos, local paths, service endpoints, databases, log
+platforms, dashboards, local processes, static previews, CLI/MCP tools, tickets, test
+assets, credential names. Other artifacts (`findings.md`, `decisions.md`, `plan.md`,
+`task_state.md`) **cite the ID** — `(res: R3)` — and never repeat the pointer. One
+place to write, one place to look.
+
+```markdown
+## Resource Registry
+| ID | Type | Name / Purpose | Pointer | Env | Access | Sensitivity | Verified |
+|----|------|----------------|---------|-----|--------|-------------|----------|
+| R1 | feishu-doc | 需求 PRD | https://xx.feishu.cn/docx/... | prod | 飞书登录 | internal | 2026-09-10 |
+| R2 | local-process | 本地 dev server | http://localhost:3000 (pnpm dev) | local | — | internal | 2026-09-10 |
+```
+
+**Type is an open enumeration** — `feishu-doc`, `web-page`, `repo`, `local-path`,
+`service-api`, `database`, `log-platform`, `dashboard`, `local-process`, `static-site`,
+`cli-tool`, `mcp-tool`, `ticket`, `test-asset`, `credential-ref` — and anything
+uncovered is registered as `other:<label>` rather than a bare invented type, so a new
+resource kind is never a reason to file it somewhere else. `verify_mrs.py` warns on
+unknown types and on rows missing a sensitivity level.
+
+Because it is an index and not a log, `utils.md` sections are **pinned**: recovery and
+pre-compaction digests replay the whole registry, never a recency window. Redaction is
+**per row** — one `restricted` resource is dropped without hiding its table siblings —
+and a row with no level is dropped fail-closed once any sibling row is restricted.
+
+Register a resource the first time it is used, keep rows to one line, and prune dead
+entries (~25 rows is the working limit before a digest starts truncating).
+
+Two columns carry more than they look like: `Access` holds the **command or tool that
+reads the resource** (`lark-cli docs +fetch --doc <url>`) as readily as a credential
+name — that is the part an agent cannot guess — and `Verified` holds the date **plus
+the version read** (`2026-09-07 (rev 607)`), because a doc that moved to a new revision
+invalidates conclusions drawn from the old one. Sub-resources (a Base's table
+inventory, a chapter outline) stay in `## Notes` keyed by ID instead of taking a row
+each. Single source files cited as evidence for a finding are **not** resources.
+
+**Legacy MRS:** `python <skill-root>/scripts/scan_resources.py <mrs-dir>` drafts the
+registry from the pointers already scattered in the MRS documents (read-only until
+`--write`).
+
+Full schema and type reference: [references/artifact-standards.md](references/artifact-standards.md)
+
 ## Todo Management
 
 `task_state.md` maintains two sections as the **only** authoritative source for todos:
@@ -117,6 +168,7 @@ Full rules: [references/artifact-standards.md](references/artifact-standards.md)
 | Condition | Severity | Action |
 |---|---|---|
 | Missing Tier 0 file | STOP | Run initialization wizard |
+| Tier 0 file present but invalid | STOP | **Repair the file. NEVER re-initialize** — the MRS holds real history |
 | Missing Tier 1 file | WARN | Ask user to confirm continuation |
 | Stale snapshot (>7 days) | WARN | Offer to regenerate |
 | Conflicting artifacts | STOP | Ask user which is correct |
@@ -174,7 +226,7 @@ Full cross-skill protocol: [references/multi-skill-integration.md](references/mu
 | decisions.md | Stable conclusion reached | **Append only** |
 | findings.md | After discoveries | **Append only** |
 | progress.md | After each significant action | **Append only** |
-| utils.md | Tool/environment/resource profile changes | **In-place by section** |
+| utils.md | A resource is first used, or its pointer/access changes | **In-place by row** |
 
 **Forbidden paths:** `/.cursor/`, `/agent-tools/`, `/temp/`, `/tmp/`, `/.cache/`
 
@@ -193,6 +245,11 @@ python <skill-root>/scripts/init_mrs.py                       # interactive wiza
 # Check MRS health
 python <skill-root>/scripts/verify_mrs.py .task-state
 python <skill-root>/scripts/verify_mrs.py --json .task-state  # JSON for agents
+
+# Draft a Resource Registry from pointers already in a legacy MRS (read-only by default)
+python <skill-root>/scripts/scan_resources.py .task-state
+python <skill-root>/scripts/scan_resources.py .task-state --write   # insert draft rows
+python <skill-root>/scripts/scan_resources.py .task-state --json    # for agents
 
 # List all MRS directories discoverable from CWD
 python <skill-root>/scripts/list_mrs.py
@@ -256,8 +313,8 @@ When initializing MRS for a project that uses multiple agents (Claude Code, Code
 - Append stable conclusions to `decisions.md` (not `task_state.md`)
 - Cite source files in all statements
 - Before compaction or session handoff, surface bounded latest entries from `decisions.md`, `findings.md`, and `utils.md` in the digest/snapshot
-- Keep `utils.md` limited to stable pointers (tool name, purpose, path/endpoint, environment, access/sensitivity); never put secrets or task conclusions there
-- Mark each utility `Sensitivity: public|internal|restricted`; restricted entries are excluded from snapshots and recovery digests, and likely credential values fail validation.
+- Register every resource (飞书文档/外部网页/本地进程/静态页/接口/数据库/工具…) in the `utils.md` registry on first use, and cite it elsewhere by ID; never put secrets or task conclusions there
+- Give every registry row an explicit `Sensitivity: public|internal|restricted`; restricted rows are excluded per row from snapshots and recovery digests, and likely credential values fail validation.
 - Legacy suffixed `Completed Items` subsections (for example, per-round history) are preserved with a warning; only repeated exact authoritative sections invalidate `task_state.md`.
 - Regenerate `snapshot.md` after updating Tier 1 logs; verification warns when source context is newer than the snapshot.
 - Register every new `docs/plans/` file in Plan Registry immediately
@@ -269,4 +326,5 @@ When initializing MRS for a project that uses multiple agents (Claude Code, Code
 - Leave completed todos in Active Todos list
 - Infer todo status from `progress.md`
 - Put non-plan files in Plan Registry
+- Scatter resource pointers into findings/decisions/plan instead of registering them in `utils.md`
 - Use forbidden temp paths
