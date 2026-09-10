@@ -41,6 +41,15 @@
 - 误报治理（在 16 个真实 MRS 上实测）：`sk-` 前缀曾在 `task-breakdown`／`.task-state-*` 内部误命中（78 次），中文散文和 `rotation:` 也被符号规则误判 —— 加左边界、非 ASCII 值排除、值截断到首个反引号后，真实 MRS 命中从 13/16 降到 2 行，且两条都是真实 token 值。
 - 校验提示措辞覆盖"文档 token"读法：可以是删值留名，也可以是把该资源登记进注册表。
 
+### Grok 终审 nit 修复（gate `crt-1.6.0-postfix2-grok-20260910`，verdict APPROVE WITH NITS → nit 已清）
+
+- `references/artifact-standards.md` 最后一处"always replayed"表述已改。
+- `scan_resources.py` 的 `URL_RE` 会把 IPv6 主机截断（`postgres://u:p@[::1]:5432/db` → `…@[::1`），指针被写坏（口令未泄漏）；现在把 `[...]` 整体匹配，并有回归测试。
+- 补上复合凭据键（`client_secret=`、`aws_secret_access_key=`、`refresh_token=`、`mytoken=`）、`Authorization: Basic` 和 PEM 私钥块的检测。
+- 检测器的"值判定"经真实语料迭代收紧：keyword 档要求值是**单个不透明 token**（不含 `/`、`:` 等路径/句读符号），且"不透明"仅由数字或普通词汇不会出现的符号（`@!$^&*#?%+=~`）判定 —— `-`/`_`/`.` 不算。这消除了 `token-gated sync/delete`、`token: ~/.claude/settings.json`、`token authenticates`、`tenant-token record-list` 等散文误报。
+- **有意保留的漏检**（已写入文档）：纯字母口令（`password: SuperSecretPass`）、含非 ASCII 字符的口令、含表格分隔符 `|` 的裸口令。纯字母值与散文不可区分，而误报会**静默丢掉合法注册行** —— 这正是本版本要消灭的失效模式，故宁漏勿误。
+- 真实语料实测：32 例检测矩阵全通过；16 个真实 MRS 命中 4 行，全部为真实 token 值，`utils.md` 命中 0（无合法注册行被丢）。
+
 
 - Tier 0 文件"存在但格式不合规"不再判定 invalid：接受手写 `**Timestamp:**` 快照头，缺区块降级为修复告警，并在文档中明确**修复而非重新初始化**（真实数据中有 1/16 的 MRS 因此被误判）。
 

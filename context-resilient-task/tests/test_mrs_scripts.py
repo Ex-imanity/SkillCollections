@@ -696,11 +696,28 @@ class MrsScriptsTest(unittest.TestCase):
             ("token 轮换/清理继续按用户要求独立", False),   # CJK prose
             ("token rotation: 见方案", False),
             ("sk-proj-abcdefghijklmnop123456", True),
+            # postfix2 gate: compound keys, Basic auth, PEM
+            ("client_secret=abc123def456", True),
+            ("aws_secret_access_key=AbCd1234EfGh5678", True),
+            ("refresh_token=8f3c6d12b5f0", True),
+            ("mytoken=abc123def456", True),
+            ("Authorization: Basic dXNlcjpwYXNzd29yZA==", True),
+            ("-----BEGIN RSA PRIVATE KEY-----", True),
+            # postfix2 gate: prose shapes found in the real MRS corpus
+            ("token-gated sync/delete 已确认", False),
+            ("token-based Framelink/figma fetch", False),
+            ("token: ~/.claude/settings.json", False),
+            ("token authenticates the request", False),
+            ("tenant-token record-list request", False),
             # value capture must stop at the first backtick, not run into CJK
             ("token `8f3c6d12b5e74a9ca1d8f0b36e2c7a4d`、`allowedSystem`", True),
             ("token=8f3c6d12b5f0", True),
             ("Authorization: Bearer sk-abc12345678", True),
-            ("password: SuperSecretPass", True),
+            # Deliberate known limit: an all-letter value cannot be told apart
+            # from prose ("token authenticates the request"), and a false
+            # positive silently drops a legitimate registry row. Documented in
+            # references/artifact-standards.md.
+            ("password: SuperSecretPass", False),
             ("api_key = a1b2c3d4e5", True),
             ("mysql://u:P@ss1@h/db", True),
             ("Bearer credentials", False),
@@ -808,6 +825,20 @@ class MrsScriptsTest(unittest.TestCase):
         self.assertNotIn("mysql://svc:***@", restored)
         self.assertNotIn("| R1 |", restored)
         self.assertNotIn("| R2 |", restored)
+
+    def test_ipv6_pointers_survive_the_scanner(self):
+        """P2 (postfix2 gate): a bracketed IPv6 host must not be truncated."""
+        mrs_dir = self.work_root / "project" / ".task-state"
+        self.run_script("init_mrs.py", "--dir", mrs_dir, "--goal", "IPv6", "--complexity", "medium")
+        (mrs_dir / "utils.md").unlink()
+        (mrs_dir / "findings.md").write_text(
+            "# Findings\n\n## 2026-01-02: env\n- db postgres://alice:s3cretPw9@[::1]:5432/db\n",
+            encoding="utf-8",
+        )
+        self.run_script("scan_resources.py", mrs_dir, "--write")
+        utils = (mrs_dir / "utils.md").read_text(encoding="utf-8")
+        self.assertIn("postgres://alice:***@[::1]:5432/db", utils)
+        self.assertNotIn("s3cretPw9", utils)
 
     def test_scan_write_places_notes_after_the_template_comment(self):
         """P1: provenance must not be swallowed by the template's HTML comment."""

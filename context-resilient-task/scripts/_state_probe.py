@@ -69,11 +69,17 @@ _BULLET_RE = re.compile(r"^ {0,1}[-*+]\s+")
 
 # `Bearer <value>` is a strong grammar position: whatever follows is the token,
 # unless it is a plain word ("Bearer credentials" is prose about auth).
-_BEARER_RE = re.compile(r"(?<![\w-])bearer(?![\w-])(?:\s*[:=]\s*|\s+)([^\s|]+)", re.I)
+_BEARER_RE = re.compile(r"(?<![\w-])(?:bearer|basic)(?![\w-])(?:\s*[:=]\s*|\s+)([^\s|]+)", re.I)
 # `password: value` / `token=value` — ambiguous with prose, so the value has to
 # look opaque before it counts.
+# Compound keys are common (`client_secret`, `aws_secret_access_key`,
+# `refresh_token`): allow one affix on either side. This widens the *keyword*
+# only — the value still has to look opaque, so `parent_node_token=node_token`
+# stays prose.
 _SECRET_KEY_RE = re.compile(
-    r"(?<![\w-])(?:password|passwd|secret|token|api[_-]?key|apikey)(?![\w-])"
+    r"(?<![\w-])(?:[A-Za-z0-9]{1,24}[_-]?)?"
+    r"(?:password|passwd|secret|token|api[_-]?key|apikey)"
+    r"(?:[_-][A-Za-z0-9]{1,24})*(?![\w-])"
     r"(?:\s*[:=]\s*|\s+)([^\s|]+)",
     re.I,
 )
@@ -91,11 +97,15 @@ _STATIC_SECRET_RE = re.compile(
     r"(?<![A-Za-z0-9_])"
     r"(?:(?:AKIA|ghp_|gho_|github_pat_|xoxb-|xoxp-|xapp-|sk_live_|pk_live_|glpat-)[A-Za-z0-9_-]{8,}"
     r"|sk-[A-Za-z0-9_-]{16,}"  # OpenAI-style keys (incl. sk-proj-...)
-    r"|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,})"
+    r"|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}"
+    r"|-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----)"
 )
 # Placeholders and redaction markers are never credentials.
 _PLACEHOLDER_VALUE_RE = re.compile(r"^(?:[<{\[(].*|[*x.…\-_]+|\(.*\)|待填写.*|tbd|n/?a|none|null)$", re.I)
-_SYMBOL_HINT_RE = re.compile(r"[@:/+=%!$^&]")
+# One opaque token: credential punctuation is allowed, path/sentence punctuation
+# (`/`, `:`, `,`, whitespace) is not.
+_TOKEN_SHAPE_RE = re.compile(r"[A-Za-z0-9._~+=%@!$^&*#?-]{6,}")
+_BASE64_BLOB_RE = re.compile(r"[A-Za-z0-9+/=]{20,}")
 
 
 def _looks_like_secret_value(value: str, mode: str = "keyword") -> bool:
@@ -126,12 +136,20 @@ def _looks_like_secret_value(value: str, mode: str = "keyword") -> bool:
         return not is_plain_word
     if len(value) < 6:
         return False
-    # An opaque run with a digit or a structural symbol reads as a credential;
-    # `node_token` / `access-token` (word chars plus - _ only) reads as prose.
-    if any(char.isdigit() for char in value) or _SYMBOL_HINT_RE.search(value):
+    if _BASE64_BLOB_RE.fullmatch(value):
         return True
-    # No digit, no symbol: only a long single alphabetic run is suspicious.
-    return bool(re.fullmatch(r"[A-Za-z]{13,}", value))
+    # A credential is one opaque token. A value carrying path or sentence
+    # punctuation is prose: "token-gated sync/delete", "token: ~/.claude/x.json".
+    if not _TOKEN_SHAPE_RE.fullmatch(value):
+        return False
+    # Within that shape a digit or credential punctuation marks it opaque. An
+    # all-letter value is not accepted at any length: English words reach 13+
+    # characters ("token authenticates …"), and a false positive here silently
+    # drops a legitimate registry row — the failure this release exists to fix.
+    # Only punctuation that does not occur in ordinary compound words counts:
+    # `-`, `_` and `.` are common in prose ("tenant-token record-list"), so a
+    # value needs a digit or one of these to read as opaque.
+    return any(char.isdigit() or char in "@!$^&*#?%+=~" for char in value)
 
 
 def has_sensitive_value(text: str) -> bool:

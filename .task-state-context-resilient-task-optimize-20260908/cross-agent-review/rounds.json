@@ -32,8 +32,8 @@
     "successes": 1
   },
   "context-resilient-task-1.6.0-postfix": {
-    "attempts": 1,
-    "successes": 1
+    "attempts": 2,
+    "successes": 2
   },
   "context-resilient-task-grok-compat-20260909": {
     "attempts": 1,

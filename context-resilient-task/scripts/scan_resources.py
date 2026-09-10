@@ -28,7 +28,12 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from _mrs_discovery import find_mrs_dirs  # noqa: E402
 from _state_probe import configure_utf8_stdout  # noqa: E402
 
-URL_RE = re.compile(r"(?:https?|mysql|redis|mongodb|postgres(?:ql)?)://[^\s)\"'|`>\]]+")
+# A bracketed IPv6 host is matched as a unit, otherwise the class stops at `]`
+# and `postgres://u:p@[::1]:5432/db` is registered as a truncated pointer.
+URL_RE = re.compile(
+    r"(?:https?|mysql|redis|mongodb|postgres(?:ql)?)://"
+    r"(?:\[[0-9A-Fa-f:.]+\]|[^\s)\"'|`>\]])+"
+)
 PATH_RE = re.compile(r"(?<![\w/])(?:/Users/[A-Za-z0-9._-]+|~)/[A-Za-z0-9._/-]{4,}")
 HOST_PORT_RE = re.compile(r"\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d{2,5})?\b")
 HEADING_RE = re.compile(r"^#{1,4}\s+(.*\S)\s*$")
