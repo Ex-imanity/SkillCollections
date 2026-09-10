@@ -30,7 +30,17 @@
 - **P2** 文档不再声称"完整回放整张注册表"：pinned 去掉的是近期裁剪悬崖，每条 1800 / 整体 4000 字符预算仍生效。
 - 密钥检测收紧为"值必须像密钥"（含数字或符号且 ≥6 字符，或纯字母 ≥13 字符），避免 `Bearer credentials`、`token: token` 这类散文误报 —— 发射侧误报会**静默丢掉合法资源行**，比告警更危险；同时把 `受限` 等中文级别纳入已标注词汇。
 - `verify_mrs.py` 新增：任何 MRS 文档（`findings.md` / `progress.md` / `decisions.md`…）含疑似凭据时告警，因为它们同样会被回放或提交。实测 16 个真实 MRS 中命中 1 例真阳性。
-- 新增 7 个回归测试覆盖上述每个 P1/P2 形态（总数 71）。
+- 新增回归测试覆盖上述每个 P1/P2 形态。
+
+### Grok 复审修复（gate `crt-1.6.0-postfix-grok-20260910`，verdict REQUEST CHANGES → 已修）
+
+- **P1** 空用户名的 URL 凭据（`redis://:password@host`）此前既不脱敏也不拦截：`--write` 会把明文口令落盘，标 `internal` 时还会进摘要，且 `verify_mrs.py` 判 valid。现在写入前脱敏、发射侧拦截、校验判 invalid，三条路径都有回归测试。
+- **P2** 探测器与校验器的正则漂移（`_state_probe` 缺 `\b`，与 `verify_mrs` 判定不一致，会静默丢掉校验认为健康的行）：两者现在共用 `_state_probe.has_sensitive_value` 一份实现，并有"校验器不得再持有第二份实现"的测试。
+- **P2** 密钥判定从"正则位置编码"改为"捕获值 + 判定函数"，按语法强度分档：URL userinfo 位置任何真实值都算；`Bearer` 后除纯词皆算；`password:`/`token=` 需要值本身不透明。补上此前漏检的 `Passw0rd`、`P@ssw0rd`、`xoxb-`/`sk-proj-`/`glpat-` 等厂商前缀和 JWT。
+- **P2** `README.md:47` 残留的"完整回放"表述已改。
+- 误报治理（在 16 个真实 MRS 上实测）：`sk-` 前缀曾在 `task-breakdown`／`.task-state-*` 内部误命中（78 次），中文散文和 `rotation:` 也被符号规则误判 —— 加左边界、非 ASCII 值排除、值截断到首个反引号后，真实 MRS 命中从 13/16 降到 2 行，且两条都是真实 token 值。
+- 校验提示措辞覆盖"文档 token"读法：可以是删值留名，也可以是把该资源登记进注册表。
+
 
 - Tier 0 文件"存在但格式不合规"不再判定 invalid：接受手写 `**Timestamp:**` 快照头，缺区块降级为修复告警，并在文档中明确**修复而非重新初始化**（真实数据中有 1/16 的 MRS 因此被误判）。
 

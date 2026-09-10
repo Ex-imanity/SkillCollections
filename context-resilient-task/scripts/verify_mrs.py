@@ -21,6 +21,13 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import re
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# One shared implementation with the emission guard in _state_probe.py: a
+# validator that disagrees with the filter either hides a leak or lets the
+# filter silently drop a row the validator calls healthy.
+from _state_probe import has_sensitive_value  # noqa: E402
+
 # MRS Tiers
 TIER_0 = ["task_state.md", "plan.md", "snapshot.md"]
 # Tier 1 core: always checked
@@ -251,23 +258,6 @@ def check_forbidden_paths(directory: Path) -> list[str]:
     return violations
 
 
-# A value only counts as a secret if it looks like one: something with a
-# digit or symbol (>=6 chars), or a long opaque alphabetic run (>=13).
-# Prose such as "Bearer credentials" or "token: token" must not match,
-# because a false positive here silently drops a legitimate registry row.
-_SECRET_VALUE = r"(?:[A-Za-z0-9._~+/=-]*[\d._~+/=-][A-Za-z0-9._~+/=-]{5,}|[A-Za-z]{13,})"
-
-SECRET_PATTERNS = (
-    r"\bBearer\s+" + _SECRET_VALUE,
-    r"\b(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*" + _SECRET_VALUE,
-    r"\b(?:AKIA|ghp_|github_pat_)[A-Za-z0-9_-]{8,}",
-    # scheme://user:password@host — a credential embedded in a pointer
-    r"[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s/@]*[A-Za-z0-9][^\s/@]*@",
-    # ?token=... / &api_key=... query credentials
-    r"[?&](?:token|access[_-]?token|api[_-]?key|apikey|secret|password|passwd|sig|signature)=[^\s&#|]{6,}",
-)
-
-
 def check_document_secrets(directory: Path) -> list[str]:
     """Warn about likely credential values in any MRS document.
 
@@ -285,13 +275,14 @@ def check_document_secrets(directory: Path) -> list[str]:
             content = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if any(re.search(pattern, content, re.I) for pattern in SECRET_PATTERNS):
+        if has_sensitive_value(content):
             hits.append(path.name)
     if not hits:
         return []
     return [
-        f"likely secret value(s) in {', '.join(hits[:5])}; these files are replayed or committed, "
-        "so remove the value and keep only the credential name (see utils.md 'Access')"
+        f"likely secret or access-token value(s) in {', '.join(hits[:5])}; these files are replayed "
+        "or committed, so remove a credential value and keep only its name, or register a document/"
+        "resource token in the utils.md registry (see utils.md 'Access')"
     ]
 
 
@@ -305,7 +296,7 @@ def check_utils_sensitivity(directory: Path) -> list[str]:
     except OSError:
         return []
     return ["utils.md contains a likely secret value; record credential names/access requirements, never values"] \
-        if any(re.search(pattern, content, re.I) for pattern in SECRET_PATTERNS) else []
+        if has_sensitive_value(content) else []
 
 
 RESOURCE_TYPES = {

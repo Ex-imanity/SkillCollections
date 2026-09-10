@@ -59,21 +59,91 @@ _LEVEL_MENTION_RE = re.compile(r"(?:\bsensitivity\b|敏感度|敏感级别)", re
 _TABLE_ROW_RE = re.compile(r"^\s*\|")
 _TABLE_SEP_RE = re.compile(r"^\s*\|[\s:|\-—–]+\|\s*$")
 _BULLET_RE = re.compile(r"^ {0,1}[-*+]\s+")
-    # A value only counts as a secret if it looks like one: something with a
-    # digit or symbol (>=6 chars), or a long opaque alphabetic run (>=13).
-    # Prose such as "Bearer credentials" or "token: token" must not match,
-    # because a false positive here silently drops a legitimate registry row.
-_SECRET_VALUE = r"(?:[A-Za-z0-9._~+/=-]*[\d._~+/=-][A-Za-z0-9._~+/=-]{5,}|[A-Za-z]{13,})"
-_SECRET_RE = re.compile(
-    r"(?:bearer\s+" + _SECRET_VALUE
-    + r"|(?:password|passwd|secret|token|api[_-]?key)\s*[:=]\s*" + _SECRET_VALUE
-    + r"|(?:AKIA|ghp_|github_pat_)[A-Za-z0-9_-]{8,}"
-    # scheme://user:password@host — a credential embedded in a pointer
-    r"|[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s/@]*[A-Za-z0-9][^\s/@]*@"
-    # ?token=... / &api_key=... query credentials
-    r"|[?&](?:token|access[_-]?token|api[_-]?key|apikey|secret|password|passwd|sig|signature)=[^\s&#|]{6,})",
+    # --- Secret detection -------------------------------------------------------
+# Deliberately "capture the value, then judge it" rather than encoding the
+# secret shape positionally in one regex: the positional form both missed real
+# credentials (empty-userinfo URLs, `Passw0rd`) and drifted between this probe
+# and verify_mrs.py. verify_mrs.py imports has_sensitive_value from here so the
+# emission guard and the validator can never disagree — a false positive here
+# silently drops a legitimate registry row, which is worse than a warning.
+
+# `Bearer <value>` is a strong grammar position: whatever follows is the token,
+# unless it is a plain word ("Bearer credentials" is prose about auth).
+_BEARER_RE = re.compile(r"(?<![\w-])bearer(?![\w-])(?:\s*[:=]\s*|\s+)([^\s|]+)", re.I)
+# `password: value` / `token=value` — ambiguous with prose, so the value has to
+# look opaque before it counts.
+_SECRET_KEY_RE = re.compile(
+    r"(?<![\w-])(?:password|passwd|secret|token|api[_-]?key|apikey)(?![\w-])"
+    r"(?:\s*[:=]\s*|\s+)([^\s|]+)",
     re.I,
 )
+# scheme://user:password@host — the username may be empty (redis://:pass@host).
+# The value is greedy so a password containing '@' is captured whole.
+_URI_CRED_RE = re.compile(r"(?<![\w-])[a-z][a-z0-9+.-]*://[^\s/:@|]*:([^\s/|]+)@", re.I)
+# ?token=… / &api_key=…
+_QUERY_CRED_RE = re.compile(
+    r"[?&](?:token|access[_-]?token|api[_-]?key|apikey|secret|password|passwd|sig|signature)=([^\s&#|]+)",
+    re.I,
+)
+# Vendor-prefixed keys and JWTs are self-identifying, so no value heuristic.
+_STATIC_SECRET_RE = re.compile(
+    # The left boundary matters: without it `sk-` matches inside "task-state".
+    r"(?<![A-Za-z0-9_])"
+    r"(?:(?:AKIA|ghp_|gho_|github_pat_|xoxb-|xoxp-|xapp-|sk_live_|pk_live_|glpat-)[A-Za-z0-9_-]{8,}"
+    r"|sk-[A-Za-z0-9_-]{16,}"  # OpenAI-style keys (incl. sk-proj-...)
+    r"|eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,})"
+)
+# Placeholders and redaction markers are never credentials.
+_PLACEHOLDER_VALUE_RE = re.compile(r"^(?:[<{\[(].*|[*x.…\-_]+|\(.*\)|待填写.*|tbd|n/?a|none|null)$", re.I)
+_SYMBOL_HINT_RE = re.compile(r"[@:/+=%!$^&]")
+
+
+def _looks_like_secret_value(value: str, mode: str = "keyword") -> bool:
+    """Judge one captured value. Conservative on prose, strict on opaque data.
+
+    `mode` reflects how much the surrounding grammar already proves:
+      "uri"     — the password slot of a URL's userinfo: any real value counts,
+                  including a short one.
+      "bearer"  — after `Bearer`: anything but a plain word counts.
+      "keyword" — after `password:` / `token=`: ambiguous with prose, so the
+                  value must look opaque (digit or structural symbol, or a long
+                  single alphabetic run).
+    """
+    value = value.strip().strip("`'\"“”‘’,;.，。；、:：)）]】>》")
+    # `token=\`abc\`、\`def\`` captures past the first value, so keep the leading
+    # run: otherwise trailing CJK punctuation makes a real token look like prose.
+    value = re.split(r"[`\s、，。；;,]", value)[0].strip("'\"“”‘’:：)）]】>》")
+    if not value or _PLACEHOLDER_VALUE_RE.match(value) or "***" in value:
+        return False
+    # Credentials are ASCII. A value carrying CJK (or any non-ASCII) is prose
+    # such as "token 轮换/清理继续按用户要求独立".
+    if not value.isascii():
+        return False
+    if mode == "uri":
+        return True
+    is_plain_word = bool(re.fullmatch(r"[A-Za-z]{1,12}", value))
+    if mode == "bearer":
+        return not is_plain_word
+    if len(value) < 6:
+        return False
+    # An opaque run with a digit or a structural symbol reads as a credential;
+    # `node_token` / `access-token` (word chars plus - _ only) reads as prose.
+    if any(char.isdigit() for char in value) or _SYMBOL_HINT_RE.search(value):
+        return True
+    # No digit, no symbol: only a long single alphabetic run is suspicious.
+    return bool(re.fullmatch(r"[A-Za-z]{13,}", value))
+
+
+def has_sensitive_value(text: str) -> bool:
+    """True when the text carries a likely credential *value* (not a name)."""
+    if _STATIC_SECRET_RE.search(text):
+        return True
+    for pattern, mode in ((_BEARER_RE, "bearer"), (_URI_CRED_RE, "uri"),
+                          (_SECRET_KEY_RE, "keyword"), (_QUERY_CRED_RE, "keyword")):
+        for match in pattern.finditer(text):
+            if _looks_like_secret_value(match.group(1), mode=mode):
+                return True
+    return False
 
 
 def configure_utf8_stdout() -> None:
@@ -312,10 +382,6 @@ def context_sensitivity(text: str) -> str:
     if "public" in levels:
         return "public"
     return "internal"
-
-
-def has_sensitive_value(text: str) -> bool:
-    return bool(_SECRET_RE.search(text))
 
 
 def _split_utils_entries(lines: list[str]) -> list[dict]:

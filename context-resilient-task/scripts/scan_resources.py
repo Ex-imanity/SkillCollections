@@ -109,7 +109,7 @@ def guess_env(pointer: str) -> str:
     return "—"
 
 
-CREDENTIAL_USERINFO_RE = re.compile(r"^([a-z][a-z0-9+.-]*://)([^\s/:@]+):([^\s/@]{1,})@", re.I)
+CREDENTIAL_USERINFO_RE = re.compile(r"^([a-z][a-z0-9+.-]*://)([^\s/:@]*):([^\s/]+)@", re.I)
 CREDENTIAL_PARAM_RE = re.compile(
     r"([?&](?:token|access[_-]?token|api[_-]?key|apikey|secret|password|passwd|sig|signature)=)[^\s&#|]+",
     re.I,

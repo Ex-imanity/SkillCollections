@@ -652,7 +652,7 @@ class MrsScriptsTest(unittest.TestCase):
             encoding="utf-8",
         )
         warnings = json.loads(self.run_script("verify_mrs.py", "--json", mrs_dir, check=False).stdout)["warnings"]
-        self.assertTrue(any("findings.md" in w and "likely secret value" in w for w in warnings), warnings)
+        self.assertTrue(any("findings.md" in w and "likely secret" in w for w in warnings), warnings)
 
     def test_redaction_placeholders_are_not_reported_as_secrets(self):
         mrs_dir = self.work_root / "project" / ".task-state"
@@ -676,6 +676,28 @@ class MrsScriptsTest(unittest.TestCase):
         module = module_from_spec(spec)
         spec.loader.exec_module(module)
         for text, expected in (
+            # Grok postfix gate crt-1.6.0-postfix-grok-20260910:
+            # empty-userinfo URLs, vendor keys, JWTs, and probe/verify parity.
+            ("redis://:sOmEpAsSwOrD99@redis:6379/0", True),
+            ("mysql://u:P@ss1@h/db", True),
+            ("password: Passw0rd", True),
+            ("password: P@ssw0rd", True),
+            ("xoxb-1234567890-abcdef", True),
+            ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcd", True),
+            ("Authorization: Bearer super-secret", True),
+            ("parent_node_token=node_token", False),
+            ("?token=<docx_token>", False),
+            ("Access: 飞书登录", False),
+            ("bearer token 说明见文档", False),
+            ("https://user@host/x", False),
+            # postfix sweep over the 16 real MRS: these were false positives
+            ("task-breakdown 见 docs", False),          # `sk-` inside "task-"
+            (".task-state-ai-qa-tech-selection", False),
+            ("token 轮换/清理继续按用户要求独立", False),   # CJK prose
+            ("token rotation: 见方案", False),
+            ("sk-proj-abcdefghijklmnop123456", True),
+            # value capture must stop at the first backtick, not run into CJK
+            ("token `8f3c6d12b5e74a9ca1d8f0b36e2c7a4d`、`allowedSystem`", True),
             ("token=8f3c6d12b5f0", True),
             ("Authorization: Bearer sk-abc12345678", True),
             ("password: SuperSecretPass", True),
@@ -702,6 +724,63 @@ class MrsScriptsTest(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertIn("api.test/orders", self.run_script("restore_context.py", project_dir).stdout)
+
+    def test_probe_and_verifier_agree_on_every_secret_shape(self):
+        """Drift between the emission guard and the validator either hides a
+        leak or silently drops a row the validator calls healthy."""
+        from importlib.util import spec_from_file_location, module_from_spec
+        probe_spec = spec_from_file_location("state_probe", SKILL_ROOT / "scripts" / "_state_probe.py")
+        probe = module_from_spec(probe_spec); probe_spec.loader.exec_module(probe)
+        verify_spec = spec_from_file_location("verify_mrs", SKILL_ROOT / "scripts" / "verify_mrs.py")
+        verify = module_from_spec(verify_spec); verify_spec.loader.exec_module(verify)
+        # no second copy of the detector may exist in the validator
+        self.assertFalse(hasattr(verify, "SECRET_PATTERNS"), "verify_mrs.py reintroduced its own patterns")
+        self.assertEqual(verify.has_sensitive_value.__module__, "_state_probe")
+        for text in ("redis://:sOmEpAsSwOrD99@redis:6379/0", "mytoken=abc123def456",
+                     "parent_node_token=node_token", "Bearer credentials",
+                     "password: Passw0rd", "?token=<docx_token>",
+                     "Authorization: Bearer super-secret", "mysql://prod-host:3306/app",
+                     "xoxb-1234567890-abcdef", "token=***"):
+            self.assertEqual(probe.has_sensitive_value(text), verify.has_sensitive_value(text), text)
+
+    def test_empty_userinfo_credentials_are_redacted_withheld_and_rejected(self):
+        """P1 (postfix gate): `scheme://:password@host` must be handled like `user:pass@`."""
+        project_dir = self.work_root / "project"
+        mrs_dir = project_dir / ".task-state"
+        self.run_script("init_mrs.py", "--dir", mrs_dir, "--goal", "Empty userinfo", "--complexity", "medium")
+
+        # 1. emission: withheld even when the row claims `internal`
+        (mrs_dir / "utils.md").write_text(
+            "# Utilities\n\n## Resource Registry\n"
+            "| ID | Type | Name / Purpose | Pointer | Env | Access | Sensitivity | Verified |\n"
+            "|----|------|----------------|---------|-----|--------|-------------|----------|\n"
+            "| R1 | database | redis | redis://:sOmEpAsSwOrD99@redis:6379/0 | prod | redis | internal | 2026-09-10 |\n"
+            "| R2 | feishu-doc | PRD | https://xx.feishu.cn/docx/keepme | prod | login | internal | 2026-09-10 |\n",
+            encoding="utf-8",
+        )
+        restored = self.run_script("restore_context.py", project_dir).stdout
+        digest = self.run_script("precompact_digest.py", project_dir).stdout
+        self.run_script("generate_snapshot.py", mrs_dir)
+        snapshot = (mrs_dir / "snapshot.md").read_text(encoding="utf-8")
+        for emitted in (restored, digest, snapshot):
+            self.assertNotIn("sOmEpAsSwOrD99", emitted)
+            self.assertIn("docx/keepme", emitted)
+
+        # 2. verification: the file is rejected, not merely filtered
+        payload = json.loads(self.run_script("verify_mrs.py", "--json", mrs_dir, check=False).stdout)
+        self.assertEqual(payload["status"], "invalid")
+        self.assertTrue(any("likely secret value" in w for w in payload["warnings"]), payload["warnings"])
+
+        # 3. scanner: never writes the raw password to disk
+        (mrs_dir / "utils.md").unlink()
+        (mrs_dir / "findings.md").write_text(
+            "# Findings\n\n## 2026-01-02: env\n- cache redis://:sOmEpAsSwOrD99@redis:6379/0\n",
+            encoding="utf-8",
+        )
+        self.run_script("scan_resources.py", mrs_dir, "--write")
+        utils = (mrs_dir / "utils.md").read_text(encoding="utf-8")
+        self.assertNotIn("sOmEpAsSwOrD99", utils)
+        self.assertIn("redis://:***@redis:6379/0", utils)
 
     def test_scan_drafts_are_restricted_and_credentials_redacted(self):
         """P1: machine drafts must not publish unclassified resources or write secrets."""
