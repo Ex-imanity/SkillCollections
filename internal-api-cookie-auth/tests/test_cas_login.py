@@ -62,6 +62,45 @@ class ScriptedOpener:
         return FakeResp(200, {}, b"{}")
 
 
+class HttpUpgradeOpener:
+    """Models the one permitted CAS callback: HTTP ticket -> HTTPS 307 upgrade."""
+
+    def __init__(
+        self,
+        upgrade_status=307,
+        upgrade_location=None,
+        https_callback_status=200,
+        https_callback_location=None,
+    ):
+        self.calls = []
+        self.upgrade_status = upgrade_status
+        self.upgrade_location = upgrade_location
+        self.https_callback_status = https_callback_status
+        self.https_callback_location = https_callback_location
+
+    def open(self, request, timeout=None):
+        url = request.full_url
+        self.calls.append((request.get_method(), url, request.get_header("Cookie")))
+        parsed = urlparse(url)
+        if parsed.hostname == "cas.baijia.com" and parsed.path == "/cas/login":
+            return FakeResp(200, {"Set-Cookie": "CASTGC=tgc; Domain=cas.baijia.com; Path=/"}, b"login")
+        if parsed.hostname == "cas.baijia.com" and parsed.path == "/cas/bg/login":
+            if request.data:
+                return FakeResp(200, {}, '{"success":true,"data":{"next":"https://cas.baijia.com/cas/continue"}}')
+            return FakeResp(200, {}, '{"success":true,"data":{"lt":"L","token":"T","execution":"E","_eventId":"submit"}}')
+        if parsed.hostname == "cas.baijia.com" and parsed.path == "/cas/continue":
+            return FakeResp(302, {"Location": "http://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth?ticket=ST-1"})
+        if parsed.scheme == "http" and parsed.hostname == "uanalysis.baijia.com":
+            location = self.upgrade_location or "https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth?ticket=ST-1"
+            return FakeResp(self.upgrade_status, {"Location": location, "Set-Cookie": "SESSION=untrusted; Path=/"})
+        if parsed.scheme == "https" and parsed.hostname == "uanalysis.baijia.com":
+            headers = {"Set-Cookie": "SESSION=fresh; Path=/; Secure"}
+            if self.https_callback_location:
+                headers["Location"] = self.https_callback_location
+            return FakeResp(self.https_callback_status, headers, b"ok")
+        raise AssertionError(f"unexpected request: {url}")
+
+
 class CasLoginConfigTest(unittest.TestCase):
     def test_host_classification(self):
         cas = load_module()
@@ -134,6 +173,86 @@ class CasLoginFlowTest(unittest.TestCase):
         cas = load_module()
         with self.assertRaisesRegex(RuntimeError, "cas_service_url"):
             cas.login("https://test-mi.gaotu100.com/x", "operator", "secret", opener=ScriptedOpener())
+
+    def test_verified_http_callback_upgrades_without_sending_a_cookie_to_http(self):
+        cas = load_module()
+        opener = HttpUpgradeOpener()
+
+        cookie = cas.login(
+            "https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth",
+            username="operator",
+            password="secret",
+            cas_service_url="http://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth",
+            opener=opener,
+        )
+
+        self.assertEqual("SESSION=fresh", cookie)
+        http_callback = next(call for call in opener.calls if call[1].startswith("http://uanalysis.baijia.com/"))
+        https_upgrade = next(
+            call for call in opener.calls
+            if call[1] == "https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth?ticket=ST-1"
+        )
+        self.assertIsNone(http_callback[2])
+        self.assertNotIn("untrusted", https_upgrade[2] or "")
+        self.assertNotIn("untrusted", cookie)
+
+    def test_rejects_http_callback_when_upgrade_is_not_307_or_308(self):
+        cas = load_module()
+        opener = HttpUpgradeOpener(upgrade_status=302)
+
+        with self.assertRaisesRegex(RuntimeError, "307 或 308"):
+            cas.login(
+                "https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth",
+                username="operator",
+                password="secret",
+                cas_service_url="http://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth",
+                opener=opener,
+            )
+
+    def test_rejects_http_callback_when_upgrade_changes_the_ticket_query(self):
+        cas = load_module()
+        opener = HttpUpgradeOpener(
+            upgrade_location="https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth?ticket=ST-2"
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "查询参数"):
+            cas.login(
+                "https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth",
+                username="operator",
+                password="secret",
+                cas_service_url="http://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth",
+                opener=opener,
+            )
+
+    def test_rejects_http_service_when_it_changes_the_target_path(self):
+        cas = load_module()
+
+        with self.assertRaisesRegex(ValueError, "CAS service 参数"):
+            cas.login(
+                "https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth",
+                username="operator",
+                password="secret",
+                cas_service_url="http://uanalysis.baijia.com/other",
+                opener=HttpUpgradeOpener(),
+            )
+
+    def test_stops_after_the_verified_https_upgrade(self):
+        cas = load_module()
+        opener = HttpUpgradeOpener(
+            https_callback_status=302,
+            https_callback_location="https://other.example.com/untrusted",
+        )
+
+        cookie = cas.login(
+            "https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth",
+            username="operator",
+            password="secret",
+            cas_service_url="http://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth",
+            opener=opener,
+        )
+
+        self.assertEqual("SESSION=fresh", cookie)
+        self.assertFalse(any("other.example.com" in url for _, url, _ in opener.calls))
 
 
 if __name__ == "__main__":

@@ -212,7 +212,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--username-env", default=fetch_cookie.DEFAULT_USERNAME_ENV)
     parser.add_argument("--password-env", default=fetch_cookie.DEFAULT_PASSWORD_ENV)
     authentication = parser.add_mutually_exclusive_group()
-    authentication.add_argument("--cas-service-url", default="", help="explicit HTTPS CAS service URL")
+    authentication.add_argument(
+        "--cas-service-url",
+        default="",
+        help="explicit CAS service URL; HTTP is accepted only for the verified same-host 307/308 HTTPS upgrade",
+    )
     authentication.add_argument("--discover-cas", action="store_true", help="probe once for a trusted CAS redirect or code:700 service URL")
     parser.add_argument("--keep-header", action="append", default=[], metavar="NAME", help="force-forward a header otherwise dropped")
     parser.add_argument("--drop-header", action="append", default=[], metavar="NAME", help="drop an additional header")

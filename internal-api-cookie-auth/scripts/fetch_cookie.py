@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     authentication.add_argument(
         "--cas-service-url",
         default="",
-        help="explicit HTTPS CAS service URL for a host outside the built-in list",
+        help="explicit CAS service URL; HTTP is accepted only for the verified same-host 307/308 HTTPS upgrade",
     )
     authentication.add_argument(
         "--discover-cas",
@@ -95,10 +95,9 @@ def _service_from_cas_login(login_url_value: str, target_url: str) -> str:
     services = parse_qs(login_url.query).get("service", [])
     if len(services) != 1:
         raise ValueError("可信 CAS 重定向缺少唯一 service 参数")
-    service_url = urlparse(services[0])
-    if service_url.scheme != "https" or not service_url.hostname:
-        raise ValueError("CAS service 参数必须是 HTTPS URL")
-    return service_url.geturl()
+    service_url = services[0]
+    cas_login.validate_cas_service_url(target_url, service_url)
+    return service_url
 
 
 def _service_from_json_body(body: str, target_url: str) -> Optional[str]:

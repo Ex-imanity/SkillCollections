@@ -78,12 +78,12 @@ python scripts/fetch_cookie.py \
 该探测不携带 Cookie，也不跟随跳转。只有取到可信 CAS 信号——`302/303/307/308` 跳转，
 或(高途常见)响应体 `{"code":700,"data":"<cas 登录 url>"}`——其 CAS 主机与环境匹配
 (`cas.baijia.com` 或 `test-cas.baijia.com`)且带唯一 HTTPS `service` 参数时,工具才会
-继续登录。唯一例外是：用户已授权的目标 HTTPS 主机返回同主机 HTTP `service`，并且对该
-回调的无凭据预检得到 `307` 或 `308`，其 `Location` 只把 scheme 原样升级为 HTTPS（主机、
-端口和路径不变）。此时 CAS 仍使用原始 `service`，客户端只能跟随该受验证的 HTTPS 升级，
-不得向 HTTP 回调发送 Cookie；登录后必须以目标 HTTPS API 的安全读取验证新会话。任何跨主机、
-改路径、非 HTTPS 最终地址、302/303 跳转或未预检的 HTTP `service` 继续拒绝。若已知 CAS
-服务地址，也可改用 `--cas-service-url https://.../auth/login/cas`。
+继续登录。唯一例外是：已知的目标 HTTPS 主机使用同主机、同端口、同路径的 HTTP `service`。
+该 service 必须显式提供；CAS 回跳到该 HTTP 地址时，工具既不发送也不保存 Cookie，并且仅接受
+`307` 或 `308` 将 URL 原样升级为 HTTPS（查询参数也不变）。任何跨主机、改端口/路径/查询、
+非 HTTPS 最终地址、302/303 或后续 HTTP 跳转一律拒绝。若已知 CAS 服务地址，也可改用
+`--cas-service-url https://.../auth/login/cas`；例如 UAnalysis 使用其原始 HTTP callback，
+不能依赖无 Cookie `--discover-cas` 生成 ticket。
 
 不要把上架、下架、创建、更新、删除等写接口作为探测地址。先选择健康检查、详情查询或
 其他明确无副作用的 `GET` / `HEAD` 地址。

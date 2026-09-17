@@ -37,19 +37,19 @@ These HTTPS hosts have built-in CAS service configuration:
 Other internal HTTPS hosts are supported only by one of these evidence-based
 paths:
 
-1. The user or repository configuration provides an explicit HTTPS
-   `--cas-service-url`.
+1. The user or repository configuration provides an explicit `--cas-service-url`
+   (HTTPS ordinarily; the narrow HTTP exception below is enforced by the script).
 2. A user-authorized, read-only `--discover-cas` probe gets back a trusted-CAS
    signal — either a `302/303/307/308` redirect, or (the common gaotu case) a
    JSON body `{"code":700,"data":"<cas login url>"}` — whose CAS host matches the
    target environment and carries one HTTPS `service` parameter. The only
-   exception is a user-authorized target HTTPS host whose same-host HTTP
-   `service` has a no-Cookie preflight `307` or `308` that changes only the
-   scheme to HTTPS (same host, port, and path). Keep the original `service` in
-   the CAS request, follow only that verified HTTPS upgrade, never send a Cookie
-   to the HTTP callback, and verify the fresh session through a safe target
-   HTTPS API read. Reject cross-host, path-changing, non-HTTPS, `302`/`303`, or
-   unverified HTTP callbacks.
+   exception is an explicitly provided same-host, same-port, same-path HTTP
+   `service` for an HTTPS target. Preserve that original `service` in the CAS
+   request; when CAS reaches it with a ticket, request the HTTP callback without
+   sending or storing Cookies and accept only a `307` or `308` to the identical HTTPS URL (including
+   query). Reject cross-host, changed-port/path/query, non-HTTPS, `302`/`303`,
+   or any later HTTP redirect. The no-Cookie discovery probe cannot manufacture
+   a ticket, so it is not evidence for this exception.
 
 The probe sends no Cookie and follows no redirect. It accepts a `service` only
 from `https://cas.baijia.com/cas/login` for production targets or
@@ -117,6 +117,9 @@ For a write operation, do not use the write endpoint as an authentication probe.
 Ask for or locate a safe read-only probe URL first. If discovery finds no trusted
 CAS signal (neither a redirect nor a `code:700` `data` login URL), stop and
 request an explicit `--cas-service-url` rather than guessing a login route.
+For the narrow HTTP callback exception, provide the original service URL
+explicitly; do not rewrite it to HTTPS and do not expect `--discover-cas` to
+produce the ticket-bearing callback.
 
 The output file has mode `0600` and contains only the Cookie header value. Pass
 it to programs that support `--cookie-file`, then remove it as soon as the

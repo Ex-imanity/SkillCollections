@@ -97,6 +97,20 @@ class FetchCookieTest(unittest.TestCase):
         self.assertEqual(service_url, discovered)
 
     @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
+    def test_accepts_verified_same_host_http_service_from_trusted_cas(self):
+        fetch_cookie = load_module()
+        target = "https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth"
+        service_url = "http://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth"
+        redirect = (
+            "https://cas.baijia.com/cas/login?service="
+            "http%3A%2F%2Fuanalysis.baijia.com%2Fuanalysis-template%2Fapi%2Fcas%2FgetAuth"
+        )
+
+        discovered = fetch_cookie._service_from_cas_login(redirect, target)
+
+        self.assertEqual(service_url, discovered)
+
+    @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
     def test_rejects_a_code_700_body_pointing_at_an_untrusted_host(self):
         fetch_cookie = load_module()
         target = "https://test-mi.gaotu100.com/course-center/b/course/list"
