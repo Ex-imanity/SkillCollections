@@ -42,7 +42,14 @@ paths:
 2. A user-authorized, read-only `--discover-cas` probe gets back a trusted-CAS
    signal — either a `302/303/307/308` redirect, or (the common gaotu case) a
    JSON body `{"code":700,"data":"<cas login url>"}` — whose CAS host matches the
-   target environment and carries one HTTPS `service` parameter.
+   target environment and carries one HTTPS `service` parameter. The only
+   exception is a user-authorized target HTTPS host whose same-host HTTP
+   `service` has a no-Cookie preflight `307` or `308` that changes only the
+   scheme to HTTPS (same host, port, and path). Keep the original `service` in
+   the CAS request, follow only that verified HTTPS upgrade, never send a Cookie
+   to the HTTP callback, and verify the fresh session through a safe target
+   HTTPS API read. Reject cross-host, path-changing, non-HTTPS, `302`/`303`, or
+   unverified HTTP callbacks.
 
 The probe sends no Cookie and follows no redirect. It accepts a `service` only
 from `https://cas.baijia.com/cas/login` for production targets or
