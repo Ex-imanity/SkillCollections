@@ -21,7 +21,6 @@ from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
-HTTP_UPGRADE_STATUS_CODES = {307, 308}
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -89,8 +88,9 @@ def _same_host_port_path(left: str, right: str) -> bool:
 def is_verified_http_callback_service(target_url: str, service_url: str) -> bool:
     """Recognize the only supported HTTP CAS service exception.
 
-    The actual 307/308 upgrade is checked at runtime before any target Cookie is
-    sent. Keeping this structural check here lets every caller share one policy.
+    The ticket callback is upgraded locally to the identical HTTPS URL before
+    any request is sent. Keeping this structural check here lets every caller
+    share one policy.
     """
     target = urlparse(target_url)
     service = urlparse(service_url)
@@ -112,7 +112,7 @@ def validate_cas_service_url(target_url: str, service_url: str) -> bool:
         return True
     raise ValueError(
         "CAS service 参数必须是 HTTPS URL；唯一例外是同主机同路径的 HTTP 回调，"
-        "且运行时必须以 307 或 308 原样升级到 HTTPS"
+        "它会被本地原样升级到 HTTPS"
     )
 
 
@@ -275,15 +275,11 @@ def _matches_http_callback(url: str, service_url: str) -> bool:
     return urlparse(url).scheme == "http" and _same_host_port_path(url, service_url)
 
 
-def _is_verified_https_upgrade(http_url: str, https_url: str) -> bool:
-    source = urlparse(http_url)
-    target = urlparse(https_url)
-    return (
-        target.scheme == "https"
-        and _same_host_port_path(http_url, https_url)
-        and source.query == target.query
-        and source.fragment == target.fragment
-    )
+def _https_equivalent_callback_url(http_url: str) -> str:
+    callback = urlparse(http_url)
+    if callback.scheme != "http" or not callback.hostname:
+        raise ValueError("HTTP CAS 回调地址无效")
+    return callback._replace(scheme="https").geturl()
 
 
 def _follow_redirects(
@@ -291,34 +287,18 @@ def _follow_redirects(
     response,
     url: str,
     http_callback_service: Optional[str] = None,
-    awaiting_https_upgrade: bool = False,
 ):
-    http_callback_used = awaiting_https_upgrade
     for _ in range(10):
-        if awaiting_https_upgrade:
-            if _status(response) not in HTTP_UPGRADE_STATUS_CODES:
-                raise RuntimeError("HTTP CAS 回调必须以 307 或 308 升级到 HTTPS")
-            upgraded_url = urljoin(url, _require_location(response, "HTTP CAS 回调"))
-            if not _is_verified_https_upgrade(url, upgraded_url):
-                raise RuntimeError("HTTP CAS 回调的 HTTPS 升级改变了主机、端口、路径或查询参数")
-            url = upgraded_url
-            response = jar.request(url)
-            return response
         if _status(response) not in REDIRECT_STATUS_CODES:
             return response
         next_url = urljoin(url, _require_location(response, "CAS 服务"))
         if urlparse(next_url).scheme == "http":
             if (
                 not http_callback_service
-                or http_callback_used
                 or not _matches_http_callback(next_url, http_callback_service)
             ):
                 raise RuntimeError("CAS 重定向到未验证的 HTTP 回调")
-            url = next_url
-            response = jar.request(url, send_cookies=False, store_cookies=False)
-            awaiting_https_upgrade = True
-            http_callback_used = True
-            continue
+            return jar.request(_https_equivalent_callback_url(next_url))
         if urlparse(next_url).scheme != "https":
             raise RuntimeError("CAS 重定向必须使用 HTTPS")
         url = next_url
@@ -373,17 +353,15 @@ def _complete_cas_login(
     )
     if urlparse(completed_url).scheme == "http" and not starts_http_callback:
         raise RuntimeError("CAS 登录返回未验证的 HTTP 回调")
-    response = jar.request(
-        completed_url,
-        send_cookies=not starts_http_callback,
-        store_cookies=not starts_http_callback,
-    )
+    if starts_http_callback:
+        jar.request(_https_equivalent_callback_url(completed_url))
+        return
+    response = jar.request(completed_url)
     _follow_redirects(
         jar,
         response,
         completed_url,
         http_callback_service=http_callback_service,
-        awaiting_https_upgrade=starts_http_callback,
     )
 
 

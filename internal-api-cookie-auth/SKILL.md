@@ -45,10 +45,10 @@ paths:
    target environment and carries one HTTPS `service` parameter. The only
    exception is an explicitly provided same-host, same-port, same-path HTTP
    `service` for an HTTPS target. Preserve that original `service` in the CAS
-   request; when CAS reaches it with a ticket, request the HTTP callback without
-   sending or storing Cookies and accept only a `307` or `308` to the identical HTTPS URL (including
-   query). Reject cross-host, changed-port/path/query, non-HTTPS, `302`/`303`,
-   or any later HTTP redirect. The no-Cookie discovery probe cannot manufacture
+   request; when CAS reaches it with a ticket, do not request the HTTP callback.
+   Instead, request only the identical HTTPS URL (including query) and store only
+   its Cookies. Reject cross-host, changed-port/path/query, non-HTTPS, or any
+   later HTTP redirect. The no-Cookie discovery probe cannot manufacture
    a ticket, so it is not evidence for this exception.
 
 The probe sends no Cookie and follows no redirect. It accepts a `service` only
@@ -118,8 +118,8 @@ Ask for or locate a safe read-only probe URL first. If discovery finds no truste
 CAS signal (neither a redirect nor a `code:700` `data` login URL), stop and
 request an explicit `--cas-service-url` rather than guessing a login route.
 For the narrow HTTP callback exception, provide the original service URL
-explicitly; do not rewrite it to HTTPS and do not expect `--discover-cas` to
-produce the ticket-bearing callback.
+explicitly; do not rewrite the CAS `service` to HTTPS and do not expect
+`--discover-cas` to produce the ticket-bearing callback.
 
 The output file has mode `0600` and contains only the Cookie header value. Pass
 it to programs that support `--cookie-file`, then remove it as soon as the

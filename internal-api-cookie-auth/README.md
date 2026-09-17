@@ -79,9 +79,9 @@ python scripts/fetch_cookie.py \
 或(高途常见)响应体 `{"code":700,"data":"<cas 登录 url>"}`——其 CAS 主机与环境匹配
 (`cas.baijia.com` 或 `test-cas.baijia.com`)且带唯一 HTTPS `service` 参数时,工具才会
 继续登录。唯一例外是：已知的目标 HTTPS 主机使用同主机、同端口、同路径的 HTTP `service`。
-该 service 必须显式提供；CAS 回跳到该 HTTP 地址时，工具既不发送也不保存 Cookie，并且仅接受
-`307` 或 `308` 将 URL 原样升级为 HTTPS（查询参数也不变）。任何跨主机、改端口/路径/查询、
-非 HTTPS 最终地址、302/303 或后续 HTTP 跳转一律拒绝。若已知 CAS 服务地址，也可改用
+该 service 必须显式提供；CAS 回跳携带 ticket 时，工具不访问 HTTP 地址，而是仅请求主机、端口、
+路径和查询参数完全相同的 HTTPS 地址，且只保存该 HTTPS 响应的 Cookie。任何跨主机、改端口/
+路径/查询、非 HTTPS 最终地址或后续 HTTP 跳转一律拒绝。若已知 CAS 服务地址，也可改用
 `--cas-service-url https://.../auth/login/cas`；例如 UAnalysis 使用其原始 HTTP callback，
 不能依赖无 Cookie `--discover-cas` 生成 ticket。
 

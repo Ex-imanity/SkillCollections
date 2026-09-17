@@ -215,7 +215,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     authentication.add_argument(
         "--cas-service-url",
         default="",
-        help="explicit CAS service URL; HTTP is accepted only for the verified same-host 307/308 HTTPS upgrade",
+        help="explicit CAS service URL; HTTP is accepted only for the verified same-host local HTTPS upgrade",
     )
     authentication.add_argument("--discover-cas", action="store_true", help="probe once for a trusted CAS redirect or code:700 service URL")
     parser.add_argument("--keep-header", action="append", default=[], metavar="NAME", help="force-forward a header otherwise dropped")
