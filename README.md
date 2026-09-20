@@ -60,7 +60,7 @@
 | Skill | Version | 作用 | 适用场景 | 主要注意事项 |
 | --- | --- | --- | --- | --- |
 | `case-design-strategy-skill` | 1.0.0 | 测试用例设计策略层，用于补强覆盖度、评审场景和设计边界/异常/权限/埋点等测试点 | 需求用例评审、覆盖度补充、事件埋点校验、跨端一致性风险分析 | 它不是端到端用例生成器；如果已经进入 `case-lite` 主流程，只在自检或覆盖度评审阶段借用其策略，不覆盖 `case-lite` 的产物格式和写回规则 |
-| `case-lite` | 1.1.0 | 小需求测试用例生成流程，从飞书文档选章到生成用例，再可选写回搬山 | 单一功能点、1-2 篇文档、无需模块拆分的小需求用例生成 | 依赖飞书文档 MCP；搬山 MCP 推荐配置；所有阶段产物必须落盘到 `case-lite-output/{slug}/`，章节选择和补充信息确认是人工检查点 |
+| `case-lite` | 1.2.0 | 小需求测试用例生成流程，从飞书文档选章到生成用例，再可选写回搬山 | 单一功能点、1-2 篇文档、无需模块拆分的小需求用例生成 | 依赖飞书文档 MCP；搬山 MCP 推荐配置；所有阶段产物必须落盘到 `case-lite-output/{slug}/`，章节选择和补充信息确认是人工检查点 |
 | `case-reorganize` | 1.0.0 | 将搬山中已有测试用例整理为链路 case：合并冗余用例、去除边界 case、将串联操作合并为一个场景 | 已有用例过碎、需要按业务链路重组；整理后替换原 case 或追加到目标 case | 与 `case-lite` 的区别是输入来自搬山已有用例而非文档；写回前必须 dry-run；替换模式会调用 `deleteNode` 级联删除且**不可逆**，执行前务必确认；其 `full.md` 格式保留「前置条件」独立节点，与 `case-lite` 不同 |
 | `context-resilient-task` | 1.6.0 | 上下文弹性任务管理，用磁盘上的 MRS 文件恢复长期任务状态 | 多阶段开发、跨会话继续、`/clear` 后恢复、避免 agent 忘记待办或编造状态 | `task_state.md` 是 source of truth；`progress.md` / `decisions.md` 只追加，`utils.md` 是所有内部/外部资源的唯一注册表（其他文件按 ID 引用）；恢复输出有 4000 字符预算；缺少 Tier 0 文件时应先初始化 MRS |
 | `cross-agent-review` | 2.1.0 | 本机 Codex / ClaudeCode / Grok 互做跨代理评审：primary 保连续性与修复，reviewer 返回带证据的 verdict | 跨代理评审 handoff：任一 primary 请另一 peer 审计划/代码；防作者自漏 | 依赖本机 `claude`/`codex`/`grok` 中实际调用的 reviewer CLI；fail-closed、并发 round-cap、脱敏；readiness 看真实信封；不用于单 agent 自审或普通 code review |
