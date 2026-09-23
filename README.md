@@ -51,6 +51,13 @@
 │   ├── SKILL.md
 │   ├── scripts/
 │   └── tests/
+├── whitebox-op-combo/
+│   ├── README.md
+│   ├── SKILL.md
+│   ├── examples/
+│   ├── references/
+│   ├── scripts/
+│   └── tests/
 └── docs/
     └── plans/
 ```
@@ -67,6 +74,7 @@
 | `dify-dsl-generator` | 1.0.0 | 生成、重构或评审 Dify workflow/chatflow/agent DSL | 把业务需求、后端接口、规则系统或已有 YAML 转为可导入的 Dify DSL | 先冻结输入输出和应用形态，再写 YAML；优先复用 `references/` 和已有示例中的验证模式；输出前检查节点类型、变量路径、edge 和结构化输出 |
 | `gapm-mcp-recovery` | 1.0.0 | 诊断并恢复 Codex 中的 GAPM MCP；当前对话未注入 Tool 时可通过 App Server bridge 直接调用 | GAPM Tool 缺失、`invalid_client` / `authentication_required`、`serverInfo` 为空、日志排查疑似需要重启 Codex | 依赖 Codex CLI、Python 3.9+ 和内部网络；OAuth 过期仍需浏览器授权；参数及原始日志只能放在 `.local/`；查询无结果不能断言未调用 |
 | `internal-api-cookie-auth` | 1.0.0 | 为受支持内部 API 获取短期 CAS Cookie，并规范认证失败后的处理 | Internal AD/UOS、Athena、Compass 的接口开发与排障，Cookie 缺失或 HTTP 401 | 仅限允许的内部域名；不输出或持久化凭证；403 视为可能的权限问题，禁止盲目重试写操作 |
+| `whitebox-op-combo` | 1.0.0 | 白盒操作组合分析：原子化用户操作，按读写集组合正向/异常顺序，映射代码路径定位缺陷、判定服务端/客户端归属并产出用例 | 能看到代码、功能有多个操作共享同一对象；关注操作顺序、退出重进、异步落库/缓存、流式中断、多端不一致 | 原子表是唯一必做人工检查点；覆盖度由 `scripts/op_matrix.py` 在已声明的读写点/原子上计算缺口（孤儿写入点、替换漏写字段、隐式动作清单）闭环，读写点找全与需求映射仍需人工；结论须引用代码行并区分已确认/潜在；`cases.md` 兼容 case-lite 格式，写回需授权 |
 
 ## 各 Skill 简介
 
@@ -191,6 +199,19 @@ Cookie，而是用新鲜 Cookie 加最小必要 header 重新组装请求——�
 `test-` 前缀版本。凭证不输出、不持久化。未知域名只有在用户明确授权做只读探测后才可尝试；
 HTTP 403 应视为可能的权限问题，而不是"刷新 Cookie 就能解决"的信号，禁止盲目重试写操作。
 详细流程见 `internal-api-cookie-auth/README.md`。
+
+### whitebox-op-combo
+
+`whitebox-op-combo` 用于能看到源码时的操作组合分析。它把一个功能的用户操作按**读写集**拆成原子动作，
+只对读写了同一份状态的原子组合推演代码路径，从静态（读写点）和动态（操作顺序、异步窗口、生命周期中断、多端差异）
+两方面提前定位缺陷，再输出测试用例。
+
+原子由 agent 从代码穷举，人只在原子表上审一次；覆盖度不靠头脑风暴，而是由 `scripts/op_matrix.py`
+在已声明的读写点和原子上算出的缺口来闭环：每个写入点都必须被某个原子触达，"替换型"动作漏写的字段直接作为缺陷候选，
+隐式动作清单（退出重进、切后台、杀进程、另一设备、TTL 到期等）逐项作答。
+
+产物落在 `whitebox-output/{slug}/`；`analysis.md` 给出带代码引用的结论、定级与服务端/客户端归属，
+`cases.md` 与 `case-lite` 的 `full.md` 格式兼容。详见 `whitebox-op-combo/README.md`。
 
 ## 安装与使用建议
 

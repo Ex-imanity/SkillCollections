@@ -1,0 +1,431 @@
+{
+  "feature": "AI 搜索 · 单条回答卡片（带图问答 + 加入错题本）",
+  "scope_object": "同一 questionId 下的一条 AI 回答（服务端消息记录 + 客户端卡片内存）",
+  "write_points": [
+    {
+      "id": "W01",
+      "field": "msg.content",
+      "where": "SearchRecordMainSearchPostProcessor#buildMessageRequest ：Redis 同步 + saveDbExecutor 异步落 HBase",
+      "layers": {
+        "redis": "sync",
+        "hbase": "async"
+      }
+    },
+    {
+      "id": "W03",
+      "field": "msg.mistakeMessage",
+      "where": "SearchRecordMainSearchPostProcessor#buildMessageRequest setMistakeMessage",
+      "layers": {
+        "redis": "sync",
+        "hbase": "async"
+      }
+    },
+    {
+      "id": "W05",
+      "field": "msg.extData.mistakeBook",
+      "where": "AgentSearchExecutor#enrichMistakeMessage（整体覆写 extData）",
+      "layers": {
+        "redis": "sync",
+        "hbase": "async"
+      }
+    },
+    {
+      "id": "W06",
+      "field": "msg.siblingCards",
+      "where": "首轮落库写入同一 questionId 下的全部卡片",
+      "layers": {
+        "redis": "sync",
+        "hbase": "async"
+      }
+    },
+    {
+      "id": "W07",
+      "field": "regenCache.request",
+      "layer": "redis",
+      "mode": "sync",
+      "where": "SessionAndHistoryMessagePrePostProcessor 写重新生成缓存（key=userId，TTL 5min，仅 sendType 2/3）"
+    },
+    {
+      "id": "W08",
+      "field": "mem.card",
+      "layer": "client",
+      "mode": "sync",
+      "where": "三端 SSE 回调逐帧构建卡片"
+    },
+    {
+      "id": "W09",
+      "field": "mem.mistakeMessage",
+      "layer": "client",
+      "mode": "sync",
+      "where": "SSE 最终帧刷新（Android AISearchFragment / iOS applyMistakeBook / 鸿蒙 MessageViewModel）"
+    },
+    {
+      "id": "W10",
+      "field": "msg.extData.feedback",
+      "where": "MessageAclServiceImpl#updateOrDeleteMessage mergeExtData（HBase batchPut + Redis saveMessageRecord 同步双写）",
+      "layers": {
+        "redis": "sync",
+        "hbase": "sync"
+      }
+    },
+    {
+      "id": "W11",
+      "field": "msg.content",
+      "where": "updateOrDeleteMessage：客户端回传 content 时无条件覆盖",
+      "layers": {
+        "redis": "sync",
+        "hbase": "sync"
+      }
+    },
+    {
+      "id": "W12",
+      "field": "msg.siblingCards",
+      "where": "updateOrDeleteMessage：detail 未带到的 cardType 一律删除",
+      "layers": {
+        "redis": "sync",
+        "hbase": "sync"
+      }
+    },
+    {
+      "id": "W13",
+      "field": "msg.content",
+      "where": "重新生成 → updateOrDeleteMessage setContent",
+      "layers": {
+        "redis": "sync",
+        "hbase": "sync"
+      }
+    },
+    {
+      "id": "W14",
+      "field": "msg.extData.mistakeBook",
+      "where": "重新生成 → mergeExtData（mistakeBook 整节点替换）",
+      "layers": {
+        "redis": "sync",
+        "hbase": "sync"
+      }
+    },
+    {
+      "id": "W14b",
+      "field": "msg.siblingCards",
+      "layers": {
+        "redis": "sync",
+        "hbase": "sync"
+      },
+      "where": "重新生成 → updateOrDeleteMessage：新一轮不含的旧 cardType 被删除；新增的 cardType 不在原记录里则不入库"
+    },
+    {
+      "id": "W15",
+      "field": "mem.card",
+      "layer": "client",
+      "mode": "sync",
+      "where": "重进时由 /api/history/message 整体重建卡片"
+    },
+    {
+      "id": "W16",
+      "field": "mem.mistakeMessage",
+      "layer": "client",
+      "mode": "sync",
+      "where": "重进时从 history 响应的 mistake_message 列还原"
+    },
+    {
+      "id": "W17",
+      "field": "book.item",
+      "layer": "server",
+      "mode": "sync",
+      "where": "/mistakeBook/v1/items/add + subjectGrade/batchConfirm（服务不可见，黑盒）"
+    },
+    {
+      "id": "W18",
+      "field": "msg.extData.mistakeBook",
+      "where": "加入错题本后客户端经 update 接口回写 alreadyAddToMistakeBook",
+      "layers": {
+        "redis": "sync",
+        "hbase": "sync"
+      }
+    },
+    {
+      "id": "W19",
+      "field": "regenCache.request",
+      "layer": "redis",
+      "mode": "sync",
+      "where": "TTL 到期被 Redis 删除"
+    }
+  ],
+  "read_points": [
+    {
+      "id": "R01",
+      "field": "msg.content",
+      "layer": "hbase",
+      "where": "MessageAclServiceImpl#queryAiOutputMessageRecordList（update 路径只查 HBase）"
+    },
+    {
+      "id": "R02",
+      "field": "msg.siblingCards",
+      "layer": "hbase",
+      "where": "同上，取同一 questionId 的全部卡片再按 cardType 分拣"
+    },
+    {
+      "id": "R03",
+      "field": "regenCache.request",
+      "layer": "redis",
+      "where": "SessionAndHistoryMessagePrePostProcessor#tryRestoreFromCache（无条件整体覆盖 imgUrlList/sendType）"
+    },
+    {
+      "id": "R04",
+      "field": "msg.content",
+      "layer": "redis",
+      "where": "MessageApplicationService 历史查询（Redis 优先，miss 再查 HBase）"
+    },
+    {
+      "id": "R05",
+      "field": "msg.extData.feedback",
+      "layer": "redis",
+      "where": "同上，三端据此还原点赞/点踩态"
+    },
+    {
+      "id": "R06",
+      "field": "msg.mistakeMessage",
+      "layer": "redis",
+      "where": "同上，HistoryMessageDetailVO 透传"
+    },
+    {
+      "id": "R07",
+      "field": "msg.extData.mistakeBook",
+      "layer": "redis",
+      "where": "同上，三端据此决定错题本入口状态"
+    },
+    {
+      "id": "R08",
+      "field": "msg.siblingCards",
+      "layer": "redis",
+      "where": "同上"
+    },
+    {
+      "id": "R09",
+      "field": "mem.mistakeMessage",
+      "layer": "client",
+      "where": "三端拼 /mistakeBook/v1/items/add 请求体"
+    },
+    {
+      "id": "R10",
+      "field": "mem.card",
+      "layer": "client",
+      "where": "三端拼 update 请求的 detail（content/cardType/extData）"
+    }
+  ],
+  "atoms": [
+    {
+      "id": "A0",
+      "name": "带图提问",
+      "sources": [
+        "code",
+        "prd"
+      ],
+      "ends": [
+        "android",
+        "ios",
+        "harmony"
+      ],
+      "entry": "POST /ai-search-platform/search/mainSearch（SSE）",
+      "writes": [
+        "W01",
+        "W03",
+        "W05",
+        "W06",
+        "W07",
+        "W08",
+        "W09"
+      ],
+      "reads": [],
+      "stages": [
+        "深度思考输出中",
+        "正文输出中"
+      ],
+      "creates_scope": true
+    },
+    {
+      "id": "A1",
+      "name": "点赞/点踩",
+      "sources": [
+        "code",
+        "prd"
+      ],
+      "ends": [
+        "android",
+        "ios",
+        "harmony"
+      ],
+      "entry": "POST /ai-search-platform/api/history/message/update",
+      "writes": [
+        "W10",
+        "W11",
+        "W12"
+      ],
+      "reads": [
+        "R01",
+        "R02",
+        "R10"
+      ],
+      "notes": "点赞与点踩读写集相同，已合并为一个原子"
+    },
+    {
+      "id": "A2",
+      "name": "重新生成",
+      "sources": [
+        "code",
+        "prd"
+      ],
+      "ends": [
+        "android",
+        "ios",
+        "harmony"
+      ],
+      "entry": "POST /ai-search-platform/search/mainSearch（regenerate=true + regenerateParam）",
+      "writes": [
+        "W13",
+        "W14",
+        "W14b",
+        "W08",
+        "W09"
+      ],
+      "reads": [
+        "R01",
+        "R03"
+      ],
+      "stages": [
+        "深度思考输出中",
+        "正文输出中"
+      ],
+      "replaces": [
+        "msg"
+      ]
+    },
+    {
+      "id": "A2b",
+      "name": "跳过深度思考",
+      "sources": [
+        "code",
+        "design"
+      ],
+      "ends": [
+        "android",
+        "ios",
+        "harmony"
+      ],
+      "entry": "同重新生成，附加 disableDeepThink=true",
+      "writes": [
+        "W13",
+        "W14",
+        "W14b",
+        "W08",
+        "W09"
+      ],
+      "reads": [
+        "R01",
+        "R03"
+      ],
+      "notes": "读写集与 A2 相同 → 组合时由 A2 代表；只在 UI 入口可见性上单测",
+      "replaces": [
+        "msg"
+      ],
+      "represented_by": "A2"
+    },
+    {
+      "id": "A3",
+      "name": "退出搜索页再重进",
+      "sources": [
+        "implicit"
+      ],
+      "ends": [
+        "android",
+        "ios",
+        "harmony"
+      ],
+      "entry": "GET /ai-search-platform/api/history/message",
+      "writes": [
+        "W15",
+        "W16"
+      ],
+      "reads": [
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R08"
+      ]
+    },
+    {
+      "id": "A4",
+      "name": "加入错题本",
+      "sources": [
+        "code",
+        "prd",
+        "design"
+      ],
+      "ends": [
+        "android",
+        "ios",
+        "harmony"
+      ],
+      "entry": "POST /mistakeBook/v1/items/add → batchConfirm → history update",
+      "writes": [
+        "W17",
+        "W18",
+        "W12"
+      ],
+      "reads": [
+        "R09",
+        "R01",
+        "R02",
+        "R10"
+      ],
+      "notes": "历史同步复用 update 接口，因此继承 A1 的删兄弟卡片行为"
+    },
+    {
+      "id": "A5",
+      "name": "停留超过 5 分钟",
+      "sources": [
+        "implicit"
+      ],
+      "ends": [
+        "server"
+      ],
+      "entry": "无接口，时间流逝",
+      "writes": [
+        "W19"
+      ],
+      "reads": []
+    },
+    {
+      "id": "A6",
+      "name": "同账号另一轮带图提问（可在另一设备）",
+      "sources": [
+        "implicit",
+        "human"
+      ],
+      "ends": [
+        "android",
+        "ios",
+        "harmony"
+      ],
+      "entry": "POST /ai-search-platform/search/mainSearch（另一 questionId）",
+      "writes": [
+        "W07"
+      ],
+      "reads": [],
+      "notes": "重新生成缓存 key 只含 userId，不含 questionId/deviceId"
+    }
+  ],
+  "implicit_checklist": {
+    "退出页面再重进": "A3",
+    "切后台再回前台": "N/A: 三端切后台不取消 SSE、不触发回写，读写集与不操作相同（已核对生命周期回调）",
+    "杀进程后重启": "N/A: 读写集与 A3 相同，由 A3 代表；另在用例中补一条冷启动验证",
+    "断网或弱网下操作": "N/A: 本轮范围外，SSE 断连等价于 A0/A2 的中断阶段，已由 stages 覆盖",
+    "同账号另一设备操作": "A6",
+    "登录态变化（登出/切号）": "N/A: 未登录时缓存 key 退化为 deviceId，范围外，记入仍需确认",
+    "等待超过缓存或临时状态的TTL": "A5（regenCache 5min）；wait2Update 30s 在 A1 分析中单独追踪",
+    "连点或重复提交": "A1→A1、A4→A4 自组合",
+    "操作进行中被打断（流式输出中退出等）": "A0、A2 的 stages",
+    "他人或后台修改了同一对象": "N/A: 回答记录无他人写入方"
+  }
+}

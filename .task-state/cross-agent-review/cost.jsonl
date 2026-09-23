@@ -12,3 +12,4 @@
 {"gate_id": "car-2.1.0-rereview-claude-154236", "requested_model": null, "total_cost_usd": 1.9431524999999998, "wall_seconds": 313.446}
 {"gate_id": "car-2.1.0-rereview2-claude-154925", "requested_model": null, "total_cost_usd": 1.78365025, "wall_seconds": 369.753}
 {"gate_id": "car-terra-avail-170905", "provider": "codex", "requested_model": "gpt-5.6-terra", "total_cost_usd": null, "usage": {"cached_input_tokens": 81920, "input_tokens": 93158, "output_tokens": 1428, "reasoning_output_tokens": 717}, "wall_seconds": 109.557}
+{"gate_id": "whitebox-op-combo-1.0.0-grok-1", "provider": "grok", "requested_model": null, "total_cost_usd": 0.108986864, "usage": {"cache_creation_input_tokens": 0, "cache_read_input_tokens": 287232, "input_tokens": 72280, "output_tokens": 14970, "reasoning_tokens": 5007, "total_tokens": 374482}, "wall_seconds": 265.199}

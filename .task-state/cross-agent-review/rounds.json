@@ -50,5 +50,9 @@
   "cross-agent-review-unattended-execution-v1": {
     "attempts": 1,
     "successes": 1
+  },
+  "whitebox-op-combo-1.0.0": {
+    "attempts": 1,
+    "successes": 1
   }
 }
