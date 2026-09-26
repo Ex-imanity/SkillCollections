@@ -19,13 +19,15 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from _mrs_discovery import find_mrs_dirs  # noqa: E402
+from _mrs_discovery import find_mrs_dirs, ledger_root_for, work_root_for  # noqa: E402
 from list_mrs import extract_field, read_mrs_metadata  # noqa: E402
 
 # Re-exported so hook scripts import everything MRS-related from one place.
 __all__ = [
     "configure_utf8_stdout",
     "find_mrs_dirs",
+    "work_root_for",
+    "ledger_root_for",
     "read_mrs_metadata",
     "TIER0",
     "TIER1",
@@ -45,6 +47,15 @@ __all__ = [
     "has_sensitive_value",
     "mrs_updated_mtime",
     "bounded_text",
+    "DEFAULT_PLAN_ROOTS",
+    "SDD_WORKSPACE_REL",
+    "normalize_plan_path",
+    "is_repo_relative",
+    "read_plan_registry",
+    "plan_registry_for",
+    "sdd_ledgers",
+    "ledger_label",
+    "ledger_tail",
 ]
 
 TIER0 = ["task_state.md", "plan.md", "snapshot.md"]
@@ -575,3 +586,164 @@ def format_context_entry(record: dict, max_chars: int = 1200) -> str:
     else:
         kept = body[-budget:]
     return f"{prefix}\n{kept}\n{pointer}".strip()
+
+
+# --- Plan Registry and superpowers execution ledgers ---------------------------
+# superpowers <= 4.x wrote brainstorming designs and writing-plans output to
+# docs/plans/; 5.0+ splits them into docs/superpowers/specs/ and
+# docs/superpowers/plans/. A `Plan roots:` line inside the registry section adds
+# project-specific roots (superpowers lets users relocate both).
+DEFAULT_PLAN_ROOTS = ("docs/plans/", "docs/superpowers/plans/", "docs/superpowers/specs/")
+_PLAN_ROOTS_LINE_RE = re.compile(r"^\W*plan roots\W*:\s*(.+)$", re.IGNORECASE)
+_REGISTRY_HEADING_RE = re.compile(r"^#{1,6}\s+.*\bPlan Registry\b")
+# superpowers 6.x keeps one short-lived workspace per plan here (ledger at
+# progress.md, owning plan in plan-path) and deletes it once the plan finishes.
+SDD_WORKSPACE_REL = ".superpowers/sdd"
+_LEDGER_PLAN_RE = re.compile(r"^#\s*SDD ledger\s*[—-]+\s*plan:\s*(.+?)\s*$", re.IGNORECASE)
+
+
+def normalize_plan_path(path: str) -> str:
+    """Canonical repo-relative spelling: no backticks, no leading `./`."""
+    path = path.strip().strip("`").strip()
+    while path.startswith("./"):
+        path = path[2:]
+    return path
+
+
+def is_repo_relative(path: str) -> bool:
+    """False for absolute paths and any `..` segment (escapes the repo)."""
+    return bool(path) and not path.startswith(("/", "~")) and not re.match(r"^[A-Za-z]:[\\/]", path) \
+        and ".." not in re.split(r"[\\/]", path)
+
+
+def read_plan_registry(content: str) -> dict:
+    """Parse the Plan Registry of plan.md. Never raises.
+
+    Returns {"rows": [(path, status)], "roots": [...], "rejected_roots": [...]}.
+    HTML comments and fenced code are ignored, so template comments and
+    examples cannot start the section or declare roots.
+    """
+    rows: list[tuple[str, str]] = []
+    roots = list(DEFAULT_PLAN_ROOTS)
+    rejected: list[str] = []
+    visible, _ = _visible_lines(content.splitlines())
+    in_registry = False
+    for line, _index, fenced in visible:
+        if fenced:
+            continue
+        stripped = line.strip()
+        if not in_registry:
+            in_registry = bool(_REGISTRY_HEADING_RE.match(stripped))
+            continue
+        if stripped.startswith("#"):
+            break
+        declared = _PLAN_ROOTS_LINE_RE.match(stripped)
+        if declared:
+            for root in re.split(r"[,\s]+", declared.group(1)):
+                root = normalize_plan_path(root.strip("*"))
+                if not root:
+                    continue
+                if not is_repo_relative(root):
+                    rejected.append(root)
+                    continue
+                roots.append(root if root.endswith("/") else root + "/")
+            continue
+        if stripped.startswith("|") and not _TABLE_SEP_RE.match(stripped):
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if cells and cells[0] and cells[0] != "File":
+                status = cells[3] if len(cells) > 3 else ""
+                rows.append((normalize_plan_path(cells[0]), status))
+    return {"rows": rows, "roots": roots, "rejected_roots": rejected}
+
+
+def plan_registry_for(mrs_dir: Path) -> dict:
+    try:
+        return read_plan_registry((mrs_dir / "plan.md").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return {"rows": [], "roots": list(DEFAULT_PLAN_ROOTS), "rejected_roots": []}
+
+
+def _ledger_plan(workspace: Path, root: Path) -> str | None:
+    """Plan owning an SDD workspace: plan-path marker, else the ledger's first line."""
+    raw = None
+    try:
+        raw = (workspace / "plan-path").read_text(encoding="utf-8").strip() or None
+    except (OSError, UnicodeDecodeError):
+        pass
+    if raw is None:
+        try:
+            with (workspace / "progress.md").open(encoding="utf-8") as handle:
+                match = _LEDGER_PLAN_RE.match(handle.readline())
+            raw = match.group(1) if match else None
+        except (OSError, UnicodeDecodeError):
+            return None
+    if raw is None:
+        return None
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        try:
+            return candidate.resolve().relative_to(root.resolve()).as_posix()
+        except (OSError, ValueError):
+            return raw
+    return normalize_plan_path(raw)
+
+
+def sdd_ledgers(mrs_dir: Path, root: Path | None = None) -> list[dict]:
+    """In-flight superpowers 6.x ledgers for the current work, active plan first.
+
+    root is where upstream keeps SDD workspaces: the git toplevel of the
+    worktree doing the work (see ledger_root_for); defaults to the MRS project.
+    Workspaces are deleted when their plan finishes, so every ledger found is
+    in flight. The owning plan comes from the workspace's own marker, never
+    from its directory name (colliding basenames get disambiguated slugs).
+    Order: plans marked in_progress in the Plan Registry, then newest first.
+    Each dict: plan, ledger (Path), mtime, registry_status (None = unregistered).
+    """
+    root = root or project_root_for(mrs_dir)
+    base = root / SDD_WORKSPACE_REL
+    try:
+        workspaces = [p for p in base.iterdir() if p.is_dir()]
+    except OSError:
+        return []
+    statuses = {path: status for path, status in plan_registry_for(mrs_dir)["rows"]}
+    # Markers are relative to the git toplevel; a registry kept by a project in
+    # a repo subdirectory may use project-relative paths instead.
+    try:
+        prefix = project_root_for(mrs_dir).resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        prefix = "."
+    ledgers = []
+    for workspace in workspaces:
+        ledger = workspace / "progress.md"
+        try:
+            if not ledger.is_file():
+                continue
+            mtime = ledger.stat().st_mtime  # the workspace may vanish mid-scan
+        except OSError:
+            continue
+        plan = _ledger_plan(workspace, root) or f"(unknown plan: {workspace.name})"
+        status = statuses.get(plan)
+        if status is None and prefix != "." and plan.startswith(prefix + "/"):
+            status = statuses.get(plan[len(prefix) + 1:])
+        ledgers.append({"plan": plan, "ledger": ledger, "mtime": mtime, "registry_status": status})
+    return sorted(
+        ledgers,
+        key=lambda item: ((item["registry_status"] or "").strip().lower().startswith("in_progress"), item["mtime"]),
+        reverse=True,
+    )
+
+
+def ledger_label(item: dict) -> str:
+    status = item["registry_status"] or "NOT in Plan Registry"
+    return f"{item['plan']} [{status}] — {SDD_WORKSPACE_REL}/{item['ledger'].parent.name}/progress.md"
+
+
+def ledger_tail(ledger: Path, max_lines: int = 6, max_chars: int = 600) -> str:
+    try:
+        lines = [l.rstrip() for l in ledger.read_text(encoding="utf-8").splitlines() if l.strip()]
+        # Same emission guard as every other replayed MRS text.
+        lines = lines[:1] + [l for l in lines[1:] if not has_sensitive_value(l)]
+    except (OSError, UnicodeDecodeError):
+        return "(unreadable)"
+    tail = "\n".join(lines[1:][-max_lines:]) or "(no task lines yet)"
+    return tail if len(tail) <= max_chars else "…" + tail[-(max_chars - 1):]

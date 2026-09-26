@@ -16,10 +16,14 @@ Field reference:
                - <deliverable 2>
 
 Structural rules:
-- "## Plan Registry (docs/plans)" MUST stay at the bottom.
+- "## Plan Registry" MUST stay at the bottom. Legacy "## Plan Registry (docs/plans)"
+  headings remain valid.
 - Resource pointers/links are NEVER registered here; they live in utils.md.
-- Plan Registry registers ONLY files under docs/plans/*.md. NEVER register
-  CLAUDE.md, AGENTS.md, .task-state/* (MRS files), or docs/runbooks/*.
+- Plan Registry registers ONLY repo-relative plan/spec files under the plan roots:
+  docs/plans/ (superpowers <= 4.x), docs/superpowers/plans/ and
+  docs/superpowers/specs/ (superpowers >= 5.0), plus any roots the registry
+  declares. NEVER register CLAUDE.md, AGENTS.md, .task-state/* (MRS files),
+  docs/runbooks/*, or .superpowers/sdd/* execution ledgers.
 - Reference Index is optional; delete the section if unused.
 - A phase MUST have one of: pending, in_progress, complete, blocked.
 - Only one phase should be in_progress at a time.
@@ -34,11 +38,15 @@ Anything above END_TEMPLATE_DOCS is stripped at render time.
 
 {phases}
 
-## Plan Registry (docs/plans)
+## Plan Registry
 
 <!--
-Strict boundary: register ONLY docs/plans/*.md files.
-Do NOT register CLAUDE.md, AGENTS.md, .task-state/*, or docs/runbooks/*.
+Strict boundary: register ONLY repo-relative files under the plan roots
+docs/plans/, docs/superpowers/plans/, docs/superpowers/specs/.
+If the project relocates plans or specs, declare the extra roots on one line
+below this comment, e.g. "Plan roots: docs/archive/plans/".
+Do NOT register CLAUDE.md, AGENTS.md, .task-state/*, docs/runbooks/*,
+or .superpowers/sdd/* execution ledgers.
 Status values: pending | in_progress | completed | abandoned
 -->
 

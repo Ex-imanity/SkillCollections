@@ -1,6 +1,6 @@
 ---
 name: context-resilient-task
-version: 1.6.0
+version: 1.7.0
 description: Context-resilient task management via a filesystem Minimum Recovery Set (MRS in .task-state/). Reconstructs task state from on-disk artifacts so work survives /clear, session interruption, agent switches, and context-window loss. Use this skill whenever the user mentions multi-phase tasks, multi-session work, cross-session recovery, task state restoration, MRS, .task-state, lost context, hallucinated todos, forgotten work, 任务状态恢复, 跨会话任务, 多会话开发, 上下文丢失, /clear 后继续, 任务恢复, or asks the agent to remember a task across sessions. Also trigger proactively when starting any task likely to span more than one session, even if the user doesn't explicitly request recovery — the upfront MRS structure prevents context-loss surprises later.
 ---
 
@@ -216,15 +216,19 @@ If you prefer manual setup, copy templates from `assets/` (`task_state.template.
 
 ## Plan Registry
 
-`plan.md` must include a Plan Registry tracking all `docs/plans/*.md` files:
+`plan.md` must include a Plan Registry tracking every plan/spec file produced for the task, by repo-relative path:
 
 ```markdown
-## Plan Registry (docs/plans)
+## Plan Registry
 | File | Source Skill | Date | Status |
 |------|-------------|------|--------|
+| docs/superpowers/specs/2026-09-26-sync-design.md | brainstorming | 2026-09-26 | completed |
+| docs/superpowers/plans/2026-09-26-sync.md | writing-plans | 2026-09-26 | in_progress |
 ```
 
-**Strict boundary:** Only register files under `docs/plans/*.md`. Do NOT register CLAUDE.md, AGENTS.md, `.task-state/*`, or `docs/runbooks/*`.
+**Plan roots:** `docs/plans/` (superpowers ≤ 4.x, designs and plans together), `docs/superpowers/specs/` + `docs/superpowers/plans/` (superpowers ≥ 5.0). If the project relocates plans or specs, add a `Plan roots: <dir>/, ...` line inside the registry section. Legacy `## Plan Registry (docs/plans)` headings stay valid.
+
+**Strict boundary:** Only register files under the plan roots. Do NOT register CLAUDE.md, AGENTS.md, `.task-state/*`, `docs/runbooks/*`, or superpowers execution ledgers under `.superpowers/sdd/`.
 
 Full cross-skill protocol: [references/multi-skill-integration.md](references/multi-skill-integration.md)
 
@@ -329,7 +333,7 @@ When initializing MRS for a project that uses multiple agents (Claude Code, Code
 - Give every registry row an explicit `Sensitivity: public|internal|restricted`; restricted rows are excluded per row from snapshots and recovery digests, and likely credential values fail validation.
 - Legacy suffixed `Completed Items` subsections (for example, per-round history) are preserved with a warning; only repeated exact authoritative sections invalidate `task_state.md`.
 - Regenerate `snapshot.md` after updating Tier 1 logs; verification warns when source context is newer than the snapshot.
-- Register every new `docs/plans/` file in Plan Registry immediately
+- Register every new plan/spec file (under `docs/plans/`, `docs/superpowers/plans/`, `docs/superpowers/specs/`, or a declared root) in Plan Registry immediately
 - Compress `task_state.md` when it exceeds 300 lines
 
 **DON'T:**
@@ -337,6 +341,6 @@ When initializing MRS for a project that uses multiple agents (Claude Code, Code
 - Append dated sections to `task_state.md` (use `progress.md` / `decisions.md`)
 - Leave completed todos in Active Todos list
 - Infer todo status from `progress.md`
-- Put non-plan files in Plan Registry
+- Put non-plan files or `.superpowers/sdd/` ledgers in Plan Registry
 - Scatter resource pointers into findings/decisions/plan instead of registering them in `utils.md`
 - Use forbidden temp paths

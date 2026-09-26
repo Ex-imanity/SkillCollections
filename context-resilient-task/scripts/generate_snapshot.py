@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 import argparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _state_probe import read_context_entry_records, utils_records, format_context_entry, bounded_text  # noqa: E402
+from _state_probe import read_context_entry_records, utils_records, format_context_entry, bounded_text, work_root_for  # noqa: E402
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOT_TEMPLATE_PATH = SKILL_ROOT / "assets" / "snapshot.template.md"
@@ -186,7 +186,7 @@ def infer_project_root(mrs_dir: Path) -> Path:
 def generate_snapshot(mrs_dir: Path, project_root: Path | None = None) -> str:
     """Generate snapshot content from current state."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    project_root = project_root or infer_project_root(mrs_dir)
+    project_root = project_root or work_root_for(mrs_dir, Path.cwd())
 
     # Read task state
     state = read_task_state(mrs_dir)
@@ -270,7 +270,8 @@ def main():
     parser.add_argument(
         "--project-root",
         default=None,
-        help="Project root for scanning modified source files (default: parent of .task-state)",
+        help="Project root for scanning modified source files (default: the current git worktree when it "
+             "belongs to the MRS project's repository, else the parent of .task-state)",
     )
     parser.add_argument("directory", nargs="?", default=".", help="MRS directory (default: current)")
 

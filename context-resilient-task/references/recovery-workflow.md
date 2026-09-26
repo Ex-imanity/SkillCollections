@@ -46,6 +46,15 @@ For append-only files, load only the newest bounded entries first (for example
 the latest three decision/finding headings). Include the utilities profile as
 stable context, not as a finding or deliverable.
 
+If superpowers 6.x ledgers exist under `.superpowers/sdd/` at the git toplevel,
+`restore_context.py` already lists them with their owning plan (from each
+workspace's `plan-path` marker, never from the directory name) and tail, the
+`in_progress` plan first. With several MRS it only indexes them; after the user
+picks a task, run `restore_context.py <dir> --mrs <mrs_dir>` for the full view. For task progress inside that
+plan, the ledger and `git log` win over MRS prose; update `task_state.md` to the
+milestone the ledger shows. See
+[multi-skill-integration.md](multi-skill-integration.md#execution-ledgers-superpowers-6x).
+
 If missing, emit warning:
 ```
 WARNING: Missing Tier 1 artifact: findings.md

@@ -14,6 +14,37 @@
 条目只写**真实的修复与变更内容**。不写评审过程、评审结论、findings 编号或"已修/已清"这类过程状态 ——
 读者要的是"这个版本改了什么"，评审记录属于 `Review/` 与 commit message。
 
+## 1.7.0 - 2026-09-27
+
+**兼容 superpowers ≥ 5.0 的计划产出位置**
+
+- Plan Registry 默认根目录由仅 `docs/plans/` 扩为 `docs/plans/`（superpowers ≤ 4.x）、`docs/superpowers/specs/`、`docs/superpowers/plans/`（superpowers ≥ 5.0）；新老项目及混合项目均可直接登记，已有计划不需要迁移。
+- Registry 区块内可写一行 `Plan roots: <dir>/, ...` 声明项目自定义的计划/设计目录，声明的目录追加到默认根目录之后。
+- 新建 `plan.md` 的标题改为 `## Plan Registry`；旧标题 `## Plan Registry (docs/plans)` 继续有效。
+- `verify_mrs.py`：Registry 行须为计划根目录下的仓库相对 `.md` 路径，允许反引号包裹和 `./` 前缀；绝对路径、含 `..` 的路径和非 `.md` 文件告警；`Plan roots:` 中的绝对路径或 `..` 根被忽略并告警；`.superpowers/sdd/` 下的执行 ledger 单独告警并提示改登记计划文件本身。
+- Registry 解析与 hook 共用 `_state_probe.py` 的同一实现；只有标题行才开启 Registry 区块，HTML 注释和代码块内的标题、`Plan roots:` 与表格一律忽略，正文里提到 "Plan Registry" 的列表项不再被当作区块起点。
+
+**与 superpowers 6.x 执行 ledger 分工**
+
+- `references/multi-skill-integration.md` 新增 Execution Ledgers 一节：ledger 负责单个计划内的逐任务进度，MRS 负责当前激活的计划、跨计划/跨会话状态和长期决策；ledger 在最终评审及修复完成后被删除，删除前把需保留的 `Ruling:` 汇总进 `decisions.md`，且这不替代上游要求向用户逐条披露全部 `Ruling:` 与延后 minor 项；不在 Registry 或 `decisions.md` 里引用 ledger 路径。
+- `restore_context.py`（SessionStart）自动展示最多 2 份进行中的 ledger：所属计划、该计划的 Registry 状态（未登记时标 `NOT in Plan Registry`）和 ledger 尾部，Registry 中 `in_progress` 的计划优先，其余按新旧排序并给出省略数量；计划内任务进度以 ledger 和 `git log` 为准。
+- 存在多个 MRS 时，恢复摘要额外索引最多 3 份 ledger（不判定归属），并给出选定后的完整恢复命令；`restore_context.py` 新增 `--mrs <dir>` 参数，恢复指定的单个 MRS。
+- `precompact_digest.py`（PreCompact）展示排序后的第一份 ledger 与省略数量，压缩后的恢复命令保留当前工作树并显式指定 MRS。
+- ledger 在当前工作树的 git 顶层查找（与上游 `sdd-workspace` 一致），MRS 属于仓库子目录项目时同样可找到；Registry 行可用顶层相对或项目相对路径匹配 marker。
+- 扫描期间被上游删除的 workspace 会被跳过，不影响其余恢复输出。
+- ledger 所属计划按 workspace 的 `plan-path` marker 判定，旧 workspace 回退到 ledger 首行，不按目录名推断，同名计划不会串读。
+- `gate_check.py`（Stop）在 ledger 比 `snapshot.md` 新时提醒同步 MRS，与是否存在未提交改动相互独立。
+- `verify_mrs.py`：ledger 所属计划不在 Registry 时告警。
+- 回放的 ledger 行与其他 MRS 文本共用凭据过滤。
+
+**Git 工作树共享 MRS**
+
+- 一个任务在主仓库与其 linked worktree 之间共用一份 MRS；位于项目目录之外的工作树向上找不到 MRS 时，按 `git worktree list` 在其他工作树的相同相对位置查找（主仓库优先，子目录项目同样适用），找到多个时全部列出供选择；submodule 通过 `core.worktree` 定位；`--separate-git-dir` 的主仓库无法自动定位，需用 `--mrs` 指定。
+- `restore_context.py`、`gate_check.py`、`precompact_digest.py`、`verify_mrs.py` 与 `generate_snapshot.py`（未传 `--project-root` 时）改为按**当前工作树**检查未提交改动（取项目在该工作树中的对应目录），前提是该工作树与 MRS 所在项目属于同一仓库；当前就在 MRS 所在工作树，或处于无关的嵌套仓库时，行为不变。
+- 同一次 hook 内重复的 git 探测会被缓存，每次探测超时 3 秒。
+- 恢复摘要在两者不同时标注 `(shared MRS; current worktree: <path>)`。
+- 兼容矩阵：`subagent-driven-development` 改为 ⚠️ Overlaps（6.x）；`finishing-a-development-branch` 前需先汇总 ledger；注明插件安装时 skill 名带 `superpowers:` 前缀。
+
 ## 1.6.0 - 2026-09-10
 
 **资源注册表**

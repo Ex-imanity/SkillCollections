@@ -868,6 +868,104 @@ class MrsScriptsTest(unittest.TestCase):
         self.assertFalse([w for w in warnings if "without an explicit Sensitivity" in w], warnings)
         self.assertNotIn("prod-host", self.run_script("restore_context.py", mrs_dir.parent).stdout)
 
+    def plan_registry_warnings(self, registry: str) -> list[str]:
+        mrs_dir = self.work_root / "project" / ".task-state"
+        if not mrs_dir.exists():
+            self.run_script("init_mrs.py", "--dir", mrs_dir, "--goal", "Plan roots", "--complexity", "medium")
+        (mrs_dir / "plan.md").write_text(
+            "# Plan\n\n## Phase 1: Build\n- **Status:** in_progress\n\n" + registry,
+            encoding="utf-8",
+        )
+        payload = json.loads(self.run_script("verify_mrs.py", "--json", mrs_dir, check=False).stdout)
+        self.assertEqual(payload["status"], "valid", payload)
+        return [w for w in payload["warnings"] if "Plan Registry" in w]
+
+    def test_plan_registry_accepts_old_and_new_superpowers_roots(self):
+        warnings = self.plan_registry_warnings(
+            "## Plan Registry (docs/plans)\n"
+            "| File | Source Skill | Date | Status |\n"
+            "|------|--------------|------|--------|\n"
+            "| docs/plans/2026-02-13-migration-design.md | brainstorming | 2026-02-13 | completed |\n"
+            "| `docs/superpowers/specs/2026-09-26-sync-design.md` | brainstorming | 2026-09-26 | completed |\n"
+            "| docs/superpowers/plans/2026-09-26-sync.md | writing-plans | 2026-09-26 | in_progress |\n"
+        )
+        self.assertEqual(warnings, [])
+
+    def test_plan_registry_flags_ledgers_and_non_plan_files(self):
+        warnings = self.plan_registry_warnings(
+            "## Plan Registry\n"
+            "| File | Source Skill | Date | Status |\n"
+            "|------|--------------|------|--------|\n"
+            "| .superpowers/sdd/2026-09-26-sync/progress.md | subagent-driven-development | 2026-09-26 | in_progress |\n"
+            "| CLAUDE.md | - | 2026-09-26 | completed |\n"
+        )
+        self.assertTrue(any(".superpowers/sdd" in w and "ledger" in w for w in warnings), warnings)
+        self.assertTrue(any("'CLAUDE.md'" in w and "docs/superpowers/plans/" in w for w in warnings), warnings)
+
+    def test_plan_registry_honors_declared_custom_roots(self):
+        warnings = self.plan_registry_warnings(
+            "## Plan Registry\n"
+            "Plan roots: `docs/archive/whitebox/plans/`\n\n"
+            "| File | Source Skill | Date | Status |\n"
+            "|------|--------------|------|--------|\n"
+            "| docs/archive/whitebox/plans/2026-07-14-observation-probe.md | writing-plans | 2026-07-14 | completed |\n"
+            "| docs/plans/2026-07-15-follow-up.md | writing-plans | 2026-07-15 | pending |\n"
+            "| docs/archive/notes.md | - | 2026-07-15 | pending |\n"
+        )
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertIn("docs/archive/notes.md", warnings[0])
+        self.assertIn("docs/archive/whitebox/plans/", warnings[0])
+
+    def test_plan_registry_rejects_escapes_and_ignores_comments_and_fences(self):
+        warnings = self.plan_registry_warnings(
+            "```markdown\n## Plan Registry\n| File | Source Skill | Date | Status |\n| example.md | x | x | x |\n```\n\n"
+            "## Plan Registry\n"
+            "<!-- Plan roots: docs/commented/ -->\n"
+            "Plan roots: /tmp/, ../, docs/custom/\n\n"
+            "| File | Source Skill | Date | Status |\n"
+            "|------|--------------|------|--------|\n"
+            "| ./docs/plans/2026-09-27-ok.md | writing-plans | 2026-09-27 | pending |\n"
+            "| docs/custom/2026-09-27-ok.md | writing-plans | 2026-09-27 | pending |\n"
+            "| docs/plans/../../CLAUDE.md | - | 2026-09-27 | pending |\n"
+            "| /tmp/example.md | - | 2026-09-27 | pending |\n"
+            "| docs/plans-old/x.md | - | 2026-09-27 | pending |\n"
+            "| docs/plans/diagram.png | - | 2026-09-27 | pending |\n"
+            "| docs/commented/x.md | - | 2026-09-27 | pending |\n"
+        )
+        flagged = " ".join(warnings)
+        for bad in ("docs/plans/../../CLAUDE.md", "/tmp/example.md", "docs/plans-old/x.md",
+                    "docs/plans/diagram.png", "docs/commented/x.md"):
+            self.assertIn(f"'{bad}'", flagged)
+        self.assertIn("ignores declared root '/tmp/'", flagged)
+        self.assertIn("ignores declared root '../'", flagged)
+        self.assertNotIn("example.md'", flagged.replace("/tmp/example.md", ""))  # fenced sample not parsed
+        self.assertNotIn("2026-09-27-ok.md", flagged)
+        self.assertEqual(len(warnings), 7, warnings)
+
+    def test_verify_warns_on_ledger_for_unregistered_plan(self):
+        project = self.work_root / "project"
+        self.run_script("init_mrs.py", "--dir", project / ".task-state", "--goal", "Ledger", "--complexity", "medium")
+        # Upstream puts SDD workspaces at the git toplevel, so the project must be its own repo.
+        subprocess.run(["git", "init", "-q", str(project)], check=True)
+        workspace = project / ".superpowers" / "sdd" / "sync"
+        workspace.mkdir(parents=True)
+        # Marker-less legacy workspace: the owning plan comes from the ledger's first line.
+        (workspace / "progress.md").write_text(
+            f"# SDD ledger — plan: {project / 'docs/superpowers/plans/sync.md'}\nTask 1: complete\n",
+            encoding="utf-8",
+        )
+        payload = json.loads(self.run_script("verify_mrs.py", "--json", project / ".task-state", check=False).stdout)
+        self.assertEqual(payload["status"], "valid", payload)
+        self.assertTrue(any("'docs/superpowers/plans/sync.md'" in w and "not in the Plan Registry" in w
+                            for w in payload["warnings"]), payload["warnings"])
+
+    def test_initialized_plan_uses_generic_registry_heading(self):
+        mrs_dir = self.work_root / "project" / ".task-state"
+        self.run_script("init_mrs.py", "--dir", mrs_dir, "--goal", "Heading", "--complexity", "medium")
+        plan = (mrs_dir / "plan.md").read_text(encoding="utf-8")
+        self.assertIn("## Plan Registry\n", plan)
+        self.assertIn("docs/superpowers/plans/", plan)
+
 
 if __name__ == "__main__":
     unittest.main()

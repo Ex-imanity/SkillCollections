@@ -25,7 +25,7 @@
 | 文件 | 职责 | 更新方式 |
 |------|------|---------|
 | `task_state.md` | 当前状态 source of truth，**Active Todos 在头部** | **原地修改**，禁止追加 |
-| `plan.md` | 任务计划 + Plan Registry（仅 `docs/plans/*.md`） | 原地修改阶段状态 |
+| `plan.md` | 任务计划 + Plan Registry（仅计划根目录下的计划/设计文件） | 原地修改阶段状态 |
 | `snapshot.md` | 最新检查点快照 | 事件触发**覆写整个文件**，不追加 |
 
 **失败模式：** 缺少任何 Tier 0 文件 → **停止**，运行初始化向导
@@ -174,31 +174,45 @@ active → paused → active → completed
 
 ## 多 Skill 协作：Plan Registry
 
-在使用 `writing-plans` / `brainstorming` 等 skill 过程中，`docs/plans/` 下会持续产出计划文件。若不追踪，这些文件会成为"孤儿文件"，recovery 时丢失上下文。
+在使用 `writing-plans` / `brainstorming` 等 skill 过程中会持续产出计划文件。若不追踪，这些文件会成为"孤儿文件"，recovery 时丢失上下文。
 
-`plan.md` 底部必须维护一个 **Plan Registry** 表：
+superpowers 不同版本的产出位置不同，CRT 两者都支持：
+
+| superpowers | brainstorming（设计/spec） | writing-plans（实施计划） |
+|-------------|---------------------------|--------------------------|
+| ≤ 4.x | `docs/plans/*-design.md` | `docs/plans/*.md` |
+| ≥ 5.0 | `docs/superpowers/specs/*-design.md` | `docs/superpowers/plans/*.md` |
+
+`plan.md` 底部必须维护一个 **Plan Registry** 表，`File` 列写仓库相对路径：
 
 ```markdown
-## Plan Registry (docs/plans)
+## Plan Registry
 
-| 文件 | 来源 Skill | 创建日期 | 状态 |
-|------|-----------|---------|------|
-| 2026-02-13-migration-implementation.md | writing-plans | 2026-02-13 | completed |
-| 2026-02-17-feature-x-design.md | brainstorming | 2026-02-17 | completed |
-| 2026-02-24-ui-portal-implementation.md | writing-plans | 2026-02-24 | in_progress |
+| File | Source Skill | Date | Status |
+|------|-------------|------|--------|
+| docs/plans/2026-02-13-migration-implementation.md | writing-plans | 2026-02-13 | completed |
+| docs/superpowers/specs/2026-09-26-sync-design.md | brainstorming | 2026-09-26 | completed |
+| docs/superpowers/plans/2026-09-26-sync.md | writing-plans | 2026-09-26 | in_progress |
 ```
 
-**严格边界 — 仅注册 `docs/plans/*.md` 文件。** 不得注册：
+旧的 `## Plan Registry (docs/plans)` 标题继续有效，无需改名。项目自定义了计划/设计存放位置时，在该区块内加一行 `Plan roots: docs/archive/plans/`，声明的目录会追加到默认根目录之后。
+
+**严格边界 — 仅注册计划根目录下的文件。** 不得注册：
 - `CLAUDE.md` / `AGENTS.md`（agent 自动加载）
 - `.task-state/*`（MRS 文件自身）
 - `docs/runbooks/*`（运维手册，非计划）
+- `.superpowers/sdd/*`（superpowers 6.x 的执行 ledger，计划完成后会被删除）
 
 **状态值：** `pending` / `in_progress`（同时只有一个）/ `completed` / `abandoned`
 
-**Handoff 协议：** 每当其他 skill 产出新的 `docs/plans/` 文件时，立即：
+**Handoff 协议：** 每当其他 skill 在计划根目录下产出新文件时，立即：
 1. 在 Plan Registry 中注册该文件（`status: pending`）
 2. 更新 `task_state.md` 的 Current Phase 指向该文件（如果它成为当前执行目标）
 3. 生成一次 snapshot（事件触发）
+
+**与 superpowers 6.x ledger 的分工：** `subagent-driven-development` / `executing-plans` 会在 `.superpowers/sdd/<plan>/progress.md` 记录单个计划内逐任务的执行 ledger。ledger 负责计划内的任务进度，MRS 负责当前激活哪个计划、跨计划/跨会话状态和需要长期保留的决策。ledger 与计划的对应关系以 workspace 里的 `plan-path` marker 为准，不按目录名猜（同名计划会被上游改成 `plan-beta` 这类目录）。SessionStart hook 最多展示 2 份进行中的 ledger（所属计划、Registry 状态、尾部几行），`in_progress` 的计划优先，其余给出数量；存在多个 MRS 时只做索引，选定任务后用 `restore_context.py <dir> --mrs <mrs_dir>` 完整恢复。PreCompact 展示 1 份并给出保留当前工作树的恢复命令。只要 ledger 比 snapshot 新，Stop hook 就会提醒，与是否有未提交改动无关。恢复时，计划内进度以 ledger 和 `git log` 为准。ledger 在最终评审及修复完成后会被删除：删除前把需要保留的 `Ruling:` 汇总进 `decisions.md`；这不替代上游要求的最终披露（全部 `Ruling:` 和延后的 minor 项仍要逐条告知用户）。
+
+**Git 工作树：** 一个任务在主仓库和它的各个工作树之间共用同一份 MRS（通常放在主仓库）。工作树嵌在项目内时向上查找即可找到；放在项目外时，按 `git worktree list` 在其他工作树的相同相对位置查找（主仓库优先，子目录项目同样适用；submodule 通过 `core.worktree` 定位；找到多个时让用户选择）。`--separate-git-dir` 的主仓库 git 没有记录位置，需用 `restore_context.py <dir> --mrs <mrs_dir>` 显式指定。未提交改动按当前工作树检查，ledger 按当前工作树的 git 顶层查找。`finishing-a-development-branch` 会删除它创建的工作树，所以不要把未跟踪的 MRS 建在工作树里。
 
 详细协议见 [`references/multi-skill-integration.md`](references/multi-skill-integration.md)
 
@@ -207,15 +221,16 @@ active → paused → active → completed
 ## 推荐工作流
 
 ```
-brainstorming → docs/plans/YYYY-MM-DD-design.md
+brainstorming → docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md（≤ 4.x：docs/plans/）
                   ↓ 注册到 Plan Registry
-writing-plans → docs/plans/YYYY-MM-DD-implementation.md
+writing-plans → docs/superpowers/plans/YYYY-MM-DD-<feature>.md（≤ 4.x：docs/plans/）
                   ↓ 注册到 Plan Registry，status=in_progress
 context-resilient-task (init) → MRS 创建
-                  ↓ 执行
+                  ↓ 执行（6.x：ledger 记录计划内任务进度）
 [writing-plans 产出新计划]
                   ↓ 注册 + snapshot
 context-resilient-task (recover) → 无缝恢复
+[最终评审通过] → ledger 中需保留的 Ruling 汇总进 decisions.md
 finishing-a-development-branch → 合并/PR/清理
                   ↓ 设置 status=completed，归档 MRS
 ```
@@ -259,10 +274,10 @@ mv .task-state-bugfix-x42 .task-state/archive/bugfix-x42-completed
 
 ```
 project/
-  ├── docs/plans/              # brainstorming + writing-plans 输出
-  │   ├── 2026-02-13-design.md
-  │   ├── 2026-02-13-implementation.md
-  │   └── ...（所有计划文件均在 Plan Registry 中注册）
+  ├── docs/plans/              # superpowers ≤ 4.x 的 brainstorming + writing-plans 输出
+  ├── docs/superpowers/        # superpowers ≥ 5.0：specs/（设计）+ plans/（计划）
+  │   └── ...（所有计划/设计文件均在 Plan Registry 中注册）
+  ├── .superpowers/sdd/        # superpowers 6.x 执行 ledger（git 忽略，临时，不注册）
   │
   ├── .task-state/             # MRS 目录
   │   ├── task_state.md        # 当前状态（原地修改，含 Active Todos）
@@ -291,7 +306,7 @@ project/
 | 阶段完成 | 一个 plan Phase 状态变为 `complete` |
 | 遇到 blocker | 任何导致工作停止的问题 |
 | 重要决策 | 影响后续方向的技术/设计决策 |
-| 新计划文件注册 | 其他 skill 产出新 docs/plans 文件 |
+| 新计划文件注册 | 其他 skill 在计划根目录下产出新文件 |
 | 会话结束前 | 主动生成以保留当前进度 |
 
 ---

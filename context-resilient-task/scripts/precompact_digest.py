@@ -32,13 +32,17 @@ from _state_probe import (  # noqa: E402
     format_context_entry,
     mrs_updated_mtime,
     bounded_text,
+    ledger_root_for,
+    ledger_label,
+    ledger_tail,
+    sdd_ledgers,
 )
 
 MARKER = "🗂  context-resilient-task"
 MAX_DIGEST_CHARS = 4000
 
 
-def render(mrs_dir: Path) -> str:
+def render(mrs_dir: Path, start: Path | None = None) -> str:
     state = read_state(mrs_dir)
     lines = [
         f"{MARKER} — pre-compaction digest. Full state persists on disk at {mrs_dir}.",
@@ -57,6 +61,12 @@ def render(mrs_dir: Path) -> str:
     lines.extend(f"    {line.rstrip()}" for line in todos.splitlines() if line.strip())
     if is_meaningful(state["next_action"]):
         lines.append(f"- Next action: {bounded_text(state['next_action'], 700)}")
+    ledgers = sdd_ledgers(mrs_dir, ledger_root_for(mrs_dir, start))
+    for item in ledgers[:1]:
+        lines.append(f"- superpowers ledger (in-plan progress): {ledger_label(item)}")
+        lines.extend(f"    {line}" for line in ledger_tail(item["ledger"], max_lines=3, max_chars=300).splitlines())
+    if len(ledgers) > 1:
+        lines.append(f"- … {len(ledgers) - 1} more in-flight ledger(s); restore_context.py lists them")
     for title, filename in (
         ("Stable decisions", "decisions.md"),
         ("Key findings", "findings.md"),
@@ -70,8 +80,13 @@ def render(mrs_dir: Path) -> str:
             lines.append(f"- {title} (latest):")
             for entry in entries:
                 lines.extend(f"    {line}" for line in entry.splitlines())
-    lines.append(f"- After compaction, run restore_context.py in {mrs_dir.parent} to rehydrate.")
     return "\n".join(lines)
+
+
+def restore_hint(mrs_dir: Path, start: Path) -> str:
+    # Keep the current worktree as the start: drift and ledgers are read from
+    # there, while the (possibly shared) MRS is named explicitly.
+    return f"After compaction, run: python restore_context.py {start} --mrs {mrs_dir}"
 
 
 def main() -> int:
@@ -90,7 +105,7 @@ def main() -> int:
         if not mrs_dirs:
             return 0
         ordered = sorted(mrs_dirs, key=mrs_updated_mtime, reverse=True)
-        latest = render(ordered[0])
+        latest = render(ordered[0], start)
         footer: list[str] = []
         if len(ordered) > 1:
             compact_rows = ["Other MRS (metadata only):"]
@@ -98,7 +113,7 @@ def main() -> int:
                 state = read_state(mrs_dir)
                 compact_rows.append(f"- {mrs_dir.name}: {state.get('status', '(unknown)')} — {state.get('goal', '(unknown)')[:80]}")
             footer.extend(compact_rows)
-        footer.append(f"After compaction, run restore_context.py in {ordered[0].parent} to rehydrate.")
+        footer.append(restore_hint(ordered[0], start))
         footer_text = "\n".join(footer)
         available = max(500, MAX_DIGEST_CHARS - len(footer_text) - 2)
         print(bounded_text(latest, available).rstrip() + "\n\n" + footer_text)

@@ -23,7 +23,7 @@ This snippet ensures all agents (Claude Code, Codex, etc.) follow the same MRS u
   - 子资源清单（Base 表清单、文档章节）挂 `## Notes` 并以 ID 开头，不一行一条；作为证据引用的单个源码文件不登记。
   - 其他文件（findings/decisions/plan/task_state）**只按 ID 引用**（如 `(res: R3)`），不复制链接或路径。资源首次使用时立即登记。
   - 遗留 MRS 迁移：`python <skill-root>/scripts/scan_resources.py .task-state`（只读草稿，加 `--write` 写入）。
-- `plan.md` — 任务计划 + Plan Registry。Registry 仅注册 `docs/plans/*.md`。
+- `plan.md` — 任务计划 + Plan Registry。Registry 按仓库相对路径注册计划/设计文件，默认根目录：`docs/plans/`（superpowers ≤ 4.x）、`docs/superpowers/specs/`、`docs/superpowers/plans/`（superpowers ≥ 5.0）；项目另行存放时在该区块内加一行 `Plan roots: <dir>/`。不注册 `.superpowers/sdd/` 下的执行 ledger。
 
 ### 待办项规则
 - `task_state.md` 头部的 `Active Todos` 是唯一的待办真相源。

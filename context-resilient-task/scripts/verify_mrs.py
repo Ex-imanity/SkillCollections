@@ -26,7 +26,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # One shared implementation with the emission guard in _state_probe.py: a
 # validator that disagrees with the filter either hides a leak or lets the
 # filter silently drop a row the validator calls healthy.
-from _state_probe import has_sensitive_value  # noqa: E402
+from _state_probe import (  # noqa: E402
+    SDD_WORKSPACE_REL,
+    has_sensitive_value,
+    is_repo_relative,
+    read_plan_registry,
+    sdd_ledgers,
+    ledger_root_for,
+)
 
 # MRS Tiers
 TIER_0 = ["task_state.md", "plan.md", "snapshot.md"]
@@ -137,6 +144,39 @@ def validate_task_state(filepath: Path) -> tuple[bool, str, list[str]]:
         return False, f"Error reading file: {e}", warnings
 
 
+def check_plan_registry(content: str) -> list[str]:
+    """Warn on Plan Registry rows outside the plan roots (defaults + declared)."""
+    registry = read_plan_registry(content)
+    roots = registry["roots"]
+    warnings = [
+        f"Plan Registry ignores declared root '{root}': plan roots must be repo-relative (no absolute path, no '..')."
+        for root in registry["rejected_roots"]
+    ]
+    for entry, _status in registry["rows"]:
+        if entry.startswith(SDD_WORKSPACE_REL + "/") or entry.startswith(".superpowers/"):
+            warnings.append(
+                f"Plan Registry contains a superpowers execution ledger: '{entry}'. "
+                "Ledgers are deleted when the plan finishes; register the plan file itself "
+                "and fold ledger rulings into decisions.md."
+            )
+        elif not is_repo_relative(entry) or not entry.endswith(".md") or not entry.startswith(tuple(roots)):
+            warnings.append(
+                f"Plan Registry contains non-plan entry: '{entry}'. "
+                f"Register repo-relative .md plan/spec files under: {', '.join(roots)}"
+            )
+    return warnings
+
+
+def check_unregistered_ledgers(mrs_dir: Path) -> list[str]:
+    """Warn when an in-flight superpowers ledger belongs to an unregistered plan."""
+    return [
+        f"superpowers ledger {item['ledger'].parent.name}/progress.md tracks plan '{item['plan']}', "
+        "which is not in the Plan Registry. Register the plan so recovery can follow it."
+        for item in sdd_ledgers(mrs_dir, ledger_root_for(mrs_dir, Path.cwd()))
+        if item["registry_status"] is None
+    ]
+
+
 def validate_plan(filepath: Path) -> tuple[bool, str, list[str]]:
     """Validate plan.md structure. Returns (valid, message, warnings)."""
     warnings = []
@@ -154,26 +194,7 @@ def validate_plan(filepath: Path) -> tuple[bool, str, list[str]]:
         if not has_status:
             return False, "No phase statuses found", warnings
 
-        # WARNING: Plan Registry boundary check (positive match: must start with docs/plans/)
-        registry_section = False
-        for line in content.splitlines():
-            if "Plan Registry" in line:
-                registry_section = True
-                continue
-            if registry_section:
-                # Stop at next heading
-                if line.startswith("#"):
-                    break
-                if line.startswith("| "):
-                    cells = [c.strip() for c in line.split("|") if c.strip()]
-                    if cells and not cells[0].startswith("---") and not cells[0].startswith("File"):
-                        entry = cells[0]
-                        if not entry.startswith("docs/plans/"):
-                            warnings.append(
-                                f"Plan Registry contains non-plan entry: '{entry}'. "
-                                "Only docs/plans/*.md should be registered."
-                            )
-
+        warnings.extend(check_plan_registry(content))
         return True, "Valid", warnings
 
     except Exception as e:
@@ -497,6 +518,8 @@ def verify_mrs(directory: Path) -> dict:
             results["tier2"]["present"].append(filename)
         else:
             results["tier2"]["missing"].append(filename)
+
+    results["warnings"].extend(check_unregistered_ledgers(directory))
 
     # Check forbidden paths
     results["forbidden_paths"] = check_forbidden_paths(directory)

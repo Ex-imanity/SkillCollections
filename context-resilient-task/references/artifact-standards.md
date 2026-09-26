@@ -256,7 +256,7 @@ Append-only log of stable conclusions and design decisions.
 - Completing a todo = **remove from Active Todos** + **append to Completed Items**. Never mark in-place with `[x]` inside Active Todos.
 - When reporting todo status: read **Active Todos only** for what is pending. Read **Completed Items only** for what is done. Never infer from `progress.md`.
 - Both sections must be present even when empty.
-- Each todo entry is a **single line**. If context is needed, reference an external file: `(see decisions.md 2026-02-10)` or `(see docs/plans/2026-02-10-impl.md Phase 3)`.
+- Each todo entry is a **single line**. If context is needed, reference an external file: `(see decisions.md 2026-02-10)` or `(see docs/superpowers/plans/2026-02-10-impl.md Phase 3)`.
 - `Active Todos` MUST be positioned near the **top** of `task_state.md` (immediately after `## Status`), so recovery always reads it first.
 
 ## Plan Registry
@@ -264,16 +264,23 @@ Append-only log of stable conclusions and design decisions.
 `plan.md` MUST include a Plan Registry at the bottom:
 
 ```markdown
-## Plan Registry (docs/plans)
+## Plan Registry
 | File | Source Skill | Date | Status |
 |------|-------------|------|--------|
-| 2026-02-13-migration-implementation.md | writing-plans | 2026-02-13 | completed |
+| docs/plans/2026-02-13-migration-implementation.md | writing-plans | 2026-02-13 | completed |
+| docs/superpowers/plans/2026-09-26-sync.md | writing-plans | 2026-09-26 | in_progress |
 ```
 
-**Strict boundary — only register `docs/plans/*.md` files.** Do NOT register:
+The `File` column is the repo-relative path. Default plan roots: `docs/plans/` (superpowers ≤ 4.x),
+`docs/superpowers/specs/` and `docs/superpowers/plans/` (superpowers ≥ 5.0). A project that
+relocates plans declares extra roots with a `Plan roots: <dir>/, ...` line inside the section.
+Legacy `## Plan Registry (docs/plans)` headings remain valid.
+
+**Strict boundary — only register files under the plan roots.** Do NOT register:
 - `CLAUDE.md` / `AGENTS.md` (agent auto-loads these)
 - `.task-state/*` (MRS files themselves)
 - `docs/runbooks/*` (operational guides, not plans)
+- `.superpowers/sdd/*` (superpowers 6.x execution ledgers; deleted when the plan finishes)
 
 If other reference files need tracking, use a separate **Reference Index** section in `plan.md`.
 
@@ -282,7 +289,7 @@ If other reference files need tracking, use a separate **Reference Index** secti
 | File | Update Trigger | Method |
 |------|----------------|--------|
 | task_state.md | Phase transition, major decision, blocker, todo change | **In-place edit** |
-| plan.md | Phase status change, new docs/plans file created | **In-place edit** (Plan Registry append) |
+| plan.md | Phase status change, new plan/spec file created | **In-place edit** (Plan Registry append) |
 | snapshot.md | Phase complete, blocker encountered, major decision, session ending | **Overwrite** (archive previous with `--archive`) |
 | decisions.md | Stable conclusion reached, scope change, design decision | **Append only** |
 | findings.md | Immediately after any discovery | **Append only** |
@@ -305,7 +312,7 @@ If other reference files need tracking, use a separate **Reference Index** secti
 **plan.md:**
 - At least one phase defined
 - Each phase has status: `pending|in_progress|complete|blocked`
-- `Plan Registry` section (entries only from `docs/plans/`)
+- `Plan Registry` section (entries only from the plan roots; `verify_mrs.py` warns otherwise)
 
 **snapshot.md:**
 - Timestamp in header
@@ -358,7 +365,9 @@ project-root/
 │   └── snapshots/             # Archived snapshots
 │       ├── snapshot_20260210_0900.md
 │       └── snapshot_20260210_1445.md
-├── docs/plans/                # Plan files (registered in Plan Registry)
+├── docs/plans/                # superpowers ≤ 4.x plans (registered in Plan Registry)
+├── docs/superpowers/          # superpowers ≥ 5.0 specs/ + plans/ (registered in Plan Registry)
+├── .superpowers/sdd/          # superpowers 6.x ledgers (transient, NOT in Registry)
 ├── CLAUDE.md                  # Project constraints (NOT in Registry)
 └── AGENTS.md                  # Agent guidelines (NOT in Registry)
 ```

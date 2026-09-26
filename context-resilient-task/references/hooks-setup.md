@@ -10,9 +10,10 @@ to install once, globally, for every project.
 
 | Event | Script | What it does |
 |-------|--------|--------------|
-| Session start / after `/clear` | `restore_context.py` | Prints a "Reconstructed Task State" block (goal, status, active todos, next action, artifacts, drift warning) so the fresh context starts oriented. |
-| Before compaction | `precompact_digest.py` | Prints a minimal survival digest so the compaction summarizer keeps the essentials; the full state is already on disk. |
-| End of turn (`Stop`) | `gate_check.py` | If the working tree drifted past the last snapshot, prints a reminder to update `snapshot.md` / `progress.md`. Never blocks. |
+| Session start / after `/clear` | `restore_context.py` | Prints a "Reconstructed Task State" block (goal, status, active todos, next action, artifacts, drift warning, in-flight superpowers ledgers) so the fresh context starts oriented. |
+| Before compaction | `precompact_digest.py` | Prints a minimal survival digest (including the newest superpowers ledger tail) so the compaction summarizer keeps the essentials; the full state is already on disk. |
+| (all three) | | In a linked git worktree, the MRS of the main checkout is shared, while drift and superpowers ledgers are read from the current worktree. `restore_context.py <dir> --mrs <mrs_dir>` restores one chosen MRS. |
+| End of turn (`Stop`) | `gate_check.py` | If the working tree drifted past the last snapshot, or a superpowers ledger advanced past it on a clean tree, prints a reminder to update `snapshot.md` / `progress.md`. Never blocks. |
 
 ## Claude Code
 
