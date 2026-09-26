@@ -8,7 +8,9 @@
 才拆出独立 skill；拆分后保留共同的本地范例选择原则。
 
 当前已研究后端 Java，以及 community/mweb 的 C 端 H5 和 internal-ad 的 B 端 Web。
-客户端后续以真实 Review 和当前模块样本补充；没有提供的规则保持未定义。
+客户端已补充 RN、Android、iOS、HarmonyOS 的各端资料；没有提供的规则保持未定义。
+同名作者先确认账号/邮箱，不把模糊匹配合并为身份。重复 cherry-pick 不作为独立
+证据；AI co-author 和生成绑定的实际业务修正明确标注，不能代表个人长期手写风格。
 
 ## 新规则的取样方法
 
@@ -55,6 +57,6 @@ ID:
 
 本轮可执行复查场景见 `../evals/evals.json`；合成输入见
 `../evals/fixtures/scenarios.md`、`../evals/fixtures/discovery/README.md` 和
-`../evals/fixtures/frontend-scenarios.md`。
+`../evals/fixtures/frontend-scenarios.md`、`../evals/fixtures/client-scenarios.md`。
 它们不冒充真实仓库文件；S4-S6 的目录可以复制到一次性 Git 仓库并暂存，实际
 检查隐藏文件发现和跟踪状态，但不要在真实业务仓库中创建这些 fixture。

@@ -77,4 +77,5 @@
 - [internal-ad](repositories/internal-ad.md)：B 端后台。
 
 编号是摘要定位，完整 commit 和仓库内路径在对应资料。源码不可用时依当前模块
-证据继续，不声称已复查历史提交。客户端原生规范尚未整理，不能由 H5 样本推导。
+证据继续，不声称已复查历史提交。客户端任务另读 [client-mobile.md](client-mobile.md)
+及当前端资料，不能由 H5 样本推导原生惯例。

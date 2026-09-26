@@ -1,7 +1,7 @@
 ---
 name: repository-code-style
-version: 1.1.0
-description: Use when implementing, fixing, refactoring, or reviewing code in an existing repository, especially when code must follow historical conventions, a leader's Review comments, or Gaotu Java backend, C-end H5 and B-end web practices. Also use for requests to match repository coding style, reduce hardcoding, preserve frontend request and state conventions, or improve business object encapsulation.
+version: 1.2.0
+description: Use when implementing, fixing, refactoring, or reviewing existing repository code, especially to follow historical conventions or Review feedback in Gaotu Java backend, C-end H5, B-end web, React Native, Android, iOS, or HarmonyOS projects. Also use for requests to match local coding style, reduce hardcoding, preserve request, state, lifecycle or bridge conventions, or improve business encapsulation.
 ---
 
 # Repository Code Style
@@ -41,6 +41,11 @@ description: Use when implementing, fixing, refactoring, or reviewing code in an
 | community（C 端 H5，与后端 gaotu-community 不同） | [community.md](references/repositories/community.md) |
 | mweb（多产品 C 端 H5） | [mweb.md](references/repositories/mweb.md) |
 | internal-ad（B 端；用户称 ad-internal，本次核实的仓库名为 internal-ad） | [internal-ad.md](references/repositories/internal-ad.md) |
+| RN、Android、iOS、HarmonyOS 客户端实现或评审 | [client-mobile.md](references/client-mobile.md)，再读当前端资料 |
+| RNSuperHigh | [rnsuperhigh.md](references/repositories/rnsuperhigh.md) |
+| AndroidSuperClass | [android-super-class.md](references/repositories/android-super-class.md) |
+| iOS_2 | [ios-2.md](references/repositories/ios-2.md) |
+| HarmonySuperHigh | [harmony-super-high.md](references/repositories/harmony-super-high.md) |
 | 提炼新规范、补充作者样本或扩展平台 | [evidence-and-extension.md](references/evidence-and-extension.md) |
 
 只读当前任务适用的资料。仓库资料是 2026-09-26 的本地历史样本，使用前核对目标
@@ -51,9 +56,8 @@ checkout 是否仍适用。只核对当前任务相关的仓库和模块。
 历史 commit 不可用时，只把其说明作为参考，依据当前模块规范和同类实现继续，
 不声称已复查该历史证据。只有任务确实依赖缺失源码时才请求其位置或内容。
 
-客户端尚无整理过的领域规范：仍执行通用流程，依照目标模块现有实现完成任务。
-不要把 Java 的对象、依赖注入或分层写法套到前端或客户端；没有对应仓库资料时，
-依据当前模块范例继续，不虚构平台规范。
+客户端资料按端拆分；跨端任务仅增加直接相关端的契约参考。不把 Java 的对象、依赖
+注入或分层写法套到前端或客户端；没有对应仓库资料时，依据当前模块范例继续。
 
 ## 3. 处理冲突与实现
 

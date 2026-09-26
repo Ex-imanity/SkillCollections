@@ -89,6 +89,27 @@
       "expected_output": "展示值由computed派生，保存仍提交原始空字符串，遵守当前格式配置，不照搬mounted回写。",
       "files": ["evals/fixtures/frontend-scenarios.md"],
       "expectations": ["展示fallback不污染原始值", "保留空字符串清空协议", "当前配置优先于历史作者tabs", "不改无关模板或框架"]
+    },
+    {
+      "id": 10,
+      "prompt": "执行 client-scenarios.md 的 S10，给出RN helper及Harmony注册来源/产物的最小草图、证据与验证。",
+      "expected_output": "沿现有类型和错误入口直接传播native Promise，缺模块reject，保留字符串/false，registry与生成metadata同步增加3参数异步方法。",
+      "files": ["evals/fixtures/client-scenarios.md"],
+      "expectations": ["不复制可选调用导致的pending Promise", "保持raw、id、false和原错误契约", "核对生成来源及3参数异步绑定", "不运行或假造真实codegen"]
+    },
+    {
+      "id": 11,
+      "prompt": "执行 client-scenarios.md 的 S11，添加Fragment状态观察，给出生命周期依据和最小验证。",
+      "expected_output": "用当前repeatWithViewLifecycle收集Repository状态，私有render处理当前binding，不捕获旧binding，保持ViewModel持续工作与实例EventBus范围。",
+      "files": ["evals/fixtures/client-scenarios.md"],
+      "expectations": ["区分实例和view生命周期", "复用现有collection/state模式", "不移动fetch或新增全局事件缓冲", "说明视图重建、旧结果和collector检查未执行"]
+    },
+    {
+      "id": 12,
+      "prompt": "执行 client-scenarios.md 的 S12，添加iOS复用cell异步subtitle回调，给出局部代码和最小验证。",
+      "expected_output": "捕获当前generation及弱cell，在主队列最后检查代号/有效对象再通过私有方法更新UI，保留公共header和原generation更新。",
+      "files": ["evals/fixtures/client-scenarios.md"],
+      "expectations": ["不以相同ID认定旧回调有效", "最终有效性判断和UI都在主队列", "不强持有已释放cell或新增全局锁", "说明同ID新revision及reuse/离页测试未运行"]
     }
   ]
 }

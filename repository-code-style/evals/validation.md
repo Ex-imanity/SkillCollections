@@ -2,6 +2,29 @@
 
 日期：2026-09-26。
 
+## 1.2.0 客户端扩展
+
+- 只读研究 RNSuperHigh、AndroidSuperClass、iOS_2、HarmonySuperHigh，分别深读
+  至少 8、10、6、9 个业务差异/修正及相关上下文；各端 profile 记录 branch/HEAD、
+  作者邮箱、完整 commit、方法、适用条件、反例和当前规范。
+- 本地 zhangyu 查询命中 zhangyu118，按候选身份单独归因；iOS 未找到 zhenqiang，
+  Android 的 zhangyu118/tangaoyang 样本有限。重复 cherry-pick、AI 协作与生成物
+  修正不冒充独立个人风格证据，不用提交数量推导团队标准。
+- 保留一个 skill，加客户端条件参考和四端仓库资料；仅按当前端加载，跨端桥接
+  增加直接相关的契约资料。核对各端 tracked 规则/格式器，记录冲突，不强设统一格式。
+- 独立 agent 核对四份 profile 共 44 个提交引用（含 HEAD）：完整 hash 存在，
+  作者和主要路径匹配；抽核 22 个关键符号存在。续审主流程/领域路由、条件边界和
+  文档链接未发现确认问题。此审核是本地 agent，未调用 Claude Code 付费评审。
+- 两名评估者分别使用旧版 1.1.0 与新版 1.2.0 执行 S10-S12；未读取对方结果或
+  期望，但曾参加 Android/RN 研究，不是完全盲测。两版均符合预期，没有测得增益；
+  结果摘要见 [client-comparison.md](outputs/client-comparison.md)。输入强提示契约，
+  不能证明实际代码风格、自动触发或 Review 返工改善。
+- 未修改业务源码、安装依赖、生成签名/工程/bundle/codegen、运行客户端构建或
+  设备测试。研究保留已有未提交变更；任何原提交的构建说明都不算本次验证。
+- 8 项仓库约定测试、git diff 空白检查通过；另检查全部 33 个包内文件的空白与
+  机器路径/私人链接，46 个内部链接和 12 个评估输入均存在且位于包内。版本、
+  CHANGELOG、根 README 一致；业务仓库状态仍与研究时记录一致。
+
 ## 1.1.0 前端扩展
 
 - 只读研究 community、mweb、internal-ad，分别深读 8、13、8 个实质业务差异及

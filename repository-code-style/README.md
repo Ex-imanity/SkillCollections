@@ -1,14 +1,17 @@
 # repository-code-style
 
-让 agent 的实现更贴合目标仓库已有代码。当前包含通用流程、后端 Java 和前端 Web
+让 agent 的实现更贴合目标仓库已有代码。当前包含通用流程、后端 Java、前端 Web 和客户端
 参考，依据目标仓库显式规范、代表性历史提交及转述的 Review 建立资料。
 后端取样 gaoxue02；前端取样 liyunbo02、lichen03、dengyong、wangdi08 的可用提交。
 作者覆盖因仓库而异，样本不能替代目标模块规范或代表全部团队代码。
+客户端取样 zhaodexi、zhenqiang、tangaoyang，以及本地匹配的 zhangyu118 候选；
+不混合其他同名 zhangyu 作者，具体身份与覆盖限制见各端资料。
 
 ## 一个 skill，按需读取参考资料
 
 主入口负责选范例、处理冲突、实施和自审；后端与各仓库的证据分别放在
-`references/`。前端分 C 端 H5 与 B 端场景，客户端后续补充领域和仓库资料。
+`references/`。前端分 C 端 H5 与 B 端场景，客户端按 RN、Android、iOS、HarmonyOS
+拆分参考资料；通用检查流程相同，当前无需拆成四个重复流程的 skill。
 当某个平台有独立工具流程或交付格式时，再考虑拆成独立 skill。
 
 ## 使用
@@ -34,6 +37,9 @@
 - [community](references/repositories/community.md)：C 端 H5，区别于后端 gaotu-community。
 - [mweb](references/repositories/mweb.md)：多产品 H5 与共享业务层。
 - [internal-ad](references/repositories/internal-ad.md)：B 端后台；用户称 ad-internal，核实的仓库名为 internal-ad。
+- [客户端](references/client-mobile.md)：跨端契约、生命周期、模型与验证边界。
+- [RN](references/repositories/rnsuperhigh.md)、[Android](references/repositories/android-super-class.md)、
+  [iOS](references/repositories/ios-2.md)、[HarmonyOS](references/repositories/harmony-super-high.md)。
 - [证据维护与扩展](references/evidence-and-extension.md)：新规则的取样和升级方式。
 - [场景评估](evals/evals.json)与[验证记录](evals/validation.md)。
 
