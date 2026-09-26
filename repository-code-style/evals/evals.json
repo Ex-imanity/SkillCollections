@@ -1,0 +1,94 @@
+{
+  "skill_name": "repository-code-style",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "执行 scenarios.md 的 S1。完成 Java 回填统计，保持响应键与计数/游标行为，给出实现草案、采用的范例和最小验证。",
+      "expected_output": "采用邻近小结果对象，将稳定的协议键留在边界 Map，保留计数位置及包括跳过/失败行在内的游标推进，不新增框架。",
+      "files": ["evals/fixtures/scenarios.md"],
+      "expectations": [
+        "引用 ImportBatchService 和 ImportBatchResult 的局部模式",
+        "用具名字段和职责方法表达计数，保留六个响应键及 LinkedHashMap 边界",
+        "说明计数和游标位置保持，包括末行失败与空批次",
+        "不宣称执行过编译或业务集成验证"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "执行 scenarios.md 的 S2。新增 nullable Long 的产品线支持判断；给出实现草案、冲突取舍和最小验证。",
+      "expected_output": "遵守模块规范，复用现有 ProductLine.fromCode 和 MAIN/CHILD，解释为何历史 primitive int 样本不适用，保留 null 和未知值行为。",
+      "files": ["evals/fixtures/scenarios.md"],
+      "expectations": [
+        "复用现有 ProductLine 枚举而非重新创建数字常量或映射",
+        "以当前模块规范及近邻代码解决旧作者样本冲突",
+        "null、OTHER 与未知值返回 false，避免隐式拆箱",
+        "不把该选择推广成全部作者或全部仓库的统一写法"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "执行 scenarios.md 的 S3。该合成模块没有专属仓库资料，新增未知状态标签，给出实现草案、采用的范例和最小验证。",
+      "expected_output": "依据现有 frontend 模块规范与近邻实现添加 nullish fallback，保持原标签、格式及依赖，不套用 Java 规则，不因资料缺失停下任务。",
+      "files": ["evals/fixtures/scenarios.md"],
+      "expectations": [
+        "引用本地 AGENTS 及 CategoryView/OwnerView 范例",
+        "仅添加 ?? 'Unknown'，保留 open/closed 标签",
+        "不创建 Java 式对象、枚举体系、新依赖或虚构前端规范",
+        "明确这是模拟源码草案，不声称真实仓库验证通过"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "查看 discovery fixture 的仓库文件，执行 README 中的 S4。自行发现适用规范，不预先提供范例路径。返回实现草案、实际发现的规则和最小验证。",
+      "expected_output": "发现隐藏的团队规则，用 Objects.nonNull 实现新增判空方法，不照搬近邻的直接 null 比较，不改旧方法。",
+      "files": ["evals/fixtures/discovery/README.md"],
+      "expectations": [
+        "主动读取 .cursorrules 并确认其团队/跟踪范围",
+        "新增方法遵守规则，legacyHasValue 保持原状",
+        "不因没有 AGENTS.md 断言仓库没有规范"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "查看 discovery fixture 的仓库文件，执行 README 中的 S5。页面历史名称是 home-page panel；用已有枚举替换裸数值且保持行为。",
+      "expected_output": "读 PageType 的实际定义，选择 code 为 17 的 LEGACY_HOME_PANEL，不按相近名字选择 code 为 14 的 HOMEPAGE_COLUMN_FEED。",
+      "files": ["evals/fixtures/discovery/README.md"],
+      "expectations": [
+        "核对枚举 code，返回值仍为 17",
+        "明确名称相近不代表数值或业务映射相同"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "查看 discovery fixture 的仓库文件，执行 README 中的 S6。内部封装回填统计，保持对外协议；返回实现草案与兼容性检查。",
+      "expected_output": "发现序列化规则，内部对象仍转换为原 Map 边界，保持数字 lastNumber、键名和顺序，不修改全局序列化配置。",
+      "files": ["evals/fixtures/discovery/README.md"],
+      "expectations": [
+        "引用 wire-contract.md 的 bean/Map 类型差异",
+        "保留 Map 边界及 count/lastNumber 字段和 JSON 数字类型",
+        "不声称实际运行过虚构序列化器"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "执行 frontend-scenarios.md 的 S7，给出局部实现草案、证据与冲突取舍及最小验证。",
+      "expected_output": "沿用当前产品 Options API 和现有 API，按业务 envelope 消费，保留 code=0、字符串ID、total=0与产品边界。",
+      "files": ["evals/fixtures/frontend-scenarios.md"],
+      "expectations": ["沿用现有请求封装，不猜测再次解包", "保留0与字符串ID", "不迁移框架或将单产品功能搬入base", "未运行项明确说明"]
+    },
+    {
+      "id": 8,
+      "prompt": "执行 frontend-scenarios.md 的 S8，给出model方法草案、契约依据和最小验证。",
+      "expected_output": "沿用service，将current映射为pageIndex，保留status=0和published=false，按直接数据响应适配table，接入已有loading/error。",
+      "files": ["evals/fixtures/frontend-scenarios.md"],
+      "expectations": ["复用请求及接口类型", "保留0/false且正确映射分页", "不套H5 envelope或新增请求框架", "不宣称完整model或类型检查已验证"]
+    },
+    {
+      "id": 9,
+      "prompt": "执行 frontend-scenarios.md 的 S9，增加占位图显示并说明历史写法冲突和最小验证。",
+      "expected_output": "展示值由computed派生，保存仍提交原始空字符串，遵守当前格式配置，不照搬mounted回写。",
+      "files": ["evals/fixtures/frontend-scenarios.md"],
+      "expectations": ["展示fallback不污染原始值", "保留空字符串清空协议", "当前配置优先于历史作者tabs", "不改无关模板或框架"]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# Fixture team rules
+
+Use Objects.isNull/Objects.nonNull for object null checks in newly changed code.
+Keep untouched legacy code unchanged. Preserve numeric business mappings and JSON
+wire contracts. Keep the existing local method/field naming style.

@@ -51,6 +51,11 @@
 │   ├── SKILL.md
 │   ├── scripts/
 │   └── tests/
+├── repository-code-style/
+│   ├── README.md
+│   ├── SKILL.md
+│   ├── evals/
+│   └── references/
 ├── whitebox-op-combo/
 │   ├── README.md
 │   ├── SKILL.md
@@ -74,6 +79,7 @@
 | `dify-dsl-generator` | 1.0.0 | 生成、重构或评审 Dify workflow/chatflow/agent DSL | 把业务需求、后端接口、规则系统或已有 YAML 转为可导入的 Dify DSL | 先冻结输入输出和应用形态，再写 YAML；优先复用 `references/` 和已有示例中的验证模式；输出前检查节点类型、变量路径、edge 和结构化输出 |
 | `gapm-mcp-recovery` | 1.0.0 | 诊断并恢复 Codex 中的 GAPM MCP；当前对话未注入 Tool 时可通过 App Server bridge 直接调用 | GAPM Tool 缺失、`invalid_client` / `authentication_required`、`serverInfo` 为空、日志排查疑似需要重启 Codex | 依赖 Codex CLI、Python 3.9+ 和内部网络；OAuth 过期仍需浏览器授权；参数及原始日志只能放在 `.local/`；查询无结果不能断言未调用 |
 | `internal-api-cookie-auth` | 1.0.0 | 为受支持内部 API 获取短期 CAS Cookie，并规范认证失败后的处理 | Internal AD/UOS、Athena、Compass 的接口开发与排障，Cookie 缺失或 HTTP 401 | 仅限允许的内部域名；不输出或持久化凭证；403 视为可能的权限问题，禁止盲目重试写操作 |
+| `repository-code-style` | 1.1.0 | 依据目标模块同类实现约束编码风格，包含后端 Java、C 端 H5、B 端 Web 条件偏好和七个仓库的提交证据 | 已有仓库的实现、修复、重构、Review；减少硬编码，保持对象、请求与状态惯例 | 一个流程入口，领域资料按需读取；历史作者样本须核对适用范围，保留外部契约 |
 | `whitebox-op-combo` | 1.0.0 | 白盒操作组合分析：原子化用户操作，按读写集组合正向/异常顺序，映射代码路径定位缺陷、判定服务端/客户端归属并产出用例 | 能看到代码、功能有多个操作共享同一对象；关注操作顺序、退出重进、异步落库/缓存、流式中断、多端不一致 | 原子表是唯一必做人工检查点；覆盖度由 `scripts/op_matrix.py` 在已声明的读写点/原子上计算缺口（孤儿写入点、替换漏写字段、隐式动作清单）闭环，读写点找全与需求映射仍需人工；结论须引用代码行并区分已确认/潜在；`cases.md` 兼容 case-lite 格式，写回需授权 |
 
 ## 各 Skill 简介
@@ -212,6 +218,17 @@ HTTP 403 应视为可能的权限问题，而不是"刷新 Cookie 就能解决"�
 
 产物落在 `whitebox-output/{slug}/`；`analysis.md` 给出带代码引用的结论、定级与服务端/客户端归属，
 `cases.md` 与 `case-lite` 的 `full.md` 格式兼容。详见 `whitebox-op-combo/README.md`。
+
+### repository-code-style
+
+`repository-code-style` 在编辑前选择目标模块的同类范例，在完成前检查本次 diff 的
+硬编码、对象职责、命名、分层和兼容性。它结合仓库显式规范、转述的 Review 及
+ai-search-platform、user-experience、linglong、gaotu-community，以及前端 community、
+mweb、internal-ad 的代表性历史提交，
+区分规范、条件偏好、样本惯例与不应复制的旧代码缺陷。
+
+采用一个 skill 加按需加载的领域/仓库资料；已整理后端 Java、C 端 H5 和 B 端 Web，
+客户端后续按真实证据扩展。详细边界与验证记录见 [README](repository-code-style/README.md)。
 
 ## 安装与使用建议
 
