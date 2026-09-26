@@ -23,6 +23,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from _state_probe import (  # noqa: E402
     configure_utf8_stdout,
+    resolve_start,
     find_mrs_dirs,
     newest_mtime,
     ledger_root_for,
@@ -73,14 +74,20 @@ def stale_reminder(mrs_dir: Path, start: Path | None = None) -> str | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Non-blocking MRS staleness reminder")
-    parser.add_argument("start", nargs="?", default=".", help="Starting directory (default: CWD)")
+    parser.add_argument(
+        "start",
+        nargs="?",
+        default=None,
+        help="Starting directory (default: CWD; if no MRS is found there, "
+             "$GROK_WORKSPACE_ROOT then $CLAUDE_PROJECT_DIR)",
+    )
     parser.add_argument("--hook", default=None, help="Hook event name; forces exit 0 on any error")
     parser.add_argument("--tag", default=None, help="Ignored; detection marker embedded by install_hooks.py")
     args = parser.parse_args()
     configure_utf8_stdout()
 
     try:
-        start = Path(args.start).resolve()
+        start = resolve_start(args.start)
         if not start.is_dir():
             return 0
         reminders = [r for mrs in find_mrs_dirs(start) if (r := stale_reminder(mrs, start))]

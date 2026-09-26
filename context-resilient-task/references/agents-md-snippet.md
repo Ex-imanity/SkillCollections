@@ -57,7 +57,7 @@ Tier 0 文件存在但格式不合规时，**修复该文件，绝不重新初�
 
 ## 自动上下文恢复（非 Claude Code agent）
 
-Claude Code 通过 hooks 自动恢复；其他 agent（Codex、Gemini CLI 等）用以下脚本达到同样效果。`<skill-root>` 为 context-resilient-task skill 的安装路径，脚本无第三方依赖、只读、无 MRS 时静默。
+Claude Code 通过 hooks 自动恢复；其他 agent（Codex、Grok、Gemini CLI 等）用以下脚本达到同样效果。`<skill-root>` 为 context-resilient-task skill 的安装路径，脚本无第三方依赖、只读、无 MRS 时静默。
 
 - **会话开始 / `/clear` 后 —— 必须先恢复**：运行
   `python <skill-root>/scripts/restore_context.py`
@@ -72,5 +72,7 @@ Claude Code 通过 hooks 自动恢复；其他 agent（Codex、Gemini CLI 等）
 以上"会话开始运行脚本"是给模型的指令（guidance），依赖模型遵守，无需 agent 原生 hook 支持，任何 agent 通用。
 
 Codex 用户可运行 `python <skill-root>/scripts/install_hooks.py --codex`，将 `SessionStart`、`PreCompact`、`Stop` 安装到当前项目 `.codex/hooks.json`，实现强制触发（新增定义需信任/审核）。**不要**用 `~/.codex/config.toml` 的 `notify`：它仅在 `agent-turn-complete`（回合结束后）触发，且无法在会话开始恢复。
+
+Grok 用户可运行 `python <skill-root>/scripts/install_hooks.py --grok`，写入 `~/.grok/hooks/context-resilient-task.json`（项目级加 `--project`）。Grok 的 SessionStart/PreCompact **不会**把 hook stdout 注入模型上下文，因此仍须遵守上面的会话开始恢复指令；Stop 上的 `gate_check.py` 仍会运行。详见 `references/hooks-setup.md`。
 
 Claude Code 用户改用一键安装：`python <skill-root>/scripts/install_hooks.py`（详见 `references/hooks-setup.md`）。

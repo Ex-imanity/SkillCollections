@@ -39,5 +39,6 @@ venv/
 Review/
 context-resilient-task/docs/
 docs/plans/
+docs/superpowers/
 .test-mrs-scripts/
 .test-discovery/

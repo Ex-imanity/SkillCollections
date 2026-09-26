@@ -14,6 +14,14 @@
 条目只写**真实的修复与变更内容**。不写评审过程、评审结论、findings 编号或"已修/已清"这类过程状态 ——
 读者要的是"这个版本改了什么"，评审记录属于 `Review/` 与 commit message。
 
+## 1.8.0 - 2026-09-27
+
+**Grok hook 一键安装**
+
+- `restore_context.py`、`precompact_digest.py`、`gate_check.py` 未传起始目录时，先从当前目录查找 MRS；找不到时依次回退到 `$GROK_WORKSPACE_ROOT`、`$CLAUDE_PROJECT_DIR`。当前目录有 MRS 时仍以当前目录为准，切进工作树后的检查范围不受会话初始目录影响。
+- `install_hooks.py` 新增 `--grok`：写入 `~/.grok/hooks/context-resilient-task.json`（`--project` 时写入 `./.grok/hooks/...`）；尊重 `$GROK_HOME`；每条命令 `timeout: 30`；卸载清空专用文件时删除该文件。
+- 文档补充 Grok 安装说明：Grok 不把 SessionStart/PreCompact 的 hook stdout 注入模型上下文，Stop 的纯文本输出也只表示允许结束、不会交给模型，需配合 AGENTS.md 自动恢复指令；Grok 默认兼容扫描 Claude hooks 并对相同 handler 去重。
+
 ## 1.7.0 - 2026-09-27
 
 **兼容 superpowers ≥ 5.0 的计划产出位置**

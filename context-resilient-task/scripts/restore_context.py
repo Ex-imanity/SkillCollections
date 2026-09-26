@@ -26,6 +26,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from _state_probe import (  # noqa: E402
     configure_utf8_stdout,
+    resolve_start,
     find_mrs_dirs,
     is_meaningful,
     list_artifacts,
@@ -222,7 +223,13 @@ def build_output(start: Path, as_json: bool, mrs: Path | None = None) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Reconstruct task state from the on-disk MRS")
-    parser.add_argument("start", nargs="?", default=".", help="Starting directory (default: CWD)")
+    parser.add_argument(
+        "start",
+        nargs="?",
+        default=None,
+        help="Starting directory (default: CWD; if no MRS is found there, "
+             "$GROK_WORKSPACE_ROOT then $CLAUDE_PROJECT_DIR)",
+    )
     parser.add_argument("--hook", default=None, help="Hook event name; forces exit 0 on any error")
     parser.add_argument("--json", action="store_true", help="Emit JSON for agent consumption")
     parser.add_argument("--mrs", default=None, help="Restore this MRS directory instead of discovering one")
@@ -231,7 +238,7 @@ def main() -> int:
     configure_utf8_stdout()
 
     try:
-        start = Path(args.start).resolve()
+        start = resolve_start(args.start)
         if not start.is_dir():
             return 0 if args.hook else 1
         mrs = Path(args.mrs).resolve() if args.mrs else None

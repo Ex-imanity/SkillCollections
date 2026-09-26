@@ -10,6 +10,7 @@ run globally and stay silent when there is nothing to report.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import re
@@ -27,6 +28,7 @@ __all__ = [
     "configure_utf8_stdout",
     "find_mrs_dirs",
     "work_root_for",
+    "resolve_start",
     "ledger_root_for",
     "read_mrs_metadata",
     "TIER0",
@@ -183,6 +185,35 @@ def configure_utf8_stdout() -> None:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
+
+
+# Workspace roots hook runners export. Grok sets both for every hook; Claude
+# Code sets CLAUDE_PROJECT_DIR to the project the session was opened in.
+WORKSPACE_ENV_VARS = ("GROK_WORKSPACE_ROOT", "CLAUDE_PROJECT_DIR")
+
+
+def resolve_start(explicit: str | None) -> Path:
+    """Directory a hook script starts MRS discovery from.
+
+    An explicit argument always wins. Otherwise the current directory is used
+    first, because it is where the agent is working (a worktree the session
+    moved into may differ from the project it was opened in). Only when no MRS
+    is discoverable from there do the runner's workspace variables apply, for
+    runners that do not spawn hooks inside the workspace.
+    """
+    if explicit is not None:
+        return Path(explicit).resolve()
+    cwd = Path.cwd().resolve()
+    if find_mrs_dirs(cwd):
+        return cwd
+    for name in WORKSPACE_ENV_VARS:
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            continue
+        candidate = Path(raw).expanduser()
+        if candidate.is_dir() and find_mrs_dirs(candidate.resolve()):
+            return candidate.resolve()
+    return cwd
 
 
 def human_time(mtime: float | None) -> str:

@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
-"""Install / remove the context-resilient-task auto-hooks for Claude Code or Codex.
+"""Install / remove the context-resilient-task auto-hooks for Claude Code, Codex, or Grok.
 
 Registers three non-blocking hooks that call this skill's own scripts:
   SessionStart -> restore_context.py    (rehydrate task state from the MRS)
   PreCompact   -> precompact_digest.py  (surface survival digest before compaction)
   Stop         -> gate_check.py         (remind to flush state if the tree drifted)
 
-All three no-op silently when no `.task-state/` exists. Claude Code uses
-settings.json; Codex uses a project-local .codex/hooks.json.
+All three no-op silently when no `.task-state/` exists.
+
+Targets:
+  Claude Code  settings.json  (default: ~/.claude/settings.json)
+  Codex        project-local  .codex/hooks.json
+  Grok         ~/.grok/hooks/context-resilient-task.json  (or project .grok/hooks/)
 
 Usage:
     python install_hooks.py                 # install into ~/.claude/settings.json (global)
     python install_hooks.py --project       # install into ./.claude/settings.json
     python install_hooks.py --settings PATH # install into an explicit file
-    python install_hooks.py --codex          # install into ./.codex/hooks.json
+    python install_hooks.py --codex         # install into ./.codex/hooks.json
+    python install_hooks.py --grok          # install into ~/.grok/hooks/context-resilient-task.json
+    python install_hooks.py --grok --project  # install into ./.grok/hooks/context-resilient-task.json
     python install_hooks.py --codex --dry-run
-    python install_hooks.py --codex --uninstall
+    python install_hooks.py --grok --uninstall
     python install_hooks.py --uninstall     # remove our hooks (respects the same target flags)
     python install_hooks.py --dry-run       # print the resulting JSON, write nothing
 """
@@ -34,12 +40,19 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # find/replace/remove our own hooks regardless of interpreter or install path.
 TOKEN = "crt-auto-hook:"
 
+# Dedicated Grok hook filename (one file under hooks/ so uninstall can drop it).
+GROK_HOOK_FILENAME = "context-resilient-task.json"
+
 # event -> script filename
 EVENT_SCRIPTS = {
     "SessionStart": "restore_context.py",
     "PreCompact": "precompact_digest.py",
     "Stop": "gate_check.py",
 }
+
+# Grok's default observe-hook timeout is 5s; MRS restore can exceed that on
+# large multi-MRS trees. Claude/Codex are less strict; 30s is still safe.
+GROK_HOOK_TIMEOUT_S = 30
 
 
 def launcher() -> str:
@@ -68,18 +81,33 @@ def is_ours(command: str) -> bool:
     return TOKEN in command
 
 
+def grok_home() -> Path:
+    raw = os.environ.get("GROK_HOME") or str(Path.home() / ".grok")
+    return Path(raw).expanduser().resolve()
+
+
 def resolve_target(args: argparse.Namespace) -> Path:
     if args.settings:
         return Path(args.settings).expanduser().resolve()
+    if args.codex and args.grok:
+        raise SystemExit("Refusing to combine --codex and --grok; pick one target")
     if args.codex:
         return (Path.cwd() / ".codex" / "hooks.json").resolve()
+    if args.grok:
+        if args.project:
+            return (Path.cwd() / ".grok" / "hooks" / GROK_HOOK_FILENAME).resolve()
+        return (grok_home() / "hooks" / GROK_HOOK_FILENAME).resolve()
     if args.project:
         return (Path.cwd() / ".claude" / "settings.json").resolve()
     return (Path.home() / ".claude" / "settings.json").resolve()
 
 
 def target_name(args: argparse.Namespace) -> str:
-    return "Codex" if args.codex else "Claude Code"
+    if args.codex:
+        return "Codex"
+    if args.grok:
+        return "Grok"
+    return "Claude Code"
 
 
 def load_settings(path: Path) -> dict:
@@ -127,10 +155,13 @@ def strip_ours(hooks: dict) -> None:
             hooks.pop(event, None)
 
 
-def add_ours(hooks: dict) -> None:
+def add_ours(hooks: dict, *, grok: bool = False) -> None:
     """Append a fresh group per event (call after strip_ours for idempotency)."""
     for event, script in EVENT_SCRIPTS.items():
-        group = {"hooks": [{"type": "command", "command": build_command(event, script)}]}
+        entry: dict = {"type": "command", "command": build_command(event, script)}
+        if grok:
+            entry["timeout"] = GROK_HOOK_TIMEOUT_S
+        group = {"hooks": [entry]}
         hooks.setdefault(event, [])
         if not isinstance(hooks[event], list):
             raise SystemExit(f"Refusing to touch settings: hooks.{event} is not a list")
@@ -139,11 +170,24 @@ def add_ours(hooks: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Install context-resilient-task auto-hooks")
-    scope = parser.add_mutually_exclusive_group()
-    scope.add_argument("--codex", action="store_true", help="Target ./.codex/hooks.json")
-    scope.add_argument("--project", action="store_true", help="Target ./.claude/settings.json")
-    scope.add_argument("--global", dest="global_", action="store_true", help="Target ~/.claude/settings.json (default)")
-    parser.add_argument("--settings", default=None, help="Explicit settings.json path")
+    parser.add_argument("--codex", action="store_true", help="Target ./.codex/hooks.json")
+    parser.add_argument(
+        "--grok",
+        action="store_true",
+        help="Target ~/.grok/hooks/context-resilient-task.json (or ./.grok/hooks/ with --project)",
+    )
+    parser.add_argument(
+        "--project",
+        action="store_true",
+        help="Project scope: ./.claude/settings.json, or with --grok ./.grok/hooks/...",
+    )
+    parser.add_argument(
+        "--global",
+        dest="global_",
+        action="store_true",
+        help="Global scope (default for Claude Code / Grok)",
+    )
+    parser.add_argument("--settings", default=None, help="Explicit settings/hooks JSON path")
     parser.add_argument("--uninstall", action="store_true", help="Remove our hooks instead of adding")
     parser.add_argument("--dry-run", action="store_true", help="Print the result, write nothing")
     args = parser.parse_args()
@@ -157,10 +201,23 @@ def main() -> int:
     strip_ours(hooks)  # always clear prior copies first (idempotent refresh)
     action = "Uninstalled"
     if not args.uninstall:
-        add_ours(hooks)
+        add_ours(hooks, grok=bool(args.grok))
         action = "Installed"
     if not hooks:
         settings.pop("hooks", None)
+
+    # Dedicated Grok hook file: drop the file entirely when nothing remains.
+    dedicated_grok_file = args.grok and not args.settings
+    if (
+        args.uninstall
+        and dedicated_grok_file
+        and not settings
+        and target.exists()
+        and not args.dry_run
+    ):
+        target.unlink()
+        print(f"{action} context-resilient-task {target_name(args)} hooks -> {target} (removed empty file)")
+        return 0
 
     rendered = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
 
@@ -179,6 +236,12 @@ def main() -> int:
         for event, script in EVENT_SCRIPTS.items():
             print(f"  {event:<13} -> {script}")
         print("\nHooks no-op silently when no .task-state/ exists. Remove with: --uninstall")
+        if args.grok:
+            print(
+                "Note: Grok does not inject SessionStart/PreCompact stdout into model "
+                "context, and plain-text Stop output only allows the stop (see "
+                "references/hooks-setup.md). Keep the AGENTS.md auto-recovery block."
+            )
     return 0
 
 

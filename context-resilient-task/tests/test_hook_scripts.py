@@ -29,12 +29,18 @@ class HookScriptsTest(unittest.TestCase):
             shutil.rmtree(self.work_root)
 
     # -- helpers -------------------------------------------------------------
-    def run_script(self, name, *args, cwd=None, check=True):
+    def run_script(self, name, *args, cwd=None, check=True, env=None):
+        # Hook runners export workspace roots; strip the ones inherited from
+        # the session running the tests so discovery stays isolated.
+        child_env = {k: v for k, v in os.environ.items()
+                     if k not in ("GROK_WORKSPACE_ROOT", "CLAUDE_PROJECT_DIR")}
+        child_env.update(env or {})
         result = subprocess.run(
             [PY, str(SCRIPTS / name), *map(str, args)],
             text=True,
             capture_output=True,
             cwd=str(cwd) if cwd else None,
+            env=child_env,
             check=False,
         )
         if check and result.returncode != 0:
@@ -399,6 +405,32 @@ class HookScriptsTest(unittest.TestCase):
             Path.stat, Path.is_file = real_stat, original_is_file
         self.assertEqual([item["plan"] for item in ledgers], ["docs/superpowers/plans/kept.md"])
 
+    def test_workspace_env_is_a_fallback_when_cwd_has_no_mrs(self):
+        project = self.work_root / "project"
+        project.mkdir()
+        self.init_mrs(project / ".task-state", goal="Env fallback task")
+        elsewhere = self.work_root / "elsewhere"
+        elsewhere.mkdir()
+        for var in ("GROK_WORKSPACE_ROOT", "CLAUDE_PROJECT_DIR"):
+            out = self.run_script("restore_context.py", "--hook", "x", cwd=elsewhere, env={var: str(project)}).stdout
+            self.assertIn("Env fallback task", out, var)
+            digest = self.run_script("precompact_digest.py", "--hook", "x", cwd=elsewhere, env={var: str(project)}).stdout
+            self.assertIn("Env fallback task", digest, var)
+
+        # The current directory wins when it has its own MRS.
+        other = self.work_root / "other"
+        other.mkdir()
+        self.init_mrs(other / ".task-state", goal="Cwd task")
+        out = self.run_script("restore_context.py", cwd=other, env={"CLAUDE_PROJECT_DIR": str(project)}).stdout
+        self.assertIn("Cwd task", out)
+        self.assertNotIn("Env fallback task", out)
+
+        # An explicit start argument wins over both; a bogus variable stays silent.
+        out = self.run_script("restore_context.py", elsewhere, cwd=other, env={"GROK_WORKSPACE_ROOT": str(project)}).stdout
+        self.assertEqual(out.strip(), "")
+        out = self.run_script("gate_check.py", cwd=elsewhere, env={"GROK_WORKSPACE_ROOT": str(elsewhere / "missing")}).stdout
+        self.assertEqual(out.strip(), "")
+
     def test_gate_silent_when_completed(self):
         project = self.make_git_project()
         mrs = project / ".task-state"
@@ -469,6 +501,43 @@ class HookScriptsTest(unittest.TestCase):
 
         data = json.loads(hooks_file.read_text(encoding="utf-8"))
         self.assertEqual(data["hooks"], {"Stop": [{"hooks": [{"type": "command", "command": "echo user"}]}]})
+
+    def test_install_grok_project_merges_and_is_idempotent(self):
+        project = self.work_root / "grok-project"
+        hooks_file = project / ".grok" / "hooks" / "context-resilient-task.json"
+        hooks_file.parent.mkdir(parents=True)
+        hooks_file.write_text(
+            json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo user"}]}]}}),
+            encoding="utf-8",
+        )
+
+        self.run_script("install_hooks.py", "--grok", "--project", cwd=project)
+        self.run_script("install_hooks.py", "--grok", "--project", cwd=project)
+
+        data = json.loads(hooks_file.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(data["hooks"]), ["PreCompact", "SessionStart", "Stop"])
+        self.assertEqual(len(data["hooks"]["SessionStart"]), 1)
+        self.assertEqual(len(data["hooks"]["Stop"]), 2)
+        entry = data["hooks"]["SessionStart"][0]["hooks"][0]
+        self.assertIn("crt-auto-hook:SessionStart", entry["command"])
+        self.assertIn("restore_context.py", entry["command"])
+        self.assertEqual(entry.get("timeout"), 30)
+
+    def test_uninstall_grok_removes_dedicated_file_when_empty(self):
+        project = self.work_root / "grok-empty"
+        project.mkdir()
+        self.run_script("install_hooks.py", "--grok", "--project", cwd=project)
+        hooks_file = project / ".grok" / "hooks" / "context-resilient-task.json"
+        self.assertTrue(hooks_file.exists())
+        self.run_script("install_hooks.py", "--grok", "--project", "--uninstall", cwd=project)
+        self.assertFalse(hooks_file.exists())
+
+    def test_install_refuses_codex_and_grok_together(self):
+        result = self.run_script(
+            "install_hooks.py", "--codex", "--grok", check=False, cwd=self.work_root
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Refusing to combine", result.stderr + result.stdout)
 
     def test_install_refuses_invalid_json(self):
         settings = self.work_root / "settings.json"

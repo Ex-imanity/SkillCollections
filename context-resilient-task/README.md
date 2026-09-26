@@ -415,9 +415,37 @@ python <skill-root>/scripts/install_hooks.py --codex --uninstall
 `crt-auto-hook:<Event>` 标记的自身条目。它安装 `SessionStart`、`PreCompact` 和
 `Stop` 三个原生 hook；Codex 会在首次执行前要求信任/审核新增定义。
 
+### Grok —— 一键安装
+
+```bash
+# 全局(推荐):写入 ~/.grok/hooks/context-resilient-task.json
+python <skill-root>/scripts/install_hooks.py --grok
+
+# 项目级:写入 ./.grok/hooks/context-resilient-task.json(需 /hooks-trust)
+python <skill-root>/scripts/install_hooks.py --grok --project
+
+# 预览 / 卸载
+python <skill-root>/scripts/install_hooks.py --grok --dry-run
+python <skill-root>/scripts/install_hooks.py --grok --uninstall
+```
+
+hook 脚本默认从当前目录查找 MRS；找不到时依次回退到 `$GROK_WORKSPACE_ROOT`、`$CLAUDE_PROJECT_DIR`（Grok 会为每个 hook 设置这两个变量），显式传入的目录始终优先。
+
+安装器写入独立 hook 文件、幂等、原子写入，并为每条命令设置 `timeout: 30`
+（Grok 默认观察类 hook 超时仅 5s）。卸载只移除带 `crt-auto-hook:` 的条目；
+专用文件变空时会删除该文件。
+
+**注意：** Grok 的 SessionStart / PreCompact **不会**把 hook stdout 注入模型
+上下文（与 Claude Code 不同）。脚本仍会执行，但模型不会自动读到恢复摘要 ——
+请同时保留 AGENTS.md 的自动恢复指令，或在新会话 / `/clear` 后让 agent 跑
+`restore_context.py`。Stop 上的 `gate_check.py` 会运行，但 Grok 只把 Stop 的 JSON 输出当作决策，
+纯文本提醒不会交给模型。Grok 默认也会扫描 `~/.claude/settings.json` 里的 hooks
+（`[compat.claude] hooks = true`），并对相同的 handler 去重；两边都装时 `grok inspect`
+里每个 CRT hook 只出现一次。
+
 ### 其他 Agent(Gemini 等)
 
-它们通过指令文件接同一批脚本:把 [`references/agents-md-snippet.md`](references/agents-md-snippet.md) 里的**自动上下文恢复**段落复制进项目 `AGENTS.md`(或 `GEMINI.md`),指示 agent 在**会话开始**跑 `restore_context.py`、**结束前**跑 `gate_check.py`。Codex 请使用上面的原生安装器；**不要**用 `notify`(它只在回合结束后触发)。
+它们通过指令文件接同一批脚本:把 [`references/agents-md-snippet.md`](references/agents-md-snippet.md) 里的**自动上下文恢复**段落复制进项目 `AGENTS.md`(或 `GEMINI.md`),指示 agent 在**会话开始**跑 `restore_context.py`、**结束前**跑 `gate_check.py`。Codex / Grok 请使用上面的原生安装器；Codex **不要**用 `notify`(它只在回合结束后触发)。
 
 ### 跨平台
 
@@ -554,7 +582,7 @@ skill 读取 `task_state.md`，从 `Active Todos` 和 `Next Action` 中还原工
 | [`scripts/restore_context.py`](scripts/restore_context.py) | 自动 hook:会话开始/`/clear` 后重建任务状态 |
 | [`scripts/precompact_digest.py`](scripts/precompact_digest.py) | 自动 hook:压缩前打印生存摘要 |
 | [`scripts/gate_check.py`](scripts/gate_check.py) | 自动 hook:结束前漂移提醒(非阻塞) |
-| [`scripts/install_hooks.py`](scripts/install_hooks.py) | 安装 Claude Code 或 Codex 的上述 hook |
+| [`scripts/install_hooks.py`](scripts/install_hooks.py) | 安装 Claude Code / Codex / Grok 的上述 hook |
 
 ---
 

@@ -92,6 +92,58 @@ uses atomic writes. It installs `SessionStart`, `PreCompact`, and `Stop`; Codex
 will request trust approval before executing newly added definitions. Moving the
 skill requires re-running the installer so the embedded absolute paths refresh.
 
+## Grok
+
+Grok discovers hooks from `~/.grok/hooks/*.json` (global, always trusted) and
+`<project>/.grok/hooks/*.json` (project, requires folder trust). Use `--grok`:
+
+```bash
+SKILL=~/.grok/skills/context-resilient-task   # or wherever this skill lives
+
+# Global (recommended) — ~/.grok/hooks/context-resilient-task.json
+python3 "$SKILL/scripts/install_hooks.py" --grok
+
+# Project-scoped — ./.grok/hooks/context-resilient-task.json
+python3 "$SKILL/scripts/install_hooks.py" --grok --project
+
+# Preview / uninstall
+python3 "$SKILL/scripts/install_hooks.py" --grok --dry-run
+python3 "$SKILL/scripts/install_hooks.py" --grok --uninstall
+```
+
+The installer writes a dedicated hook file (not merged into unrelated Grok
+config), is idempotent, atomic, and sets `timeout: 30` on each command (Grok's
+default observe-hook timeout is 5s). Uninstall removes only our
+`crt-auto-hook:` entries; if the dedicated file becomes empty it is deleted.
+`$GROK_HOME` is honored when set. The hook scripts start discovery from the
+current directory; when no MRS is found there they fall back to
+`$GROK_WORKSPACE_ROOT`, then `$CLAUDE_PROJECT_DIR`, which Grok sets for every
+hook, so the hooks still find the project if Grok spawns them elsewhere. Project hooks need `/hooks-trust` (or
+`--trust`) once per repo.
+
+**Grok also scans Claude Code hooks** when `[compat.claude] hooks = true`
+(default), so a Claude Code install already reaches Grok. Grok deduplicates
+identical handlers across sources; with both installs present, `grok inspect`
+lists each CRT hook once, from `~/.grok/hooks`. Check `grok inspect` after
+installing; native `--grok` is the
+right choice for Grok-only setups.
+
+**Context-injection limit:** Grok treats `SessionStart` / `PreCompact` as
+passive events and **does not inject hook stdout into the model context** (see
+Grok Hooks guide, Passive Hooks). The scripts still run (useful for side
+effects and scrollback), but the model will not automatically "see" the
+reconstructed state the way Claude Code does. Mitigations:
+
+1. Keep the AGENTS.md auto-recovery block so the model runs `restore_context.py`
+   at session start when needed.
+2. `Stop` → `gate_check.py` still runs, but Grok reads Stop stdout only as a JSON
+   decision; plain-text output means "allow the stop", so the reminder is not
+   shown to the model. The skill keeps it that way on purpose: returning
+   `additionalContext` or `block` would keep the agent working for another
+   round, which contradicts the non-blocking design.
+3. After `/clear` or a new session, you can still ask the agent to restore, or
+   run `python <skill-root>/scripts/restore_context.py` yourself.
+
 ## Gemini CLI and other agents
 
 The scripts are plain, dependency-free Python that only read the MRS and print to
@@ -106,9 +158,9 @@ project's `AGENTS.md` (or `GEMINI.md`). It instructs the agent to run
 ending**. This is guidance the model follows, not enforced execution — but it
 needs no agent-specific hook support and degrades gracefully.
 
-Codex users should use the native installer above. Do **not** use Codex's
-`notify` program for this: it fires only on `agent-turn-complete` (post-turn)
-and cannot restore context at session start.
+Codex and Grok users should use the native installers above. Do **not** use
+Codex's `notify` program for this: it fires only on `agent-turn-complete`
+(post-turn) and cannot restore context at session start.
 
 ## Design choices
 

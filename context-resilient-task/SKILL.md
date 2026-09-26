@@ -1,6 +1,6 @@
 ---
 name: context-resilient-task
-version: 1.7.0
+version: 1.8.0
 description: Context-resilient task management via a filesystem Minimum Recovery Set (MRS in .task-state/). Reconstructs task state from on-disk artifacts so work survives /clear, session interruption, agent switches, and context-window loss. Use this skill whenever the user mentions multi-phase tasks, multi-session work, cross-session recovery, task state restoration, MRS, .task-state, lost context, hallucinated todos, forgotten work, 任务状态恢复, 跨会话任务, 多会话开发, 上下文丢失, /clear 后继续, 任务恢复, or asks the agent to remember a task across sessions. Also trigger proactively when starting any task likely to span more than one session, even if the user doesn't explicitly request recovery — the upfront MRS structure prevents context-loss surprises later.
 ---
 
@@ -282,6 +282,7 @@ python <skill-root>/scripts/precompact_digest.py   # survival digest before comp
 python <skill-root>/scripts/gate_check.py          # remind to flush state if the tree drifted
 python <skill-root>/scripts/install_hooks.py       # install into Claude Code settings.json
 python <skill-root>/scripts/install_hooks.py --codex  # install into .codex/hooks.json
+python <skill-root>/scripts/install_hooks.py --grok   # install into ~/.grok/hooks/context-resilient-task.json
 ```
 
 All scripts read templates from `assets/` so the rendered MRS files always match the documented schema. When the snapshot target is `.task-state` or `.task-state-<slug>`, `generate_snapshot.py` scans that directory's parent project for recently modified source files unless `--project-root` is provided.
@@ -307,6 +308,12 @@ scope to one repo, `--uninstall` to remove, `--dry-run` to preview). Merges into
 same three hooks into the current project's `.codex/hooks.json`. Add `--dry-run`
 to preview or `--uninstall` to remove only these hooks. Codex will request trust
 approval for new hook definitions.
+
+**Grok:** `python <skill-root>/scripts/install_hooks.py --grok` installs into
+`~/.grok/hooks/context-resilient-task.json` (add `--project` for
+`./.grok/hooks/...`). Sets a 30s timeout per command. Grok does not inject
+SessionStart/PreCompact stdout into the model context — keep the AGENTS.md
+auto-recovery block so the model still runs `restore_context.py` when needed.
 
 **Codex / Gemini / other agents:** wire the same scripts via `AGENTS.md` — see the
 auto-recovery block in [references/agents-md-snippet.md](references/agents-md-snippet.md).
