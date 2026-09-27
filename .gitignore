@@ -5,6 +5,9 @@
 **/.omc/
 .DS_Store
 **/.DS_Store
+.task-state/
+.task-state-*/
+Review/
 
 # --- Python ---
 __pycache__/
@@ -37,7 +40,7 @@ venv/
 
 # --- Project-local scratch (do not commit) ---
 Review/
-context-resilient-task/docs/
+skills/context-resilient-task/docs/
 docs/plans/
 docs/superpowers/
 .test-mrs-scripts/

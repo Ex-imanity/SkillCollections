@@ -1,0 +1,44 @@
+name: Repository quality
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  conventions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run repository convention tests
+        run: python -m unittest discover -s tests
+      - name: Check patch formatting
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base_ref="refs/remotes/origin/$BASE_REF"
+            if ! git show-ref --verify --quiet "$base_ref"; then
+              git fetch --no-tags origin "refs/heads/$BASE_REF:$base_ref"
+            fi
+            git diff --check "$base_ref...HEAD"
+          elif [ -n "$BEFORE_SHA" ] && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            git diff --check "$BEFORE_SHA...HEAD"
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            git diff --check HEAD^...HEAD
+          else
+            echo "No parent commit available; skipping patch formatting check."
+          fi
