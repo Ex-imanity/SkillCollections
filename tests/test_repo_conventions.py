@@ -19,13 +19,14 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SKILLS_ROOT = REPO_ROOT / "skills"
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 # CHANGELOG 顶部条目：## <version> - <YYYY-MM-DD>
 CHANGELOG_ENTRY_RE = re.compile(r"^##\s+(\d+\.\d+\.\d+)\s+-\s+(\d{4}-\d{2}-\d{2})\s*$", re.M)
 
 
 def skill_dirs() -> list[Path]:
-    return sorted(d for d in REPO_ROOT.iterdir() if d.is_dir() and (d / "SKILL.md").is_file())
+    return sorted(d for d in SKILLS_ROOT.iterdir() if d.is_dir() and (d / "SKILL.md").is_file())
 
 
 def read_frontmatter(skill_md: Path) -> dict[str, str]:
