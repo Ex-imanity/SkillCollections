@@ -76,7 +76,7 @@ python scripts/fetch_cookie.py \
 ```
 
 该探测不携带 Cookie，也不跟随跳转。只有取到可信 CAS 信号——`302/303/307/308` 跳转，
-或(高途常见)响应体 `{"code":700,"data":"<cas 登录 url>"}`——其 CAS 主机与环境匹配
+或(高途常见)响应体 `{"code":700,"data":"<cas 登录 url>"}` 或 `{"errorCode":700,"data":"<cas 登录 url>"}`——其 CAS 主机与环境匹配
 (`cas.baijia.com` 或 `test-cas.baijia.com`)且带唯一 HTTPS `service` 参数时,工具才会
 继续登录。唯一例外是：已知的目标 HTTPS 主机使用同主机、同端口、同路径的 HTTP `service`。
 该 service 必须显式提供；CAS 回跳携带 ticket 时，工具不访问 HTTP 地址，而是仅请求主机、端口、
@@ -98,7 +98,8 @@ Cookie 文件。
 - Compass：生产和 `test-` 测试环境
 
 多数高途内部接口在未登录时返回 HTTP `200`/`401` 且响应体为
-`{"code":700,"data":"https://<cas>/cas/login?service=..."}`，`--discover-cas` 会从
-`data` 的 `service` 参数自动得到服务地址。若只是裸 `401`、HTML 登录页，或 `data`
+`{"code":700,"data":"https://<cas>/cas/login?service=..."}` 或 `{"errorCode":700,"data":"https://<cas>/cas/login?service=..."}`，`--discover-cas` 会从
+`data` 的 `service` 参数自动得到服务地址；将完整且可信的 CAS 登录 URL 传给
+`--cas-service-url` 时 helper 也会先解包。若只是裸 `401`、HTML 登录页，或 `data`
 不指向可信 CAS，则无法自动推断，需显式 `--cas-service-url` 或浏览器回退。`403` 还可能
 代表账号没有权限；即使获取了新 Cookie 后仍返回 `403`，也不应循环刷新或重试写操作。

@@ -101,18 +101,19 @@ def _service_from_cas_login(login_url_value: str, target_url: str) -> str:
 
 
 def _service_from_json_body(body: str, target_url: str) -> Optional[str]:
-    """Extract a CAS service URL from a gaotu ``{"code":700,"data":"..."}`` body.
+    """Extract a CAS service URL from a gaotu auth-error JSON body.
 
     Unauthenticated internal APIs frequently answer with HTTP 200/401 and a JSON
     envelope whose ``data`` field is the full ``.../cas/login?service=...`` URL,
-    rather than issuing an HTTP redirect. ``data`` is validated through the same
+    rather than issuing an HTTP redirect. Different services use either ``code``
+    or ``errorCode`` for the CAS error; ``data`` is validated through the same
     trusted-CAS checks as a ``Location`` redirect before it is trusted.
     """
     try:
         payload = json.loads(body)
     except (json.JSONDecodeError, TypeError):
         return None
-    if not isinstance(payload, dict) or payload.get("code") != 700:
+    if not isinstance(payload, dict) or payload.get("code", payload.get("errorCode")) != 700:
         return None
     data = payload.get("data")
     if not isinstance(data, str) or not data:
@@ -144,8 +145,22 @@ def discover_cas_service(url: str, timeout: float, opener=None) -> str:
     if service:
         return service
     raise ValueError(
-        f"无 Cookie 探测未发现可信 CAS 重定向或 code:700 服务地址（HTTP {status}）"
+        f"无 Cookie 探测未发现可信 CAS 重定向或 code/errorCode:700 服务地址（HTTP {status}）"
     )
+
+
+def normalize_cas_service_url(value: str, target_url: str) -> str:
+    """Accept a service URL, or safely unwrap a trusted CAS login URL."""
+    parsed = urlparse(value)
+    expected_host = expected_cas_host(target_url)
+    if (parsed.hostname or "").lower() != expected_host or parsed.path != "/cas/login":
+        return value
+    services = parse_qs(parsed.query).get("service", [])
+    if len(services) != 1:
+        raise ValueError("CAS 登录 URL 缺少唯一 service 参数")
+    service_url = services[0]
+    cas_login.validate_cas_service_url(target_url, service_url)
+    return service_url
 
 
 def resolve_credentials(
@@ -217,7 +232,7 @@ def main() -> int:
     args = parse_args()
     try:
         target_url = validate_target_url(args.url)
-        cas_service_url = args.cas_service_url
+        cas_service_url = normalize_cas_service_url(args.cas_service_url, target_url) if args.cas_service_url else ""
         if args.discover_cas:
             cas_service_url = discover_cas_service(target_url, args.timeout)
         elif not is_built_in_host(target_url) and not cas_service_url:

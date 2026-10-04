@@ -1,6 +1,6 @@
 ---
 name: internal-api-cookie-auth
-version: 1.0.0
+version: 1.0.1
 description: >-
   Handle Cookie (CAS) authentication for internal HTTPS API calls without asking users to
   manually paste session Cookies. Use this skill whenever a script, service, or API
@@ -41,7 +41,7 @@ paths:
    (HTTPS ordinarily; the narrow HTTP exception below is enforced by the script).
 2. A user-authorized, read-only `--discover-cas` probe gets back a trusted-CAS
    signal — either a `302/303/307/308` redirect, or (the common gaotu case) a
-   JSON body `{"code":700,"data":"<cas login url>"}` — whose CAS host matches the
+   JSON body `{"code":700,"data":"<cas login url>"}` or `{"errorCode":700,"data":"<cas login url>"}` — whose CAS host matches the
    target environment and carries one HTTPS `service` parameter. The only
    exception is an explicitly provided same-host, same-port, same-path HTTP
    `service` for an HTTPS target. Preserve that original `service` in the CAS
@@ -55,7 +55,7 @@ The probe sends no Cookie and follows no redirect. It accepts a `service` only
 from `https://cas.baijia.com/cas/login` for production targets or
 `https://test-cas.baijia.com/cas/login` for `test-` targets, whether that login
 URL arrives as a redirect `Location` header or as the `data` field of a
-`code:700` body. A signal pointing at any other login host is not evidence that
+`code/errorCode:700` body. A signal pointing at any other login host is not evidence that
 this Skill may send credentials there.
 
 Built-in service entries (Internal AD / UOS, Athena, Compass) are resolved by
@@ -71,11 +71,12 @@ to the username; production hosts require `SITE_PASSWORD`.
    dry-run boundary.
 3. When the user authorizes a real read-only test, attempt it without a Cookie.
    The service URL can be discovered automatically from either a `302/303/307/308`
-   redirect to trusted CAS, or a JSON body `{"code":700,"data":"<cas login url>"}`
+   redirect to trusted CAS, or a JSON body `{"code":700,"data":"<cas login url>"}` / `{"errorCode":700,"data":"<cas login url>"}`
    returned with HTTP `200`/`401`. Most gaotu internal APIs use the JSON form:
    the `data` field is the full `https://<cas-host>/cas/login?service=...` URL, and
-   the `service` parameter is the value the cookie tool needs. A bare HTTP `401`
-   with no body, or a `code:700` whose `data` is not a trusted-CAS login URL, does
+   the `service` parameter is the value the cookie tool needs. Passing the complete
+   trusted CAS login URL to `--cas-service-url` is also accepted and unwrapped.
+   A bare HTTP `401` with no body, or a `code/errorCode:700` whose `data` is not a trusted-CAS login URL, does
    not reveal a service URL; fall back to a separately authorized safe probe,
    explicit `--cas-service-url`, or the browser fallback.
 4. A `403` can mean the account lacks a role or permission. Fetch once only if
@@ -103,7 +104,7 @@ python <skill-root>/scripts/fetch_cookie.py \
 ```
 
 For an unknown host whose safe read-only URL has been authorized, let the helper
-derive the service URL from a trusted CAS redirect or `code:700` JSON body:
+derive the service URL from a trusted CAS redirect or `code/errorCode:700` JSON body:
 
 ```bash
 python <skill-root>/scripts/fetch_cookie.py \
@@ -115,7 +116,7 @@ python <skill-root>/scripts/fetch_cookie.py \
 
 For a write operation, do not use the write endpoint as an authentication probe.
 Ask for or locate a safe read-only probe URL first. If discovery finds no trusted
-CAS signal (neither a redirect nor a `code:700` `data` login URL), stop and
+CAS signal (neither a redirect nor a `code/errorCode:700` `data` login URL), stop and
 request an explicit `--cas-service-url` rather than guessing a login route.
 For the narrow HTTP callback exception, provide the original service URL
 explicitly; do not rewrite the CAS `service` to HTTPS and do not expect
@@ -202,7 +203,7 @@ python <skill-root>/scripts/call_api.py --curl-file request.curl \
 - Login failure (bad account/password, CAS did not return the expected fields):
   surface the script's sanitized error; do not expose credentials. Do not invent
   a browser, SSO, or alternate password source.
-- Unknown host with no trusted CAS redirect and no `code:700` `data` pointing at
+- Unknown host with no trusted CAS redirect and no `code/errorCode:700` `data` pointing at
   a trusted CAS login URL: stop and request an explicit `--cas-service-url` or
   browser fallback. Do not guess from a bare `401`, an HTML login page, or an
   untrusted redirect/`data` value.
@@ -214,7 +215,7 @@ python <skill-root>/scripts/call_api.py --curl-file request.curl \
 - Do not reuse, hardcode, or commit a pasted or browser-exported Cookie — it
   expires and leaks the session.
 - Do not guess a CAS service URL from a bare `401`, an HTML login page, or an
-  untrusted redirect / `code:700` `data`; require `--cas-service-url` or the
+  untrusted redirect / `code/errorCode:700` `data`; require `--cas-service-url` or the
   browser fallback instead.
 - Do not replay a `POST`/`PUT`/`PATCH`/`DELETE` without explicit user
   confirmation, and never auto-retry a side-effecting call.

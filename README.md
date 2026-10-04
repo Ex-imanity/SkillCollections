@@ -37,7 +37,7 @@ Skill 不应直接用于不具备相应权限的环境。
 | `cross-agent-review` | 2.1.0 | 让不同本地 Agent 对计划或代码进行带证据评审 | [README](skills/cross-agent-review/README.md) |
 | `dify-dsl-generator` | 1.0.0 | 生成、重构或评审 Dify workflow/chatflow/agent DSL | [SKILL.md](skills/dify-dsl-generator/SKILL.md) |
 | `gapm-mcp-recovery` | 1.0.0 | 诊断和恢复 GAPM MCP | [README](skills/gapm-mcp-recovery/README.md) |
-| `internal-api-cookie-auth` | 1.0.0 | 内部 HTTPS/CAS 认证与安全请求封装 | [README](skills/internal-api-cookie-auth/README.md) |
+| `internal-api-cookie-auth` | 1.0.1 | 内部 HTTPS/CAS 认证与安全请求封装 | [README](skills/internal-api-cookie-auth/README.md) |
 | `repository-code-style` | 1.2.0 | 根据目标仓库已有范例约束实现和 Review 风格 | [README](skills/repository-code-style/README.md) |
 | `whitebox-op-combo` | 1.0.0 | 按读写集分析多操作组合、代码路径和缺陷候选 | [README](skills/whitebox-op-combo/README.md) |
 

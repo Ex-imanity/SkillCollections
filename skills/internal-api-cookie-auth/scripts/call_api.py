@@ -136,7 +136,7 @@ def is_auth_failure(status: int, text: str) -> bool:
         payload = json.loads(text)
     except (json.JSONDecodeError, TypeError):
         return False
-    return isinstance(payload, dict) and payload.get("code") == CAS_JSON_CODE
+    return isinstance(payload, dict) and payload.get("code", payload.get("errorCode")) == CAS_JSON_CODE
 
 
 def send_request(
@@ -217,7 +217,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default="",
         help="explicit CAS service URL; HTTP is accepted only for the verified same-host local HTTPS upgrade",
     )
-    authentication.add_argument("--discover-cas", action="store_true", help="probe once for a trusted CAS redirect or code:700 service URL")
+    authentication.add_argument("--discover-cas", action="store_true", help="probe once for a trusted CAS redirect or code/errorCode:700 service URL")
     parser.add_argument("--keep-header", action="append", default=[], metavar="NAME", help="force-forward a header otherwise dropped")
     parser.add_argument("--drop-header", action="append", default=[], metavar="NAME", help="drop an additional header")
     parser.add_argument("--confirm-write", action="store_true", help="required to send a side-effecting method (non GET/HEAD); confirm with the user first")

@@ -97,6 +97,36 @@ class FetchCookieTest(unittest.TestCase):
         self.assertEqual(service_url, discovered)
 
     @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
+    def test_discovers_service_url_from_an_error_code_700_json_body(self):
+        fetch_cookie = load_module()
+        target = "https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth"
+        service_url = "http://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth"
+        body = (
+            '{"status":"error","errorCode":700,"data":"https://cas.baijia.com/cas/login?'
+            'service=http%3A%2F%2Fuanalysis.baijia.com%2Fuanalysis-template%2Fapi%2Fcas%2FgetAuth"}'
+        )
+        response = SimpleNamespace(status=200, headers={}, read=lambda *a: body.encode("utf-8"))
+        opener = SimpleNamespace(open=mock.Mock(return_value=response))
+
+        discovered = fetch_cookie.discover_cas_service(target, timeout=30.0, opener=opener)
+
+        self.assertEqual(service_url, discovered)
+
+    @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
+    def test_unwraps_a_trusted_cas_login_url_passed_as_service_argument(self):
+        fetch_cookie = load_module()
+        target = "https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth"
+        login_url = (
+            "https://cas.baijia.com/cas/login?service=http%3A%2F%2Fuanalysis.baijia.com%2F"
+            "uanalysis-template%2Fapi%2Fcas%2FgetAuth&renew=false"
+        )
+
+        self.assertEqual(
+            "http://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth",
+            fetch_cookie.normalize_cas_service_url(login_url, target),
+        )
+
+    @unittest.skipUnless(SCRIPT_PATH.is_file(), "fetch_cookie.py has not been implemented")
     def test_accepts_verified_same_host_http_service_from_trusted_cas(self):
         fetch_cookie = load_module()
         target = "https://uanalysis.baijia.com/uanalysis-template/api/cas/getAuth"

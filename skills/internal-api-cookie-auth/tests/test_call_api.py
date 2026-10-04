@@ -93,6 +93,7 @@ class CallApiTest(unittest.TestCase):
 
         self.assertTrue(call_api.is_auth_failure(401, ""))
         self.assertTrue(call_api.is_auth_failure(200, '{"code":700,"msg":"no auth"}'))
+        self.assertTrue(call_api.is_auth_failure(200, '{"errorCode":700,"msg":"登录失败"}'))
         self.assertFalse(call_api.is_auth_failure(200, '{"code":0,"data":[]}'))
         self.assertFalse(call_api.is_auth_failure(200, "not json"))
 

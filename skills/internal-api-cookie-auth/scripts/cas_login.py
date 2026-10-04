@@ -8,7 +8,7 @@ packages, no Node.js, no hardcoded checkout path.
 
 Built-in service entries: Internal AD / UOS, Athena, Compass. Any other internal
 host needs an explicit `cas_service_url` (typically discovered from a trusted CAS
-redirect or a `code:700` body — see fetch_cookie.py).
+redirect or a `code/errorCode:700` body — see fetch_cookie.py).
 """
 
 import json
@@ -398,7 +398,7 @@ def login(
         service_url = _resolve_service_url(target_url, cas_service_url)
         if not service_url:
             raise RuntimeError(
-                "该主机没有内置 CAS 服务入口，请提供 cas_service_url（可由可信 CAS 重定向或 code:700 发现）"
+                "该主机没有内置 CAS 服务入口，请提供 cas_service_url（可由可信 CAS 重定向或 code/errorCode:700 发现）"
             )
         requires_http_upgrade = validate_cas_service_url(target_url, service_url)
         cas_login_url = cas_login_url_for_service(target_url, service_url)
