@@ -13,6 +13,7 @@
 | case-reorganize | [SKILL.md](case-reorganize/SKILL.md) |
 | context-resilient-task | [README.md](context-resilient-task/README.md) |
 | cross-agent-review | [README.md](cross-agent-review/README.md) |
+| deep-task-preflight | [README.md](deep-task-preflight/README.md) |
 | dify-dsl-generator | [SKILL.md](dify-dsl-generator/SKILL.md) |
 | gapm-mcp-recovery | [README.md](gapm-mcp-recovery/README.md) |
 | internal-api-cookie-auth | [README.md](internal-api-cookie-auth/README.md) |

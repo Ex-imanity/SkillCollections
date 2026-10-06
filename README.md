@@ -35,6 +35,7 @@ Skill 不应直接用于不具备相应权限的环境。
 | `case-reorganize` | 1.0.0 | 将搬山已有用例按业务链路合并和重组 | [SKILL.md](skills/case-reorganize/SKILL.md) |
 | `context-resilient-task` | 1.8.0 | 用文件化 MRS 保存任务状态，支持跨会话恢复 | [README](skills/context-resilient-task/README.md) |
 | `cross-agent-review` | 2.1.0 | 让不同本地 Agent 对计划或代码进行带证据评审 | [README](skills/cross-agent-review/README.md) |
+| `deep-task-preflight` | 1.2.0 | 通用的实现前目标/验收闸门与输入—转换—结果验证 | [README](skills/deep-task-preflight/README.md) |
 | `dify-dsl-generator` | 1.0.0 | 生成、重构或评审 Dify workflow/chatflow/agent DSL | [SKILL.md](skills/dify-dsl-generator/SKILL.md) |
 | `gapm-mcp-recovery` | 1.0.0 | 诊断和恢复 GAPM MCP | [README](skills/gapm-mcp-recovery/README.md) |
 | `internal-api-cookie-auth` | 1.0.1 | 内部 HTTPS/CAS 认证与安全请求封装 | [README](skills/internal-api-cookie-auth/README.md) |
