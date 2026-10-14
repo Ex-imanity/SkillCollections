@@ -15,7 +15,6 @@
 | cross-agent-review | [README.md](cross-agent-review/README.md) |
 | deep-task-preflight | [README.md](deep-task-preflight/README.md) |
 | dify-dsl-generator | [SKILL.md](dify-dsl-generator/SKILL.md) |
-| gapm-mcp-recovery | [README.md](gapm-mcp-recovery/README.md) |
 | internal-api-cookie-auth | [README.md](internal-api-cookie-auth/README.md) |
 | repository-code-style | [README.md](repository-code-style/README.md) |
 | whitebox-op-combo | [README.md](whitebox-op-combo/README.md) |

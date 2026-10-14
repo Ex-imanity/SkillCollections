@@ -37,12 +37,11 @@ Skill 不应直接用于不具备相应权限的环境。
 | `cross-agent-review` | 2.1.0 | 让不同本地 Agent 对计划或代码进行带证据评审 | [README](skills/cross-agent-review/README.md) |
 | `deep-task-preflight` | 1.2.0 | 通用的实现前目标/验收闸门与输入—转换—结果验证 | [README](skills/deep-task-preflight/README.md) |
 | `dify-dsl-generator` | 1.0.0 | 生成、重构或评审 Dify workflow/chatflow/agent DSL | [SKILL.md](skills/dify-dsl-generator/SKILL.md) |
-| `gapm-mcp-recovery` | 1.0.0 | 诊断和恢复 GAPM MCP | [README](skills/gapm-mcp-recovery/README.md) |
 | `internal-api-cookie-auth` | 1.0.1 | 内部 HTTPS/CAS 认证与安全请求封装 | [README](skills/internal-api-cookie-auth/README.md) |
 | `repository-code-style` | 1.2.0 | 根据目标仓库已有范例约束实现和 Review 风格 | [README](skills/repository-code-style/README.md) |
 | `whitebox-op-combo` | 1.0.0 | 按读写集分析多操作组合、代码路径和缺陷候选 | [README](skills/whitebox-op-combo/README.md) |
 
-`gapm-mcp-recovery`、`internal-api-cookie-auth` 和 `repository-code-style` 包含内部
+`internal-api-cookie-auth` 和 `repository-code-style` 包含内部
 环境或组织资料。它们保留在集合中用于已授权环境，发布到其他组织前应完成独立的
 脱敏和安全评审。
 
