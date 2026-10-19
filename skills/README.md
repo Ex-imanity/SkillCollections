@@ -10,6 +10,7 @@
 | --- | --- |
 | case-design-strategy-skill | [SKILL.md](case-design-strategy-skill/SKILL.md) |
 | case-lite | [README.md](case-lite/README.md) |
+| case-lite-lark | [README.md](case-lite-lark/README.md) |
 | case-reorganize | [SKILL.md](case-reorganize/SKILL.md) |
 | context-resilient-task | [README.md](context-resilient-task/README.md) |
 | cross-agent-review | [README.md](cross-agent-review/README.md) |

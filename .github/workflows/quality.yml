@@ -21,6 +21,8 @@ jobs:
           python-version: '3.11'
       - name: Run repository convention tests
         run: python -m unittest discover -s tests
+      - name: Run case-lite-lark regression tests
+        run: python -m unittest discover -s skills/case-lite-lark/tests
       - name: Check patch formatting
         env:
           EVENT_NAME: ${{ github.event_name }}
