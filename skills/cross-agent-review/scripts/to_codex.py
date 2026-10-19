@@ -15,11 +15,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
 from typing import Callable, Optional
+from uuid import UUID
+
+from .continuation import ReviewContinuation
 
 from .common import (
     ReviewResult,
@@ -85,12 +91,61 @@ def codex_supports_model(
     return None if not text.strip() else MODEL_FLAG in text
 
 
+def codex_supports_sessions(help_runner: Callable = subprocess.run) -> Optional[bool]:
+    """Probe native resume syntax without launching a model."""
+    try:
+        result = help_runner([shutil.which("codex") or "codex", "exec", "resume", "--help"],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = (getattr(result, "stdout", "") or "") + (getattr(result, "stderr", "") or "")
+    return None if not text.strip() else all(flag in text for flag in (
+        "SESSION_ID", "--json", "--output-last-message"))
+
+
+class _CodexContinuation(ReviewContinuation):
+    """Replace the pending identity with the CLI-issued UUID, never invent one."""
+
+    def decorate(self, result: ReviewResult) -> ReviewResult:
+        native_id = result.envelope.get("session_id")
+        if result.status in {"timeout", "success"}:
+            detail = None
+            if self.resume:
+                if native_id is not None and native_id != self.session_id:
+                    detail = "resumed Codex returned a different native thread UUID"
+            else:
+                try:
+                    UUID(native_id)
+                except (ValueError, TypeError, AttributeError):
+                    detail = "Codex did not return a verified native thread UUID; timeout cannot be resumed"
+                else:
+                    self.data["session_id"] = native_id
+            if detail:
+                result = ReviewResult("provenance_failure", None,
+                                      {**result.envelope, "detail": detail}, 1)
+        return super().decorate(result)
+
+    def require_history(self) -> None:
+        # Native local history is user-owned. Inspect filenames only, never
+        # copy/delete it or parse unstable transcript contents. Refuse before
+        # starting a paid resume if it has been pruned or persistence was off.
+        for name in ("sessions", "archived_sessions"):
+            directory = Path(self.session_store) / name
+            if directory.is_dir() and any(
+                p.is_file() and p.stat().st_size > 0
+                for p in directory.rglob("rollout-*-" + self.session_id + ".jsonl")
+            ):
+                return
+        raise ValueError("original Codex native history is missing; cannot resume this gate")
+
+
 def build_codex_command(
     cd: str,
     last_message_path: str,
     output_schema: Optional[str] = None,
     skip_git_repo_check: bool = True,
     model: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> list:
     """Assemble an unattended full-access `codex exec` argv.
 
@@ -125,6 +180,14 @@ def build_codex_command(
         argv.append(f"--model={requested_model}")
     if output_schema:
         argv += ["--output-schema", output_schema]
+    if session_id is not None:
+        try:
+            UUID(session_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError("resume requires an exact recorded session UUID") from exc
+        # Parent exec options precede the resume subcommand: resume's parser
+        # does not accept -C/--sandbox. '-' keeps the request on stdin.
+        argv += ["resume", session_id, "-"]
     return argv
 
 
@@ -284,6 +347,49 @@ def _valid_codex_provenance(meta: dict) -> bool:
     )
 
 
+def _run_codex_subprocess(argv: list, *, env: Optional[dict], input: Optional[str],
+                          capture_output: bool, text: bool, timeout: float):
+    """Own the CLI wrapper and native child together across a real timeout."""
+    with subprocess.Popen(argv, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=text, start_new_session=os.name == "posix") as process:
+        try:
+            stdout, stderr = process.communicate(input=input, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # npm codex is a Node launcher. subprocess.run kills only that
+            # launcher; SIGKILL cannot be forwarded to its native child.
+            if os.name == "posix":
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:  # Windows taskkill includes the launcher tree, unlike kill().
+                try:
+                    cleaned = subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                             capture_output=True, timeout=5)
+                    if cleaned.returncode != 0:
+                        raise OSError("Codex process-tree cleanup failed; native closure is unverified")
+                except (OSError, subprocess.SubprocessError) as exc:
+                    # A timeout in taskkill is NOT a verified reviewer timeout.
+                    # In particular, a resumed gate must not receive the free
+                    # timeout exemption while its native child may still run.
+                    raise OSError("Codex process-tree cleanup failed; native closure is unverified") from exc
+                finally:
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
+            try:
+                stdout, stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired as exc:
+                # A detached writer means closure is unobservable; do not
+                # offer a resumable timeout or wait indefinitely on its pipe.
+                process.stdout.close()
+                process.stderr.close()
+                raise OSError("Codex timeout cleanup did not close the owned process pipes") from exc
+            raise subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr) from None
+        return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+
+
 def run_codex_review(
     argv: list,
     last_message_path: str,
@@ -299,7 +405,8 @@ def run_codex_review(
     `unknown`/fake-0 (P1-c). Codex reports no USD, so `total_cost_usd` is None.
     """
     try:
-        completed = runner(
+        invoke_runner = _run_codex_subprocess if runner is subprocess.run else runner
+        completed = invoke_runner(
             argv,
             env=env,
             input=prompt,
@@ -307,11 +414,21 @@ def run_codex_review(
             text=True,
             timeout=timeout_seconds,
         )
+    except subprocess.TimeoutExpired as exc:
+        partial = exc.stdout or ""
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", errors="replace")
+        meta = _parse_codex_json_stream(partial)
+        return ReviewResult("timeout", None, {
+            "error_type": "TimeoutExpired", "session_id": meta.get("session_id"),
+            "total_cost_usd": None,
+            "detail": "review subprocess timed out; no completed review",
+        }, 1)
     except (OSError, subprocess.SubprocessError) as exc:
         return ReviewResult(
             status="other_error",
             text=None,
-            envelope={"error_type": type(exc).__name__, "total_cost_usd": None},
+            envelope={"error_type": type(exc).__name__, "detail": str(exc), "total_cost_usd": None},
             exit_code=1,
         )
     exit_code = getattr(completed, "returncode", 1)
@@ -385,6 +502,9 @@ def codex_review_gate(
     timeout_seconds: float = 600,
     model: Optional[str] = None,
     model_help_runner: Optional[Callable] = None,
+    resume: bool = False,
+    artifact_paths: Optional[list] = None,
+    session_help_runner: Optional[Callable] = None,
 ) -> ReviewResult:
     """End-to-end single Codex reviewer gate (any primary -> Codex).
 
@@ -396,6 +516,11 @@ def codex_review_gate(
     sensitive_values = _known_sensitive_values(settings_path, None)
     try:
         requested_model = validate_requested_model(model)
+        if (not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool)
+                or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
+            raise ValueError("timeout_seconds must be finite and positive")
+        if not isinstance(cd, str) or not cd.strip() or not os.path.isdir(cd):
+            raise ValueError("cd must reference an existing working directory")
     except ValueError as exc:
         return gate_failure_result(
             handoff_dir,
@@ -424,7 +549,17 @@ def codex_review_gate(
             sensitive_values,
         )
 
+    if session_help_runner is not None and codex_supports_sessions(session_help_runner) is False:
+        return gate_failure_result(handoff_dir, gate_id, "setup_failure",
+                                   "local codex does not support exec resume with JSON output",
+                                   request_prompt, sensitive_values)
+    native_home = os.path.realpath(os.path.expanduser(os.environ.get("CODEX_HOME") or "~/.codex"))
+    continuation = _CodexContinuation(resume=resume, cwd=cd,
+                                      artifact_paths=artifact_paths or [], session_store=native_home)
+
     def prepare(marker_dir: str) -> dict:
+        if resume:
+            continuation.require_history()
         # Fallible argv construction stays pre-reservation.
         last_message_path = _create_last_message_file(marker_dir)
         try:
@@ -432,6 +567,7 @@ def codex_review_gate(
                 cd=cd,
                 last_message_path=last_message_path,
                 model=requested_model,
+                session_id=continuation.session_id if resume else None,
             )
         except Exception:
             try:
@@ -443,7 +579,10 @@ def codex_review_gate(
         return {
             "last_message_path": last_message_path,
             "argv": argv,
-            "prompt": build_reviewer_prompt(request_prompt),
+            "prompt": build_reviewer_prompt(
+                ("Continue the SAME unfinished review in this original session. "
+                 "Use its saved progress; do not start a new independent review.\n\n" if resume else "")
+                + request_prompt),
         }
 
     def invoke(state: object) -> ReviewResult:
@@ -479,6 +618,7 @@ def codex_review_gate(
         provider="codex",
         prepare=prepare,
         cleanup=cleanup,
+        continuation=continuation,
     )
 
 
@@ -497,6 +637,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--settings", default=DEFAULT_SETTINGS_PATH)
     parser.add_argument("--timeout-seconds", type=float, default=600)
     parser.add_argument("--model")
+    parser.add_argument("--resume", action="store_true", help="Continue this gate's recorded timeout in its original session")
+    parser.add_argument("--artifact-path", action="append", default=[], dest="artifact_paths")
     return parser
 
 
@@ -517,11 +659,18 @@ def main(argv: Optional[list] = None) -> int:
         timeout_seconds=args.timeout_seconds,
         model=args.model,
         model_help_runner=subprocess.run,
+        resume=args.resume,
+        artifact_paths=args.artifact_paths,
+        session_help_runner=subprocess.run,
     )
     payload = {
         "status": result.status,
         "exit_code": result.exit_code,
         "session_id": result.envelope.get("session_id"),
+        "resumable": result.envelope.get("resumable", False),
+        "continuation_state_path": result.envelope.get("continuation_state_path"),
+        "attempt": result.envelope.get("attempt"),
+        "continuation": result.envelope.get("continuation"),
         "output_path": args.output if result.status == "success" else None,
         "handoff_path": (
             None

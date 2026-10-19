@@ -258,7 +258,7 @@ def check_round_cap(
 
 
 def check_attempt_cap(marker_path: str, artifact_key: str) -> RoundDecision:
-    """Read-only check for the fixed number of started reviewer calls."""
+    """Read-only cap for new attempts; verified timeout continuations reuse one."""
     counts, valid = _load_counts(marker_path)
     if not valid:
         return RoundDecision(
@@ -391,6 +391,8 @@ def emit_review_started(
     attempt: int,
     timeout_seconds: float,
     sensitive_values: Optional[list] = None,
+    continuation_index: Optional[int] = None,
+    session_id: Optional[str] = None,
 ) -> None:
     """Emit the post-reservation lifecycle event without changing stdout."""
     payload = {
@@ -400,6 +402,9 @@ def emit_review_started(
         "attempt": attempt,
         "timeout_seconds": timeout_seconds,
     }
+    if continuation_index is not None:
+        payload.update(resumed=True, continuation=continuation_index,
+                       session_id=_redact_sensitive_text(session_id or "", sensitive_values))
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True), file=sys.stderr, flush=True)
 
 
@@ -442,15 +447,21 @@ def fail_closed(
     safe_detail = _redact_sensitive_text(str(detail), sensitive_values)
     safe_request = _redact_sensitive_text(str(request_prompt), sensitive_values)
     safe_reviewer = _redact_sensitive_text(str(reviewer or "reviewer"), sensitive_values)
+    next_step = (
+        f"For a recorded resumable {safe_reviewer} timeout, the primary may repeat the original gate "
+        "with --resume after the original subprocess exits, within the user's approved "
+        "time/cost scope. Otherwise continue interactively and return the verdict to the primary."
+        if status == "timeout" and reviewer in {"Grok", "ClaudeCode", "Codex"} else
+        f"A human should continue this review interactively on the {safe_reviewer} route "
+        "(handoff), then hand the verdict back to the primary."
+    )
     body = (
         f"# Cross-Agent Review Handoff — {gate_id}\n\n"
         f"Status: **{status}** (fail-closed)\n\n"
         f"Detail: {safe_detail}\n\n"
         f"The {safe_reviewer} adapter could not obtain a verified reviewer "
         "envelope, so it did NOT fabricate a review and did NOT change auth "
-        "state. A human should continue this review interactively on the "
-        f"{safe_reviewer} route (handoff), then hand the verdict back to the "
-        "primary.\n\n"
+        f"state. {next_step}\n\n"
         "## Original review request (verbatim)\n\n"
         f"{safe_request}\n"
     )
@@ -525,7 +536,7 @@ def log_cost(
     wall_seconds: float,
     extra: Optional[dict] = None,
 ) -> None:
-    """Append one cost/latency record per review gate.
+    """Append one cost/latency record per started segment, including continuations.
 
     `total_cost_usd` is recorded verbatim from the envelope (may be None when a
     provider like Codex reports token usage but no USD — never fabricate 0).
@@ -583,13 +594,14 @@ def run_review_gate(
     cleanup: Optional[Callable[[Any], None]] = None,
     failure_detail: Optional[Callable[[ReviewResult], str]] = None,
     cost_extra: Optional[Callable[[ReviewResult], dict]] = None,
+    continuation: Any = None,
 ) -> ReviewResult:
     """Shared locked orchestration for any reviewer peer.
 
     Callers finish peer-specific setup (CLI availability, credentials, model
     preflight), then hand off the paid path here:
 
-    round-cap lock → prepare(marker_dir) → attempt reserve → ``review_started``
+    round-cap lock → validate continuation → prepare → reserve/reuse attempt → ``review_started``
     → ``invoke(state)`` → cost log → optional cleanup → persist/commit.
 
     ``prepare`` may return opaque state (temp paths, handles). ``cleanup`` runs
@@ -599,11 +611,24 @@ def run_review_gate(
     """
     detail_of = failure_detail or _default_failure_detail
     extra_of = cost_extra or _default_cost_extra
+    def finish(result: ReviewResult) -> ReviewResult:
+        if continuation is None:
+            return result
+        try:
+            return continuation.finish(result)
+        except (OSError, ValueError) as exc:
+            return gate_failure_result(handoff_dir, gate_id, "continuation_state_failure",
+                                       f"{type(exc).__name__}: {exc}", request_prompt,
+                                       sensitive_values, reviewer=reviewer)
+
+    def failure(*args, **kwargs) -> ReviewResult:
+        return finish(gate_failure_result(*args, **kwargs))
+
     try:
         with round_cap_guard(marker_path, artifact_key) as decision:
             if not decision.allowed:
                 failure_status = decision.reason or "round_cap_exceeded"
-                return gate_failure_result(
+                return failure(
                     handoff_dir,
                     gate_id,
                     failure_status,
@@ -615,6 +640,15 @@ def run_review_gate(
 
             marker_dir = os.path.dirname(os.path.abspath(marker_path)) or "."
             os.makedirs(marker_dir, exist_ok=True)
+            if continuation is not None:
+                try:
+                    continuation.check(marker_path=marker_path, gate_id=gate_id, artifact_key=artifact_key,
+                                       request_prompt=request_prompt, reviewer=reviewer,
+                                       requested_model=requested_model, output_path=output_path,
+                                       cost_log_path=cost_log_path)
+                except (OSError, ValueError) as exc:
+                    return failure(handoff_dir, gate_id, "continuation_rejected", str(exc),
+                                               request_prompt, sensitive_values, reviewer=reviewer)
             state: Any = None
             log_error = None
             cleanup_error = None
@@ -622,9 +656,10 @@ def run_review_gate(
             try:
                 if prepare is not None:
                     state = prepare(marker_dir)
+                resuming = continuation is not None and continuation.resume
                 attempt_decision = check_attempt_cap(marker_path, artifact_key)
-                if not attempt_decision.allowed:
-                    return gate_failure_result(
+                if not resuming and not attempt_decision.allowed:
+                    return failure(
                         handoff_dir,
                         gate_id,
                         attempt_decision.reason or "attempt_cap_exceeded",
@@ -636,20 +671,35 @@ def run_review_gate(
                         sensitive_values,
                         reviewer=reviewer,
                     )
-                attempt = _reserve_attempt_unlocked(marker_path, artifact_key)
+                attempt = (continuation.data["attempt"] if resuming else
+                           attempt_decision.current + 1)
+                if continuation is not None:
+                    # Persist recoverable identity before spending the fresh
+                    # attempt; unwritable state is still a setup failure.
+                    continuation.start(attempt)
+                if not resuming:
+                    attempt = _reserve_attempt_unlocked(marker_path, artifact_key)
                 emit_review_started(
                     gate_id,
                     artifact_key,
                     attempt,
                     timeout_seconds,
                     sensitive_values,
+                    continuation_index=continuation.data["continuation"] if resuming else None,
+                    session_id=continuation.session_id if resuming else None,
                 )
                 start = time.monotonic()
                 result = invoke(state)
+                if continuation is not None:
+                    result = continuation.decorate(result)
                 extra: dict = {"requested_model": requested_model}
                 if provider is not None:
                     extra["provider"] = provider
                 extra.update(extra_of(result))
+                if continuation is not None:
+                    extra.update(attempt=attempt, continuation=continuation.data["continuation"],
+                                 resumed=continuation.resume,
+                                 session_id=_redact_sensitive_text(str(result.envelope.get("session_id") or ""), sensitive_values) or None)
                 try:
                     log_cost(
                         result.envelope,
@@ -668,7 +718,7 @@ def run_review_gate(
                         cleanup_error = exc
 
             if result is None:
-                return gate_failure_result(
+                return failure(
                     handoff_dir,
                     gate_id,
                     "setup_failure",
@@ -680,7 +730,7 @@ def run_review_gate(
 
             if log_error is not None:
                 detail = f"{type(log_error).__name__}: {log_error}"
-                return gate_failure_result(
+                return failure(
                     handoff_dir,
                     gate_id,
                     "cost_log_failure",
@@ -696,7 +746,7 @@ def run_review_gate(
                     result.envelope["cleanup_warning"] = (
                         f"{type(cleanup_error).__name__}: {cleanup_error}"
                     )
-                return gate_failure_result(
+                return failure(
                     handoff_dir,
                     gate_id,
                     result.status,
@@ -723,7 +773,7 @@ def run_review_gate(
                     )
                 except (OSError, ValueError) as exc:
                     detail = f"{type(exc).__name__}: {exc}"
-                    return gate_failure_result(
+                    return failure(
                         handoff_dir,
                         gate_id,
                         "persistence_failure",
@@ -737,7 +787,7 @@ def run_review_gate(
                 _commit_round_unlocked(marker_path, artifact_key)
             except (OSError, ValueError) as exc:
                 detail = f"{type(exc).__name__}: {exc}"
-                return gate_failure_result(
+                return failure(
                     handoff_dir,
                     gate_id,
                     "round_state_failure",
@@ -747,10 +797,10 @@ def run_review_gate(
                     {"total_cost_usd": result.envelope.get("total_cost_usd")},
                     reviewer=reviewer,
                 )
-            return result
+            return finish(result)
     except (OSError, ValueError) as exc:
         detail = f"{type(exc).__name__}: {exc}"
-        return gate_failure_result(
+        return failure(
             handoff_dir,
             gate_id,
             "setup_failure",

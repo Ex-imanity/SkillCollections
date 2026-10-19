@@ -1,7 +1,7 @@
 """Any primary -> ClaudeCode review adapter.
 
-Fail-closed bridge that asks a fresh ClaudeCode reviewer for a verdict via
-`claude -p`, without mutating auth state or fabricating reviewer output.
+Fail-closed bridge that asks a ClaudeCode reviewer for a verdict via `claude -p`,
+with fresh sessions for new gates and explicit continuation for recorded timeouts.
 
 Design decisions (user-confirmed 2026-07-21):
 - Credential = verify-then-fallback: prefer the persisted ~/.claude/settings.json
@@ -18,13 +18,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from typing import Callable, Optional
+from uuid import UUID
+
+from .continuation import ReviewContinuation
 
 from .common import (
     DEFAULT_SETTINGS_PATH,
@@ -86,7 +89,7 @@ def claude_supported_flags(
     timeout_seconds: float = 5,
     env: Optional[dict] = None,
 ) -> Optional[set[str]]:
-    """Return recognized model/budget flags from local Claude help, or ``None``.
+    """Return recognized model/budget/session flags from local help, or ``None``.
 
     A missing or unreadable help result is inconclusive rather than a failure.
     Callers use this one probe to avoid an extra subprocess when checking both
@@ -105,7 +108,7 @@ def claude_supported_flags(
     text = (getattr(completed, "stdout", "") or "") + (getattr(completed, "stderr", "") or "")
     if not text.strip():
         return None
-    return {flag for flag in (MAX_BUDGET_FLAG, MODEL_FLAG) if flag in text}
+    return {flag for flag in (MAX_BUDGET_FLAG, MODEL_FLAG, "--session-id", "--resume") if flag in text}
 
 
 def claude_supports_max_budget(
@@ -246,6 +249,8 @@ def resolve_subprocess_env(
         for key in PROXY_ENV_KEYS:
             if explicit_env.get(key):
                 child[key] = explicit_env[key]
+        if claude_config_dir:
+            child["CLAUDE_CONFIG_DIR"] = claude_config_dir
     return child
 
 # --- command assembly --------------------------------------------------------
@@ -256,13 +261,15 @@ def build_command(
     max_budget_usd: Optional[float] = None,
     claude_executable: str = "claude",
     model: Optional[str] = None,
+    session_id: Optional[str] = None,
+    resume: bool = False,
 ) -> list:
     """Assemble the unattended full-access `claude -p` argv.
 
     The request prompt is intentionally excluded from argv and sent through
     stdin by `run_review`, avoiding argument-size and flag-parsing hazards.
-    Every gate starts a fresh session. Re-review requests must carry prior
-    findings and new evidence explicitly rather than resuming hidden context.
+    Every new gate starts fresh. Explicit continuation only restores the UUID
+    recorded for an unfinished timeout; completed re-reviews carry new evidence.
     """
     argv = [
         claude_executable,
@@ -278,6 +285,14 @@ def build_command(
     requested_model = validate_requested_model(model)
     if requested_model is not None:
         argv.append(f"--model={requested_model}")
+    if session_id is not None:
+        try:
+            UUID(session_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError("session_id must be an exact UUID") from exc
+        argv.append(("--resume=" if resume else "--session-id=") + session_id)
+    elif resume:
+        raise ValueError("resume requires a recorded session UUID")
     for d in add_dirs or []:
         argv += ["--add-dir", d]
     if max_budget_usd is not None:
@@ -323,6 +338,7 @@ def run_review(
     env: Optional[dict] = None,
     timeout_seconds: float = 600,
     request_prompt: Optional[str] = None,
+    cwd: Optional[str] = None,
 ) -> ReviewResult:
     """Invoke `claude -p` with prompt on stdin and classify the envelope."""
     try:
@@ -333,7 +349,11 @@ def run_review(
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
+            **({"cwd": cwd} if cwd is not None else {}),
         )
+    except subprocess.TimeoutExpired:
+        return ReviewResult("timeout", None, {"error_type": "TimeoutExpired", "total_cost_usd": None,
+                                             "detail": "review subprocess timed out; no completed review"}, 1)
     except (OSError, subprocess.SubprocessError) as exc:
         return ReviewResult(
             status="other_error",
@@ -364,6 +384,21 @@ def run_review(
 
 # --- orchestration helper ----------------------------------------------------
 
+class _ClaudeContinuation(ReviewContinuation):
+    """Keep owned proxy history only while a recorded timeout is unfinished."""
+    config_dir: Optional[str] = None
+
+    def finish(self, result: ReviewResult) -> ReviewResult:
+        result = super().finish(result)
+        if self.config_dir and result.status != "timeout" and (self.started or not self.resume):
+            try:
+                if os.path.isdir(self.config_dir):
+                    shutil.rmtree(self.config_dir)
+            except OSError as exc:
+                result.envelope["cleanup_warning"] = f"{type(exc).__name__}: {exc}"
+        return result
+
+
 def review_gate(
     request_prompt: str,
     add_dirs: list,
@@ -382,16 +417,24 @@ def review_gate(
     use_local_claude_cli_identity: bool = False,
     budget_help_runner: Optional[Callable] = None,
     model: Optional[str] = None,
+    cd: Optional[str] = None,
+    resume: bool = False,
+    artifact_paths: Optional[list] = None,
+    session_help_runner: Optional[Callable] = None,
 ) -> ReviewResult:
     """End-to-end single review gate with all guards applied.
 
-    Order: readiness -> fixed caps -> reserve attempt -> invoke -> classify ->
-    log cost -> commit success. A started call consumes an attempt even when
-    the provider fails, preventing unbounded billable retries.
+    Order: readiness -> fixed caps -> reserve/reuse attempt -> invoke -> classify
+    -> log cost -> commit success. Only a recorded timeout can reuse its attempt.
     """
     sensitive_values = _known_sensitive_values(settings_path, explicit_env)
     try:
         requested_model = validate_requested_model(model)
+        if (not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool)
+                or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
+            raise ValueError("timeout_seconds must be finite and positive")
+        if cd is not None and (not isinstance(cd, str) or not cd.strip() or not os.path.isdir(cd)):
+            raise ValueError("cd must reference an existing working directory")
     except ValueError as exc:
         return gate_failure_result(
             handoff_dir,
@@ -405,6 +448,7 @@ def review_gate(
         not isinstance(max_budget_usd, (int, float))
         or isinstance(max_budget_usd, bool)
         or max_budget_usd <= 0
+        or not math.isfinite(max_budget_usd)
     ):
         return gate_failure_result(
             handoff_dir,
@@ -477,20 +521,45 @@ def review_gate(
         )
         return ReviewResult("credential_missing", None, {}, exit_code=1)
 
+    if session_help_runner is not None:
+        flags = claude_supported_flags(executable=claude_executable, help_runner=session_help_runner)
+        if flags is not None and not {"--session-id", "--resume"} <= flags:
+            return gate_failure_result(handoff_dir, gate_id, "setup_failure",
+                                       "local claude must support --session-id and --resume; upgrade the CLI",
+                                       request_prompt, sensitive_values)
+
+    working_dir = os.path.realpath(cd or os.getcwd())
+    isolated = readiness.credential_source in {"settings-env", "explicit-inject"}
+    store = (os.path.abspath(marker_path) + ".sessions" if isolated else
+             os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
+    continuation = _ClaudeContinuation(
+        resume=resume, cwd=working_dir, artifact_paths=artifact_paths or [], session_store=store,
+        binding_context={"credential_source": readiness.credential_source,
+                         "add_dirs": sorted(os.path.realpath(os.path.join(working_dir, d)) for d in (add_dirs or [])),
+                         "budget_ceiling_usd": float(max_budget_usd), "cli_identity": claude_identity})
+
     def prepare(_marker_dir: str) -> dict:
-        # Fallible argv/env construction stays pre-reservation. The temporary
-        # CLAUDE_CONFIG_DIR is opened here and closed in cleanup so credentials
-        # isolation still spans the subprocess without burning attempts on
-        # setup errors.
+        # Proxy credentials stay in the child env. Owned config/history lives
+        # under this gate until timeout continuation ends; inherited OAuth keeps
+        # its existing user store. Setup remains before attempt reservation.
         argv = build_command(
             request_prompt,
             add_dirs,
             max_budget_usd=max_budget_usd,
             claude_executable=claude_executable,
             model=requested_model,
+            session_id=continuation.session_id,
+            resume=resume,
         )
-        config_dir_cm = tempfile.TemporaryDirectory(prefix="cross-agent-review-claude-")
-        config_dir = config_dir_cm.name
+        config_dir = None
+        if isolated:
+            config_dir = os.path.join(continuation.runtime_dir, "claude-config")
+            if os.path.islink(config_dir):
+                raise ValueError("isolated session store must not be a symlink")
+            if resume and not os.path.isdir(config_dir):
+                raise ValueError("retained isolated Claude session store is missing")
+            os.makedirs(config_dir, mode=0o700, exist_ok=True)
+            continuation.config_dir = config_dir
         try:
             child_env = resolve_subprocess_env(
                 readiness,
@@ -500,13 +569,18 @@ def review_gate(
                 claude_cli_identity=claude_identity,
             )
         except Exception:
-            config_dir_cm.cleanup()
+            if config_dir and not resume:
+                shutil.rmtree(config_dir)
             raise
+        prompt = request_prompt
+        if resume:
+            prompt = ("Continue the SAME unfinished review from the saved conversation. Reuse your inspection "
+                      "progress and finish with the self-contained verdict; do not modify primary-owned files."
+                      "\n\nOriginal request (unchanged):\n\n" + prompt)
         return {
             "argv": argv,
             "env": child_env,
-            "prompt": build_reviewer_prompt(request_prompt),
-            "config_dir_cm": config_dir_cm,
+            "prompt": build_reviewer_prompt(prompt),
         }
 
     def invoke(state: object) -> ReviewResult:
@@ -517,23 +591,19 @@ def review_gate(
             env=payload.get("env"),
             timeout_seconds=timeout_seconds,
             request_prompt=payload.get("prompt"),
+            cwd=working_dir,
         )
-
-    def cleanup(state: object) -> None:
-        payload = state if isinstance(state, dict) else {}
-        config_dir_cm = payload.get("config_dir_cm")
-        if config_dir_cm is not None:
-            config_dir_cm.cleanup()
 
     def failure_detail(result: ReviewResult) -> str:
         value = result.envelope.get("result") if isinstance(result.envelope, dict) else None
         if isinstance(value, str) and value.strip():
             return value
-        return "no result"
+        return result.envelope.get("detail") or "no result"
 
     def cost_extra(_result: ReviewResult) -> dict:
-        # Claude cost log historically omits a provider key and usage block.
-        return {}
+        # Preserve the native cost and audit the unchanged approved ceiling;
+        # do not infer a new cross-process dollar allowance from continuation.
+        return {"max_budget_usd": max_budget_usd}
 
     return run_review_gate(
         request_prompt=request_prompt,
@@ -549,15 +619,16 @@ def review_gate(
         timeout_seconds=timeout_seconds,
         requested_model=requested_model,
         prepare=prepare,
-        cleanup=cleanup,
         failure_detail=failure_detail,
         cost_extra=cost_extra,
+        continuation=continuation,
     )
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a fail-closed any-primary -> ClaudeCode review gate")
     parser.add_argument("--request-file", required=True)
     parser.add_argument("--add-dir", action="append", default=[])
+    parser.add_argument("--cd", help="Reviewer working directory (default: caller CWD)")
     parser.add_argument("--handoff-dir", required=True)
     parser.add_argument("--marker-path", required=True)
     parser.add_argument("--gate-id", required=True)
@@ -568,6 +639,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout-seconds", type=float, default=600)
     parser.add_argument("--max-budget-usd", type=float, required=True)
     parser.add_argument("--model")
+    parser.add_argument("--resume", action="store_true", help="Continue this gate's recorded timeout in its original session")
+    parser.add_argument("--artifact-path", action="append", default=[], dest="artifact_paths")
     parser.add_argument(
         "--gateway-compat-cli-identity",
         action="store_true",
@@ -600,11 +673,19 @@ def main(argv: Optional[list] = None) -> int:
         use_local_claude_cli_identity=args.gateway_compat_cli_identity,
         budget_help_runner=subprocess.run,
         model=args.model,
+        cd=args.cd,
+        resume=args.resume,
+        artifact_paths=args.artifact_paths,
+        session_help_runner=subprocess.run,
     )
     payload = {
         "status": result.status,
         "exit_code": result.exit_code,
         "session_id": result.envelope.get("session_id"),
+        "resumable": result.envelope.get("resumable", False),
+        "continuation_state_path": result.envelope.get("continuation_state_path"),
+        "attempt": result.envelope.get("attempt"),
+        "continuation": result.envelope.get("continuation"),
         "output_path": args.output if result.status == "success" else None,
         "handoff_path": (
             None

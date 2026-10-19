@@ -108,7 +108,7 @@ class ReviewLimitTests(unittest.TestCase):
                 returncode=0,
                 stdout="\n".join(
                     (
-                        json.dumps({"type": "thread.started", "thread_id": "thread-a"}),
+                        json.dumps({"type": "thread.started", "thread_id": "fde14ccd-66f7-481c-90fe-bd9534d69f59"}),
                         json.dumps(
                             {
                                 "type": "turn.completed",
@@ -1069,7 +1069,7 @@ class ModelSelectionTests(unittest.TestCase):
                 returncode=0,
                 stdout="\n".join(
                     (
-                        json.dumps({"type": "thread.started", "thread_id": "reverse-model-session"}),
+                        json.dumps({"type": "thread.started", "thread_id": "dc0e2f81-e79f-4fe5-bf9d-03d9a494c7be"}),
                         json.dumps(
                             {
                                 "type": "turn.completed",

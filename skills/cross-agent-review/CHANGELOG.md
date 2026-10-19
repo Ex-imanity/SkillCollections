@@ -11,6 +11,18 @@
 
 规则：不是每个 commit 都要升版本，但每次升版本必须在此留下条目。
 
+## 2.2.0 - 2026-10-19
+
+- Codex 新增 `--resume` 与 `--artifact-path`，从超时前的 `thread.started` 保存真实 UUID；续跑使用原生 `codex exec resume <UUID>`，校验本地会话记录并复用原 attempt。无 UUID、会话丢失、内容变化或原生返回其他 UUID 时拒绝续跑；成功只提交一次。
+- Codex 超时终止完整启动器进程组（POSIX；Windows 使用 taskkill 进程树），避免 npm Node 启动器退出后原生审核进程继续运行；保留用户原生会话，不清理用户 CODEX_HOME。
+
+- Grok 新审核预先分配并保存会话 UUID；超时返回明确的 `timeout`、会话及可续跑状态。
+- 新增原 gate 的显式 `--resume`：恢复相同会话，复用原 attempt，完成时只提交一次 success；新审核与完成后的复审仍受两次上限约束。
+- 续跑绑定原请求、artifact key、目录、模型、输出及会话存储；`--artifact-path` 支持被审文件内容校验。已完成、非超时失败、状态损坏或绑定变化时拒绝续跑。
+- 每个调用段单独记录时长、费用与续跑序号；保留共享锁、来源与完整结果校验，不自动扩展时限或发起新会话。三向审核均支持原 gate 的超时续跑。
+- ClaudeCode 同样支持原 gate 的 `--resume`，新增可选 `--cd` 与实际审核文件登记；续跑绑定读取范围、认证模式、客户端身份及原预算上限。
+- Claude 代理模式的隔离会话目录在超时后保留，最终完成或失败后清理；显式代理注入沿用相同隔离，继承 OAuth 的用户目录不受清理影响。Codex 普通审核入口保持兼容。
+
 ## 2.1.0 - 2026-09-07
 
 - 抽出公共 `common.run_review_gate`：三向 gate 共享 lock → prepare → reserve → invoke → cost → cleanup → persist/commit 编排

@@ -20,11 +20,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
 import subprocess
 import tempfile
 from typing import Callable, Optional
+from uuid import UUID
+
+from .continuation import ReviewContinuation
 
 from .common import (
     MODEL_FLAG,
@@ -100,11 +104,24 @@ def grok_supports_model(
     return None if not text.strip() else MODEL_FLAG in text
 
 
+def grok_supports_sessions(help_runner: Callable = subprocess.run) -> Optional[bool]:
+    """Conclusive unsupported local help fails before reserving an attempt."""
+    try:
+        result = help_runner([shutil.which("grok") or "grok", "--help"],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = (getattr(result, "stdout", "") or "") + (getattr(result, "stderr", "") or "")
+    return None if not text.strip() else all(flag in text for flag in ("--session-id", "--resume"))
+
+
 def build_grok_command(
     prompt_file: str,
     cwd: str,
     model: Optional[str] = None,
     grok_executable: str = "grok",
+    session_id: Optional[str] = None,
+    resume: bool = False,
 ) -> list:
     """Assemble an unattended full-access headless `grok` argv.
 
@@ -132,6 +149,14 @@ def build_grok_command(
     if requested_model is not None:
         # One native token keeps flag parsing unambiguous across clap-style CLIs.
         argv.append(f"--model={requested_model}")
+    if session_id is not None:
+        try:
+            UUID(session_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError("session_id must be an exact UUID") from exc
+        argv.append(("--resume=" if resume else "--session-id=") + session_id)
+    elif resume:
+        raise ValueError("resume requires a recorded session UUID")
     return argv
 
 
@@ -287,6 +312,11 @@ def run_grok_review(
             text=True,
             timeout=timeout_seconds,
         )
+    except subprocess.TimeoutExpired:
+        # subprocess.run kills and waits for the child before raising. The
+        # gate's durable preassigned UUID provides identity without stdout.
+        return ReviewResult("timeout", None, {"error_type": "TimeoutExpired", "total_cost_usd": None,
+                                             "detail": "review subprocess timed out; no completed review"}, 1)
     except (OSError, subprocess.SubprocessError) as exc:
         return ReviewResult(
             status="other_error",
@@ -401,17 +431,26 @@ def grok_review_gate(
     model: Optional[str] = None,
     model_help_runner: Optional[Callable] = None,
     explicit_env: Optional[dict] = None,
+    resume: bool = False,
+    artifact_paths: Optional[list] = None,
+    session_help_runner: Optional[Callable] = None,
 ) -> ReviewResult:
     """End-to-end single Grok reviewer gate (any primary -> Grok).
 
     Order: grok-available -> fixed caps -> reserve attempt -> invoke ->
-    classify -> log cost -> commit success. A started call consumes an attempt
-    even if it fails. Grok has no provider USD cap on this route; require
-    explicit user approval plus the fixed attempt cap and timeout.
+    classify -> log cost -> commit success. A fresh session consumes an attempt
+    even if it fails; --resume continues only this gate's recorded timeout.
+    Every segment remains time bounded and audited. Grok has no provider USD cap.
     """
     sensitive_values = _grok_sensitive_values(settings_path, explicit_env)
+    grok_home = (explicit_env or {}).get("GROK_HOME") or os.environ.get("GROK_HOME") or os.path.expanduser("~/.grok")
+    continuation = ReviewContinuation(resume=resume, cwd=cd, artifact_paths=artifact_paths or [],
+                                      session_store=grok_home)
     try:
         requested_model = validate_requested_model(model)
+        if (not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool)
+                or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
+            raise ValueError("timeout_seconds must be finite and positive")
     except ValueError as exc:
         return gate_failure_result(
             handoff_dir,
@@ -443,16 +482,29 @@ def grok_review_gate(
             request_prompt,
             sensitive_values,
         )
+    if session_help_runner is not None and grok_supports_sessions(session_help_runner) is False:
+        return gate_failure_result(handoff_dir, gate_id, "setup_failure",
+                                   "local grok must support --session-id and --resume; upgrade the CLI",
+                                   request_prompt, sensitive_values)
 
     def prepare(marker_dir: str) -> dict:
         # Fallible argv/env construction stays pre-reservation so a setup error
         # does not burn an attempt or emit a false review_started.
-        prompt_path = _create_prompt_file(marker_dir, build_reviewer_prompt(request_prompt))
+        prompt = request_prompt
+        if resume:
+            prompt = ("Continue the SAME unfinished review from the saved conversation. "
+                      "Reuse your inspection progress and findings, check any remaining evidence, "
+                      "and finish with the self-contained verdict. This is a timeout continuation; "
+                      "the original scope and reviewed files are unchanged. Do not start a new review "
+                      "or modify primary-owned files.\n\nOriginal request (unchanged):\n\n" + prompt)
+        prompt_path = _create_prompt_file(marker_dir, build_reviewer_prompt(prompt))
         try:
             argv = build_grok_command(
                 prompt_file=prompt_path,
                 cwd=cd,
                 model=requested_model,
+                session_id=continuation.session_id,
+                resume=resume,
             )
         except Exception:
             try:
@@ -499,6 +551,7 @@ def grok_review_gate(
         provider="grok",
         prepare=prepare,
         cleanup=cleanup,
+        continuation=continuation,
     )
 
 
@@ -520,6 +573,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--settings", default=DEFAULT_SETTINGS_PATH)
     parser.add_argument("--timeout-seconds", type=float, default=600)
     parser.add_argument("--model")
+    parser.add_argument("--resume", action="store_true",
+                        help="Continue this gate's recorded timeout in its original session; no new attempt")
+    parser.add_argument("--artifact-path", action="append", default=[], dest="artifact_paths",
+                        help="File under review, relative to --cd; hash must match on continuation (repeatable)")
     return parser
 
 
@@ -540,11 +597,18 @@ def main(argv: Optional[list] = None) -> int:
         timeout_seconds=args.timeout_seconds,
         model=args.model,
         model_help_runner=subprocess.run,
+        resume=args.resume,
+        artifact_paths=args.artifact_paths,
+        session_help_runner=subprocess.run,
     )
     payload = {
         "status": result.status,
         "exit_code": result.exit_code,
         "session_id": result.envelope.get("session_id"),
+        "resumable": result.envelope.get("resumable", False),
+        "continuation_state_path": result.envelope.get("continuation_state_path"),
+        "attempt": result.envelope.get("attempt"),
+        "continuation": result.envelope.get("continuation"),
         "output_path": args.output if result.status == "success" else None,
         "handoff_path": (
             None

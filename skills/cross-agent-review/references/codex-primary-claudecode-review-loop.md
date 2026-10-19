@@ -152,6 +152,13 @@ replacement gate. Only after the original process is observed to have exited,
 or the configured timeout truly expires, validate final stdout JSON first, then
 the output or handoff and update durable state.
 
+For a Codex/Grok/ClaudeCode gate whose final result is a recorded resumable `timeout`, an
+explicit continuation may reuse that gate and native session after the original
+subprocess exits. It does not consume a new attempt, but it still consumes time
+and provider cost. Follow `timeout-continuation.md`; remain within the user's
+approved scope, never automatically start a replacement session, and never use
+this exception to re-review an already completed or changed artifact.
+
 ### 5. Codex Applies Or Pushes Back
 
 Codex processes the review:
