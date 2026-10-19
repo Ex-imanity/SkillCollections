@@ -27,10 +27,6 @@ from _state_probe import (  # noqa: E402
     find_mrs_dirs,
     is_meaningful,
     read_state,
-    read_context_entries,
-    read_context_entry_records,
-    utils_records,
-    format_context_entry,
     mrs_updated_mtime,
     bounded_text,
     ledger_root_for,
@@ -38,12 +34,13 @@ from _state_probe import (  # noqa: E402
     ledger_tail,
     sdd_ledgers,
 )
+from _context_recall import balanced_sections, clip, context_sections  # noqa: E402
 
 MARKER = "🗂  context-resilient-task"
 MAX_DIGEST_CHARS = 4000
 
 
-def render(mrs_dir: Path, start: Path | None = None) -> str:
+def render(mrs_dir: Path, start: Path | None = None, budget: int = 3999) -> str:
     state = read_state(mrs_dir)
     lines = [
         f"{MARKER} — pre-compaction digest. Full state persists on disk at {mrs_dir}.",
@@ -53,35 +50,25 @@ def render(mrs_dir: Path, start: Path | None = None) -> str:
         lines.append(f"- task_state.md missing; recover from {mrs_dir} after compaction.")
         return "\n".join(lines)
 
-    lines.append(f"- Goal: {bounded_text(state['goal'], 700)}")
-    lines.append(f"- Status: {bounded_text(state['status'], 200)}")
+    sections = [("", "\n".join(lines), ""),
+                ("### Goal", state['goal'], "task_state.md"),
+                ("### Status", state['status'], "task_state.md")]
     if is_meaningful(state["current_phase"]):
-        lines.append(f"- Current phase: {bounded_text(state['current_phase'], 500)}")
+        sections.append(("### Current Phase", state['current_phase'], "task_state.md"))
     todos = bounded_text(state["active_todos"], 1200) if is_meaningful(state["active_todos"]) else "_(none)_"
-    lines.append("- Active todos:")
-    lines.extend(f"    {line.rstrip()}" for line in todos.splitlines() if line.strip())
+    sections.append(("### Active Todos", todos, "task_state.md"))
     if is_meaningful(state["next_action"]):
-        lines.append(f"- Next action: {bounded_text(state['next_action'], 700)}")
+        sections.append(("### Next action", state['next_action'], "task_state.md"))
+    ledger_lines = []
     ledgers = sdd_ledgers(mrs_dir, ledger_root_for(mrs_dir, start))
     for item in ledgers[:1]:
-        lines.append(f"- superpowers ledger (in-plan progress): {ledger_label(item)}")
-        lines.extend(f"    {line}" for line in ledger_tail(item["ledger"], max_lines=3, max_chars=300).splitlines())
+        ledger_lines.append(f"- superpowers ledger (in-plan progress): {ledger_label(item)}")
+        ledger_lines.extend(f"    {line}" for line in ledger_tail(item["ledger"], max_lines=3, max_chars=300).splitlines())
     if len(ledgers) > 1:
-        lines.append(f"- … {len(ledgers) - 1} more in-flight ledger(s); restore_context.py lists them")
-    for title, filename in (
-        ("Stable decisions", "decisions.md"),
-        ("Key findings", "findings.md"),
-        ("Utilities", "utils.md"),
-    ):
-        if filename == "utils.md":
-            entries = [format_context_entry(r, 1400) for r in utils_records(mrs_dir, max_chars=1400)]
-        else:
-            entries = read_context_entries(mrs_dir, filename, limit=2, max_chars=500)
-        if entries:
-            lines.append(f"- {title} (latest):")
-            for entry in entries:
-                lines.extend(f"    {line}" for line in entry.splitlines())
-    return "\n".join(lines)
+        ledger_lines.append(f"- … {len(ledgers) - 1} more in-flight ledger(s); restore_context.py lists them")
+    if ledger_lines:
+        sections.append(("### Execution Ledger", "\n".join(ledger_lines), ".superpowers/sdd/"))
+    return balanced_sections(sections + context_sections(mrs_dir), budget)
 
 
 def restore_hint(mrs_dir: Path, start: Path) -> str:
@@ -112,18 +99,18 @@ def main() -> int:
         if not mrs_dirs:
             return 0
         ordered = sorted(mrs_dirs, key=mrs_updated_mtime, reverse=True)
-        latest = render(ordered[0], start)
         footer: list[str] = []
         if len(ordered) > 1:
             compact_rows = ["Other MRS (metadata only):"]
             for mrs_dir in ordered[1:]:
                 state = read_state(mrs_dir)
                 compact_rows.append(f"- {mrs_dir.name}: {state.get('status', '(unknown)')} — {state.get('goal', '(unknown)')[:80]}")
-            footer.extend(compact_rows)
+            footer.append(clip("\n".join(compact_rows), 500, "other task_state.md files"))
         footer.append(restore_hint(ordered[0], start))
         footer_text = "\n".join(footer)
-        available = max(500, MAX_DIGEST_CHARS - len(footer_text) - 2)
-        print(bounded_text(latest, available).rstrip() + "\n\n" + footer_text)
+        available = max(0, MAX_DIGEST_CHARS - len(footer_text) - 3)
+        latest = render(ordered[0], start, budget=available)
+        print(latest.rstrip() + "\n\n" + footer_text)
         return 0
     except Exception as exc:  # noqa: BLE001 — hook safety
         if args.hook:

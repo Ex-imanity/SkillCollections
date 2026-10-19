@@ -13,6 +13,8 @@ Field reference:
   stable_decisions  Bounded tail of decisions.md
   key_findings      Bounded tail of findings.md
   utilities         Bounded contents of utils.md
+  known_problems    Bounded problem IDs/statuses and lookup reminder
+  context_recall    Command for complete-history lookup before retrying
   next_session_notes Bullet list of facts a future session MUST know
 
 Anything above END_TEMPLATE_DOCS is stripped at render time.
@@ -44,6 +46,12 @@ Anything above END_TEMPLATE_DOCS is stripped at render time.
 
 ## Utilities
 {utilities}
+
+## Known Problems
+{known_problems}
+
+## Context Recall
+{context_recall}
 
 ## Next Session Should Know
 {next_session_notes}

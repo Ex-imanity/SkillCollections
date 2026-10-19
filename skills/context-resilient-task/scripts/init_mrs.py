@@ -163,6 +163,8 @@ def render_initial_snapshot(goal: str, requirements: list[str]) -> str:
         files_modified="- (No source changes yet)",
         stable_decisions="- (None recorded)",
         key_findings="- (None recorded)",
+        known_problems="No reusable problems recorded; see problems.md.",
+        context_recall="Before retrying an error/blocker: python <skill-root>/scripts/recall_context.py <mrs-dir> --query '<symptom>'. Read sources and verify scope.",
         utilities="- (None recorded)",
         next_session_notes=f"- Goal: {goal}\n- Next action: {current_focus}",
     )
@@ -206,6 +208,7 @@ def write_files(
             "<!-- Append chronological execution log entries below this line. -->\n"
         ),
         "utils.md": load_template("utils.template.md"),
+        "problems.md": load_template("problems.template.md"),
     }
 
     if needs_decisions(complexity, multi_agent, requirements):

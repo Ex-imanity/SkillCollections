@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -35,10 +36,6 @@ from _state_probe import (  # noqa: E402
     ledger_root_for,
     read_mrs_metadata,
     read_state,
-    read_context_entries,
-    read_context_entry_records,
-    utils_records,
-    format_context_entry,
     snapshot_mtime,
     source_changes,
     mrs_updated_mtime,
@@ -47,6 +44,7 @@ from _state_probe import (  # noqa: E402
     ledger_tail,
     sdd_ledgers,
 )
+from _context_recall import balanced_sections, context_sections  # noqa: E402
 
 MARKER = "🗂  context-resilient-task"
 SDD_HINT = ".superpowers/sdd/"
@@ -124,29 +122,28 @@ def render_single(mrs_dir: Path, start: Path | None = None) -> str:
         if len(ledgers) > 2:
             lines.append(f"- … {len(ledgers) - 2} more in-flight ledger(s) under {ledgers[0]['ledger'].parent.parent}")
 
-    context_blocks = (
-        ("Stable Decisions", "decisions.md"),
-        ("Key Findings", "findings.md"),
-        ("Utilities", "utils.md"),
-    )
-    for title, filename in context_blocks:
-        if filename == "utils.md":
-            entries = [format_context_entry(record) for record in utils_records(mrs_dir)]
-        else:
-            entries = read_context_entries(mrs_dir, filename)
-        if entries:
-            lines.append("")
-            lines.append(f"### {title} (latest entries from {filename})")
-            for entry in entries:
-                lines.append("\n".join("### " + line.lstrip("#").strip() if line.startswith("# ") else ("### " + line[3:] if line.startswith("## ") else line) for line in entry.splitlines()))
+    # Split only the core sections, before nested context headings are added.
+    # Reserve their slots together rather than cropping the concatenated tail.
+    sections = split_sections(lines)
+    sections.extend(context_sections(mrs_dir))
 
     if state["status"].strip().lower() == "completed":
-        lines.append("")
-        lines.append("ℹ Task is marked COMPLETED — prompt to archive, start a new task, or reopen.")
+        sections.append(("", "ℹ Task is marked COMPLETED — prompt to archive, start a new task, or reopen.", ""))
+    return balanced_sections(sections)
 
-    lines.append("")
-    lines.append("Reminder: reconstruct facts from these artifacts, cite sources, mark unknowns as Unknown.")
-    return bounded_text("\n".join(lines))
+
+def split_sections(lines: list[str]) -> list[tuple[str, str, str]]:
+    sections, heading, body = [], "", []
+    for line in "\n".join(lines).splitlines():
+        if line.startswith("### "):
+            if body:
+                sections.append((heading, "\n".join(body), "task_state.md" if heading else ""))
+            heading, body = line, []
+        else:
+            body.append(line)
+    if body:
+        sections.append((heading, "\n".join(body), "task_state.md" if heading else ""))
+    return sections
 
 
 def render_multiple(mrs_dirs: list[Path], start: Path | None = None) -> str:
@@ -165,9 +162,7 @@ def render_multiple(mrs_dirs: list[Path], start: Path | None = None) -> str:
             f"| {marker} | {entry['name']} | {entry['status']} | {entry['updated_human']} | {goal} |"
         )
     lines.append("")
-    lines.append("* = most recently updated (recommended). ASK the user which task to resume before continuing.")
     where = start or mrs_dirs[0].parent
-    lines.append(f"After choosing, restore it fully: python restore_context.py {where} --mrs <mrs_dir>")
     if mrs_dirs:
         # Ledgers belong to plans, not to a specific MRS; index them without
         # deciding which task they serve.
@@ -184,18 +179,20 @@ def render_multiple(mrs_dirs: list[Path], start: Path | None = None) -> str:
         latest = mrs_dirs[0]
         lines.append("")
         lines.append("### Latest MRS Context (bounded)")
-        for filename, title in (("decisions.md", "Stable Decisions"), ("findings.md", "Key Findings"), ("utils.md", "Utilities")):
-            records = (utils_records(latest, max_chars=900) if filename == "utils.md"
-                       else read_context_entry_records(latest, filename, limit=2, max_chars=700))
-            if records:
-                lines.append(f"#### {title}")
-                for record in records:
-                    formatted = format_context_entry(record, 700)
-                    lines.append("\n".join("### " + line[3:] if line.startswith("## ") else line for line in formatted.splitlines()))
-    output = "\n".join(lines)
-    if len(output) > 4000:
-        return output[:3957].rstrip() + "\n… (digest truncated to 4000 characters)"
-    return output
+        for heading, body, _ in context_sections(latest):
+            if heading == "### Context Recall":
+                continue
+            lines.extend((heading, body))
+    # Multi-task selection remains authoritative. Bound the directory/ledger
+    # index separately so the retrieval entry point cannot disappear at its tail.
+    list_command = f"python {shlex.quote(str(SCRIPT_DIR / 'list_mrs.py'))} {shlex.quote(str(where))}"
+    selection = ("* = most recently updated (recommended). ASK the user which task to resume before continuing.\n"
+                 f"After choosing, restore it fully: python restore_context.py {shlex.quote(str(where))} --mrs <mrs_dir>\n"
+                 f"Full task directory: {list_command}")
+    return balanced_sections([("", "\n".join(lines), list_command),
+                              ("### Restore Command", selection, ""),
+                              ("### Context Recall", "After selecting a task, run recall_context.py <mrs-dir> "
+                               "--query '<symptom>' before retrying an error/blocker.", "")])
 
 
 def build_output(start: Path, as_json: bool, mrs: Path | None = None) -> str:

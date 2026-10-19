@@ -124,6 +124,17 @@ What does **not** belong in the registry: single source files cited as evidence 
 
 Migrating a legacy MRS: `python <skill-root>/scripts/scan_resources.py <mrs-dir>` scans every MRS document for pointers, classifies them, ranks reachable resources above local file noise, flags local paths that no longer exist, and prints a draft table with `file:line` provenance. It is read-only until `--write`. Drafted rows are written as `Sensitivity: restricted` — recorded on disk but withheld from every digest until a human fills in `Name / Purpose` + `Access` and sets the real level; a machine guess must not publish an unclassified resource into a registry that every recovery replays. A pointer carrying an embedded credential is redacted to `user:***@` before it is written, and the draft output names the source file that still contains the raw value.
 
+### Problem Records (Tier 1, legacy optional)
+
+`problems.md` records reusable symptoms, failed attempts, applicable scope and
+verified handling by stable ID. Update current fields in place and append attempt
+history; resolved entries remain searchable. Task state still owns current todos.
+New MRS includes the template; old MRS without it continues normally.
+
+Schema, retry workflow and complete-history lookup:
+[problem-recall.md](problem-recall.md). Recovery reserves bounded slots for each
+context source and the lookup command; pinned text cannot consume later slots.
+
 ### Optional Files (Tier 2)
 
 **blockers.md**

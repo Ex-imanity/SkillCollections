@@ -18,6 +18,7 @@ import argparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _state_probe import read_context_entry_records, utils_records, format_context_entry, bounded_text, work_root_for  # noqa: E402
+from _context_recall import balanced_sections, context_sections  # noqa: E402
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOT_TEMPLATE_PATH = SKILL_ROOT / "assets" / "snapshot.template.md"
@@ -206,6 +207,8 @@ def generate_snapshot(mrs_dir: Path, project_root: Path | None = None) -> str:
 
     # Render via assets/snapshot.template.md (no inline duplication)
     template = load_snapshot_template()
+    recalled = context_sections(mrs_dir)
+    by_file = {pointer: body for _, body, pointer in recalled}
     rendered = template.format(
         timestamp=timestamp,
         context=context,
@@ -214,11 +217,13 @@ def generate_snapshot(mrs_dir: Path, project_root: Path | None = None) -> str:
         blockers=normalize_blockers(state.get("open_questions", "")),
         files_modified=files_str,
         next_session_notes=next_session_notes,
-        stable_decisions=context_block(mrs_dir, "decisions.md"),
-        key_findings=context_block(mrs_dir, "findings.md"),
-        utilities=context_block(mrs_dir, "utils.md"),
+        stable_decisions=by_file.get("decisions.md", "- (None recorded)"),
+        key_findings=by_file.get("findings.md", "- (None recorded)"),
+        utilities=by_file.get("utils.md", "- (None recorded)"),
+        known_problems=by_file.get("problems.md", "Legacy MRS: create problems.md after a reusable error/blocker is triaged."),
+        context_recall=by_file[""],
     )
-    if len(rendered) <= 4000:
+    if len(rendered) <= 3999:
         return rendered
     lines = rendered.splitlines()
     sections: list[tuple[str, list[str]]] = []
@@ -235,14 +240,13 @@ def generate_snapshot(mrs_dir: Path, project_root: Path | None = None) -> str:
             header.append(line)
     if current:
         sections.append(current)
-    budgets = {"## Context": 450, "## Recent Progress": 400, "## Current Focus": 250,
-               "## Blockers": 300, "## Files Modified": 350, "## Stable Decisions": 500,
-               "## Key Findings": 550, "## Utilities": 450, "## Next Session Should Know": 500}
-    compact = "\n".join(header).rstrip()
+    sources = {"## Stable Decisions": "decisions.md", "## Key Findings": "findings.md",
+               "## Utilities": "utils.md", "## Known Problems": "problems.md",
+               "## Recent Progress": "progress.md"}
+    balanced = [("", "\n".join(header).rstrip(), "")]
     for heading, body in sections:
-        block = heading + "\n" + "\n".join(body).strip()
-        compact += "\n\n" + bounded_text(block, budgets.get(heading, 350))
-    return bounded_text(compact + "\n\n… (snapshot sections compacted to 4000 characters)", 4000)
+        balanced.append((heading, "\n".join(body), sources.get(heading, "task_state.md")))
+    return balanced_sections(balanced)
 
 
 def save_snapshot(directory: Path, content: str, archive: bool = False):

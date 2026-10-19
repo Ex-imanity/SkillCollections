@@ -19,8 +19,9 @@ The MRS defines the minimum artifacts required to recover task context without r
   - **Required** when: multi-session, multi-agent, or >10 phases
   - Optional for small/single-session tasks
 - `utils.md` - The single resource registry: every internal/external resource pointer, cited by ID from other artifacts (created for new MRS; optional for legacy MRS)
+- `problems.md` - Reusable symptoms, attempts and verified fixes, including resolved records (created for new MRS; legacy absence is normal)
 
-**Failure Mode:** Missing Tier 1 → WARNING, ask user to confirm continuation
+**Failure Mode:** Existing Tier 1 warnings apply; missing problems.md never interrupts recovery.
 
 ### Tier 2: Optional Context (MAY exist)
 - `blockers.md` - Current blockers
@@ -34,7 +35,7 @@ When skill starts:
 1. Check current directory for Tier 0 files
 2. If all Tier 0 present → Enter recovery mode
 3. If any Tier 0 missing → Enter initialization mode
-4. Check Tier 1, warn if missing; include newest bounded decisions/findings/utils in recovery output
+4. Check Tier 1; reserve bounded decisions/findings/utils/problems and a full-history retrieval entry point so a large pinned section cannot remove later sources
 5. Tier 2 is purely informational
 
 Suffixed legacy history headings such as `## Completed Items（第一轮）` are

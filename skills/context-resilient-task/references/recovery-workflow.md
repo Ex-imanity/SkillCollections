@@ -41,10 +41,19 @@ Read the following files if present:
 - `architecture.md`
 - `decisions.md`
 - `utils.md`
+- `problems.md` (legacy absence is normal; create after a reusable problem is triaged)
 
 For append-only files, load only the newest bounded entries first (for example
 the latest three decision/finding headings). Include the utilities profile as
 stable context, not as a finding or deliverable.
+
+Each source has a separate bounded slot and source pointer. The full-history
+recall command is preserved even when pinned text exceeds its slot. Before
+retrying an error/blocker, run `python <skill-root>/scripts/recall_context.py
+<mrs-dir> --query '<symptom/component>'`, read matching source lines and check
+scope/evidence. No match means normal diagnosis continues. See
+[problem-recall.md](problem-recall.md); recent-window omission is not evidence
+that an issue was never recorded.
 
 If superpowers 6.x ledgers exist under `.superpowers/sdd/` at the git toplevel,
 `restore_context.py` already lists them with their owning plan (from each

@@ -61,7 +61,7 @@ __all__ = [
 ]
 
 TIER0 = ["task_state.md", "plan.md", "snapshot.md"]
-TIER1 = ["findings.md", "progress.md", "decisions.md", "architecture.md", "utils.md"]
+TIER1 = ["findings.md", "progress.md", "decisions.md", "architecture.md", "utils.md", "problems.md"]
 
 _UNKNOWN = "(unknown)"
 _EMPTY_MARKERS = {"", "(unknown)", "(no content)", "_(none)_", "none", "(none)"}
@@ -408,6 +408,7 @@ def _visible_lines(lines: list[str]) -> tuple[list[tuple[str, int, bool]], set[i
     visible: list[tuple[str, int, bool]] = []
     in_comment = False
     in_fence = False
+    fence_marker = ""
     for index, line in enumerate(lines):
         if in_comment:
             end = line.find("-->")
@@ -425,8 +426,15 @@ def _visible_lines(lines: list[str]) -> tuple[list[tuple[str, int, bool]], set[i
             line = line[:start] + line[end + 3:]
         stripped = line.strip()
         was_fenced = in_fence
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_fence = not in_fence
+        fence = re.match(r"^(`{3,}|~{3,})(.*)$", stripped)
+        if fence and not in_fence:
+            fence_marker = fence[1]
+            in_fence = True
+            was_fenced = False
+        elif (fence and in_fence and fence[1][0] == fence_marker[0]
+              and len(fence[1]) >= len(fence_marker) and not fence[2].strip()):
+            in_fence = False
+            fence_marker = ""
             was_fenced = False
         visible.append((line, index, was_fenced))
     return visible, set()

@@ -34,7 +34,7 @@ Skill 不应直接用于不具备相应权限的环境。
 | `case-lite` | 1.2.0 | 从飞书文档选章，生成小需求测试用例并可选写回搬山 | [README](skills/case-lite/README.md) |
 | `case-lite-lark` | 0.2.2 | 本地或平台复用团队飞书应用，通过 lark-cli 选章生成用例，无需配置 stdio MCP | [README](skills/case-lite-lark/README.md) |
 | `case-reorganize` | 1.0.0 | 将搬山已有用例按业务链路合并和重组 | [SKILL.md](skills/case-reorganize/SKILL.md) |
-| `context-resilient-task` | 1.8.0 | 用文件化 MRS 保存任务状态，支持跨会话恢复 | [README](skills/context-resilient-task/README.md) |
+| `context-resilient-task` | 1.9.1 | 用文件化 MRS 保存任务状态，支持跨会话恢复、问题集与完整历史召回 | [README](skills/context-resilient-task/README.md) |
 | `cross-agent-review` | 2.1.0 | 让不同本地 Agent 对计划或代码进行带证据评审 | [README](skills/cross-agent-review/README.md) |
 | `deep-task-preflight` | 1.2.0 | 通用的实现前目标/验收闸门与输入—转换—结果验证 | [README](skills/deep-task-preflight/README.md) |
 | `dify-dsl-generator` | 1.0.0 | 生成、重构或评审 Dify workflow/chatflow/agent DSL | [SKILL.md](skills/dify-dsl-generator/SKILL.md) |

@@ -15,6 +15,7 @@ This snippet ensures all agents (Claude Code, Codex, etc.) follow the same MRS u
 - `progress.md` — 执行日志。**仅追加**，不覆写已有内容。
 - `snapshot.md` — 最新检查点快照。每次**覆写整个文件**，不追加段落。覆写前先归档旧版本。
 - `decisions.md` — 稳定结论与决策记录。**仅追加**。当多会话/多 agent/>10 phases 时必需。
+- `problems.md` — 可复用问题集，保留已解决问题。按 `P001` 等稳定 ID 原位维护当前结论，在条目内追加尝试历史。新 MRS 创建空模板；老 MRS 缺失不影响恢复，有首个可复用问题时再创建。
 - `utils.md` — **唯一资源注册表**：飞书文档、外部网页、仓库、本地路径、接口、数据库、日志平台、看板、本地进程、静态页、CLI/MCP 工具、工单、测试数据、凭据名称，全部登记在此。按行原地更新，禁止写入密钥值。
   - 表头：`| ID | Type | Name / Purpose | Pointer | Env | Access | Sensitivity | Verified |`
   - Type 取自枚举 `feishu-doc | web-page | repo | local-path | service-api | database | log-platform | dashboard | local-process | static-site | cli-tool | mcp-tool | ticket | test-asset | credential-ref`，未覆盖的用 `other:<label>`。
@@ -29,11 +30,23 @@ This snippet ensures all agents (Claude Code, Codex, etc.) follow the same MRS u
 - `task_state.md` 头部的 `Active Todos` 是唯一的待办真相源。
 - 完成待办 = 从 `Active Todos` **删除** + 追加到 `Completed Items`。
 - 不从 `progress.md` 推断待办状态，只读 `task_state.md`。
-- 恢复或压缩前优先读取 `decisions.md`、`findings.md`、`utils.md` 的最新有限条目，避免长日志遮蔽当前约束。
+- 恢复或压缩前为待办、下一步及 decisions/findings/utils/problems/检索入口分别保留预算；摘要不是完整历史，超长置顶不能挤掉后续入口。
 - 每条待办限单行，详细上下文引用外部文件。
 
 ### 更新后
 每次修改 MRS 文件后，在 `progress.md` 追加一行时间戳记录。
+
+### 异常后重试前先召回
+
+1. 遇到异常、卡点、报错，**重试或换修复方案前**运行：
+   `python <skill-root>/scripts/recall_context.py <mrs-dir> --query '<错误+组件或命令>' --scope env=<已知环境>`。
+   可重复 `--scope repo=<仓库>`、`--scope tool=<工具>`；只填已知条件，不猜。
+2. 它检索 problems/findings/decisions/progress/utils 的**完整历史**，不受最近几条限制。按返回文件/行号核对适用范围、证据与失效条件；同报错不代表同根因。无命中继续正常诊断。
+3. 首次可复用问题定位后就记录，根因未知明确写 unconfirmed；修复验证后立即更新。已失败方案仅在条件改变、新证据或明确有界瞬时重试策略下重试。
+4. 条目用 `## P001: 症状`，字段：Status、Signature、Scope、Cause、Tried、Resolution、Verification、Source、Last verified、Recheck when。Status 为 open/resolved/stale/superseded；resolved 要有修复、验证证据、来源和日期。
+5. 复发更新同 ID；保留 resolved，stale 先重验；不记录预期 TDD 红灯、一次性噪声、凭据和用户原始数据。跨任务稳定经验提炼至已有项目指引或对应工具 skill，只保留一份权威正文。
+
+以上是模型必须遵守的流程指令；未新增自动错误 hook，也不会自动执行历史命令。
 
 ### Tier 0 文件损坏 ≠ 缺失
 Tier 0 文件存在但格式不合规时，**修复该文件，绝不重新初始化** —— MRS 里是真实历史。只有文件**不存在**才进初始化流程。

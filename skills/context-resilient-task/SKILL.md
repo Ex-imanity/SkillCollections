@@ -1,6 +1,6 @@
 ---
 name: context-resilient-task
-version: 1.8.0
+version: 1.9.1
 description: Context-resilient task management via a filesystem Minimum Recovery Set (MRS in .task-state/). Reconstructs task state from on-disk artifacts so work survives /clear, session interruption, agent switches, and context-window loss. Use this skill whenever the user mentions multi-phase tasks, multi-session work, cross-session recovery, task state restoration, MRS, .task-state, lost context, hallucinated todos, forgotten work, 任务状态恢复, 跨会话任务, 多会话开发, 上下文丢失, /clear 后继续, 任务恢复, or asks the agent to remember a task across sessions. Also trigger proactively when starting any task likely to span more than one session, even if the user doesn't explicitly request recovery — the upfront MRS structure prevents context-loss surprises later.
 ---
 
@@ -15,8 +15,9 @@ description: Context-resilient task management via a filesystem Minimum Recovery
 - **`snapshot.md`** — Latest checkpoint. **Overwrite** entire file on each update (archive previous first).
 - **`decisions.md`** — Stable conclusions and decisions. Append-only. Required for long tasks (see Tier 1 below).
 - **`utils.md`** — The **single resource registry**: every resource an agent may need to reach, internal or external, remote or local. Not findings, not deliverables.
+- **`problems.md`** — Reusable symptoms, failed attempts and verified fixes, including resolved problems. Update by stable ID; append attempts under the entry. Not the authority for current todos.
 - On conflict between files, `task_state.md` wins.
-- Recovery always prioritizes `Invariants (pinned)` entries, then the newest bounded log entries. Multi-MRS output has a global 4000-character budget.
+- Recovery reserves separate slots for core state, decisions, findings, resources and problem/recall entry points within a global 4000-character budget. Pinned entries are prioritized within their slot; full text stays on disk and is searchable beyond the recent window.
 
 ## Minimum Recovery Set (MRS)
 
@@ -33,8 +34,9 @@ description: Context-resilient task management via a filesystem Minimum Recovery
 - `architecture.md` — Architecture (for system-level tasks)
 - `decisions.md` — Stable conclusions/decisions (**required** when: multi-session, multi-agent, or >10 phases; otherwise optional)
 - `utils.md` — Resource registry (optional for legacy MRS; created for new MRS)
+- `problems.md` — Reusable problem records (created for new MRS; legacy absence is normal, create after the first reusable error/blocker)
 
-**If missing:** WARN, ask user to confirm continuation.
+**If missing:** Follow existing Tier 1 warnings; missing `problems.md` never pauses recovery or requires confirmation.
 
 ### Tier 2: Optional Context (MAY exist)
 - `blockers.md` — Current blockers
@@ -90,6 +92,7 @@ At key checkpoints (recovery, phase transition, major decision, status request, 
 - Latest decisions (source: `decisions.md`)
 - Latest findings and explicit unknowns (source: `findings.md`)
 - Utilities profile (source: `utils.md`, when present)
+- Known problems and full-history recall entry point (source: `problems.md`, when present)
 ```
 
 Full template specification: [references/output-template.md](references/output-template.md)
@@ -164,6 +167,38 @@ written, and the scanner names the source file that still holds the raw value.
 
 Full schema and type reference: [references/artifact-standards.md](references/artifact-standards.md)
 
+## Recall Before Retry
+
+**On an unexpected error, blocker or repeated anomaly, search the selected MRS
+before retrying or choosing another fix.** Recovery summaries are entry points,
+not an exhaustive memory. Use the full history even if a prior fix is absent
+from the latest digest:
+
+```bash
+python <skill-root>/scripts/recall_context.py <mrs-dir> \
+  --query '<error + component or command>' \
+  --scope repo=<known-repo> --scope env=<known-environment>
+```
+
+1. Query symptoms/signatures/components; inspect the matching source lines. The
+   read-only script searches all entries in problems/findings/decisions/progress/utils,
+   not just recent headings. No matches → continue normal diagnosis.
+2. Check current scope, preconditions, verification and superseding decisions.
+   A lexical match is a candidate, not a root-cause verdict. Conflicting declared
+   scope is excluded; missing scope or stale/open records require revalidation.
+3. Reuse a verified fix only when applicable. Retry a failed attempt only with
+   changed conditions, new evidence or an explicit bounded transient-retry policy.
+4. After the first reusable problem is triaged, record it in `problems.md` using
+   [the template](assets/problems.template.md), even if its cause is still unknown.
+   After a successful fix, immediately update its validation evidence. On recurrence,
+   update the same ID and append the attempt/outcome; keep resolved entries searchable.
+5. Exclude expected TDD failures and disposable noise. Keep credentials/raw user
+   data out. Promote stable cross-task lessons into existing project guidance or
+   the relevant tool skill, with one authoritative body and a pointer here.
+
+Required fields and retrieval semantics: [references/problem-recall.md](references/problem-recall.md).
+This is an agent workflow instruction, not a new automatic tool-error hook.
+
 ## Todo Management
 
 `task_state.md` maintains two sections as the **only** authoritative source for todos:
@@ -207,12 +242,12 @@ python <skill-root>/scripts/init_mrs.py
 Behavior:
 1. Collects: Task Goal, Complexity (small/medium/large), Key Requirements (optional)
 2. Renders Tier 0 from templates: `task_state.md`, `plan.md`, `snapshot.md`
-3. Creates empty Tier 1 core logs: `findings.md`, `progress.md`, and `utils.md`
+3. Creates Tier 1 logs/registries: `findings.md`, `progress.md`, `utils.md`, and the empty `problems.md` template
 4. Auto-creates `decisions.md` if `--complexity large`, `--multi-agent`, or >10 requirements
 5. Refuses to write into a non-empty target unless `--force`
 6. **Reminds you to copy MRS rules to project AGENTS.md** for Codex/other agent compatibility (see [references/agents-md-snippet.md](references/agents-md-snippet.md))
 
-If you prefer manual setup, copy templates from `assets/` (`task_state.template.md`, `plan.template.md`, `snapshot.template.md`, `decisions.template.md`, `utils.template.md`) and fill the `{...}` placeholders.
+If you prefer manual setup, copy templates from `assets/` (`task_state.template.md`, `plan.template.md`, `snapshot.template.md`, `decisions.template.md`, `utils.template.md`, `problems.template.md`) and fill the `{...}` placeholders.
 
 ## Plan Registry
 
@@ -243,6 +278,7 @@ Full cross-skill protocol: [references/multi-skill-integration.md](references/mu
 | findings.md | After discoveries | **Append only** |
 | progress.md | After each significant action | **Append only** |
 | utils.md | A resource is first used, or its pointer/access changes | **In-place by row** |
+| problems.md | Reusable error/blocker triaged, attempted fix or recurrence | **In-place by ID**; append attempt history |
 
 **Forbidden paths:** `/.cursor/`, `/agent-tools/`, `/temp/`, `/tmp/`, `/.cache/`
 
@@ -261,6 +297,10 @@ python <skill-root>/scripts/init_mrs.py                       # interactive wiza
 # Check MRS health
 python <skill-root>/scripts/verify_mrs.py .task-state
 python <skill-root>/scripts/verify_mrs.py --json .task-state  # JSON for agents
+
+# Search complete history before retrying an error/blocker (read-only)
+python <skill-root>/scripts/recall_context.py .task-state --query 'error component'
+python <skill-root>/scripts/recall_context.py .task-state --query 'error component' --scope env=local --json
 
 # Draft a Resource Registry from pointers already in a legacy MRS (read-only by default)
 python <skill-root>/scripts/scan_resources.py .task-state
@@ -340,6 +380,7 @@ When initializing MRS for a project that uses multiple agents (Claude Code, Code
 - Give every registry row an explicit `Sensitivity: public|internal|restricted`; restricted rows are excluded per row from snapshots and recovery digests, and likely credential values fail validation.
 - Legacy suffixed `Completed Items` subsections (for example, per-round history) are preserved with a warning; only repeated exact authoritative sections invalidate `task_state.md`.
 - Regenerate `snapshot.md` after updating Tier 1 logs; verification warns when source context is newer than the snapshot.
+- Search complete history before retries; capture reusable problems immediately, retain resolved fixes and recheck scope before reuse.
 - Register every new plan/spec file (under `docs/plans/`, `docs/superpowers/plans/`, `docs/superpowers/specs/`, or a declared root) in Plan Registry immediately
 - Compress `task_state.md` when it exceeds 300 lines
 

@@ -34,6 +34,7 @@ from _state_probe import (  # noqa: E402
     sdd_ledgers,
     ledger_root_for,
 )
+from _context_recall import problem_format_warnings, validate_problems  # noqa: E402
 
 # MRS Tiers
 TIER_0 = ["task_state.md", "plan.md", "snapshot.md"]
@@ -238,7 +239,7 @@ def validate_snapshot(filepath: Path) -> tuple[bool, str, list[str]]:
         # never a reason to treat the file as absent (which routes an agent to
         # initialization over a live MRS).
         required = ["## Context", "## Next Session Should Know"]
-        missing = [sec for sec in required if sec not in content]
+        missing = [sec for sec in required if find_section_line(content, sec) is None]
 
         if missing:
             warnings.append(
@@ -247,7 +248,7 @@ def validate_snapshot(filepath: Path) -> tuple[bool, str, list[str]]:
             )
 
         # WARNING: multiple ## Context sections (improper appending)
-        context_count = len(re.findall(r"^## Context\b", content, re.MULTILINE))
+        context_count = len(re.findall(r"^## Context\s*$", content, re.MULTILINE))
         if context_count > 1:
             warnings.append(
                 f"Snapshot contains {context_count} '## Context' sections. "
@@ -255,7 +256,7 @@ def validate_snapshot(filepath: Path) -> tuple[bool, str, list[str]]:
                 "Regenerate with generate_snapshot.py."
             )
 
-        allowed = {"Context", "Recent Progress", "Current Focus", "Blockers", "Files Modified", "Stable Decisions", "Key Findings", "Utilities", "Next Session Should Know"}
+        allowed = {"Context", "Recent Progress", "Current Focus", "Blockers", "Files Modified", "Stable Decisions", "Key Findings", "Utilities", "Known Problems", "Context Recall", "Next Session Should Know"}
         unknown = [match.group(1).strip() for match in re.finditer(r"^##\s+(.+?)\s*$", content, re.MULTILINE) if match.group(1).strip() not in allowed]
         if unknown:
             warnings.append("Snapshot has unexpected top-level sections: " + ", ".join(unknown[:5]))
@@ -436,7 +437,7 @@ def check_snapshot_drift(directory: Path) -> list[str]:
         return []
     try:
         snapshot_time = snapshot.stat().st_mtime
-        newer = [name for name in ("findings.md", "progress.md", "decisions.md", "utils.md")
+        newer = [name for name in ("findings.md", "progress.md", "decisions.md", "utils.md", "problems.md")
                  if (directory / name).exists() and (directory / name).stat().st_mtime > snapshot_time]
     except OSError:
         return []
@@ -535,6 +536,13 @@ def verify_mrs(directory: Path) -> dict:
     results["warnings"].extend(check_resource_registry(directory))
     results["warnings"].extend(check_pinned_invariants(directory))
     results["warnings"].extend(check_snapshot_drift(directory))
+    if (directory / "problems.md").exists():
+        results["tier1"]["present"].append("problems.md")
+        problem_errors = validate_problems(directory)
+        results["warnings"].extend(problem_errors)
+        results["warnings"].extend(problem_format_warnings(directory))
+        if problem_errors:
+            results["exit_code"] = 3
 
     return results
 
