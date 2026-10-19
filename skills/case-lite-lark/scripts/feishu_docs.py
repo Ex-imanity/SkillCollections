@@ -4,34 +4,35 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 from documents import DocumentReader
 from lark_cli import CLIError, LarkCLI
+from lark_runtime import CLI_INSTALL_HINT, cli_environment, load_runtime
 
 
 def doctor() -> dict:
-    env = dict(os.environ, LARKSUITE_CLI_NO_UPDATE_NOTIFIER="1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER="1")
+    env = cli_environment()
+    runtime = load_runtime()
     checks = [("api", "--help"), ("wiki", "+node-get", "--help"),
               ("wiki", "+node-list", "--help"), ("markdown", "+fetch", "--help"),
               ("docs", "+media-preview", "--help"), ("whiteboard", "+export", "--help")]
     expected = ["--params", "--node-token", "--page-token", "--file-token", "--output", "--output-type"]
     try:
-        version = subprocess.run(["lark-cli", "--version"], capture_output=True, text=True, timeout=15, check=False, env=env)
+        version = subprocess.run(runtime.command("--version"), capture_output=True, text=True, timeout=15, check=False, env=env)
         if version.returncode:
             raise CLIError("无法读取 lark-cli 版本")
         for args, flag in zip(checks, expected):
-            response = subprocess.run(["lark-cli", *args], capture_output=True, text=True, timeout=15, check=False, env=env)
+            response = subprocess.run(runtime.command(*args), capture_output=True, text=True, timeout=15, check=False, env=env)
             if response.returncode or flag not in response.stdout:
                 raise CLIError(f"CLI 缺少 {' '.join(args[:-1])} 所需参数 {flag}，请由平台升级 CLI")
     except FileNotFoundError as exc:
-        raise CLIError("未安装 lark-cli，请由平台预置 CLI") from exc
+        raise CLIError(CLI_INSTALL_HINT, runtime.describe() | {"message": CLI_INSTALL_HINT}) from exc
     except subprocess.TimeoutExpired as exc:
         raise CLIError("CLI 能力检查超时") from exc
-    return {"cli_version": version.stdout.strip(), "capabilities": "available", "auth_verified": False,
+    return {**runtime.describe(), "cli_version": version.stdout.strip(), "capabilities": "available", "auth_verified": False,
             "message": "只检查命令能力；未登录、未读取凭证、未请求飞书资源。首次真实请求仍须验证 user 权限。"}
 
 

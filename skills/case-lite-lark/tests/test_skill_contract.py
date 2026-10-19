@@ -30,7 +30,8 @@ class SkillContractTest(unittest.TestCase):
     def test_evals_cover_discovery_selection_and_partial_media(self):
         data = json.loads((ROOT / "evals/evals.json").read_text())
         self.assertEqual(data["skill_name"], ROOT.name)
-        self.assertEqual(len(data["evals"]), 3)
+        self.assertGreaterEqual(len(data["evals"]), 3)
+        self.assertEqual(len({e["id"] for e in data["evals"]}), len(data["evals"]))
         self.assertTrue(all(e["assertions"] for e in data["evals"]))
 
     def test_style_and_workflow_agree_on_preconditions_and_priority(self):

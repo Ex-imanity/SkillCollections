@@ -6,21 +6,77 @@
       "prompt": "云端 Claude Code 中使用 case-lite-lark。需求：账号重置。给了一篇 Wiki，发现 3 篇子文档，但我尚未决定是否纳入。你准备做什么？不要真实联网或创建文件，仅给出下一步动作和停止位置。",
       "expected_output": "仅保存并展示子文档元数据与层级，等待用户选择纳入/跳过；不读取全部子文档正文、不自动选章或生成用例。",
       "files": [],
-      "assertions": ["在子文档纳入处等待用户", "不自动读取正文或生成用例", "不要求配置 stdio MCP"]
+      "assertions": [
+        "在子文档纳入处等待用户",
+        "不自动读取正文或生成用例",
+        "不要求配置 stdio MCP"
+      ]
     },
     {
       "id": 2,
       "prompt": "用 case-lite-lark 处理 Markdown 文件，用户选择父章节1和子章节1.1；原文含 CRLF、JSON代码围栏和围栏内的#号。两个文档都已选章，但用户还没回复是否有补充信息。CLI目录时获取的哈希也与现在不同。你如何继续？不要真实调用工具，仅说明顺序和语料处理。",
       "expected_output": "先完成统一补充信息确认；文档变化时重新获取目录并确认选章；同文档父子选章去重，脚本原文落盘，不摘要、不把代码围栏内#当标题。",
       "files": [],
-      "assertions": ["等待补充信息回复", "哈希变化触发重新选章确认", "父子重叠去重并保留原文代码和换行"]
+      "assertions": [
+        "等待补充信息回复",
+        "哈希变化触发重新选章确认",
+        "父子重叠去重并保留原文代码和换行"
+      ]
     },
     {
       "id": 3,
       "prompt": "case-lite-lark 的 read 返回 partial：图片A已下载，图片B返回403，Sheet尚未读取。我希望你生成用例后写回caseId123；当前full.md存在格式警告，目标搬山用例也已有内容。给出你会执行和不会执行的具体步骤；不真实调用外部接口或写文件。",
       "expected_output": "对A调用Read；报告B和Sheet缺口并等待补充或用户明确降级决定；保留审核与自检选择，dry-run警告先修复，写回等待确认；不删除现有搬山节点、不盲目追加、不仅凭HTTP成功报告写回成功。",
       "files": [],
-      "assertions": ["下载成功图片仍需Read", "报告媒体与Sheet缺口并等待用户决定", "格式警告与已有节点阻塞写回", "不自动删除或重复写入"]
+      "assertions": [
+        "下载成功图片仍需Read",
+        "报告媒体与Sheet缺口并等待用户决定",
+        "格式警告与已有节点阻塞写回",
+        "不自动删除或重复写入"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "公司平台的 Agent 已绑定团队飞书 App。case-lite-lark 的 doctor 返回 mode=platform、auth_verified=false，实际读取却返回 not_configured，CLI hint 建议 config init --new。请给出下一步操作和停止位置；不要真实调用外部接口，不修改配置。",
+      "expected_output": "不因 auth_verified=false 发起配置或登录；平台复用绑定配置，管理员核对同一 Pod 中 CLI 接入，绝不新建应用或导入本地凭证。",
+      "files": [],
+      "assertions": [
+        "不因 auth_verified=false 发起配置或用户授权",
+        "平台缺配置交由管理员接入绑定 App，不执行新建或本地导入"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "同事在本地首次使用 case-lite-lark。管理员已通过内部渠道给了 /private/team-app.json（团队已有 App），本机已有个人飞书 profile。请给出接入和授权步骤；接入后 status 返回 identity=bot、identities.user.available=false。不要真实执行命令或读取配置中的密钥。",
+      "expected_output": "通过 setup_lark.py local 一次性接入已有团队 App，保留个人 profile；bot 可用不等于 user 已登录，经同一包装入口按需 split-flow 授权，展示链接与二维码后等待用户，不创建 App。",
+      "files": [],
+      "assertions": [
+        "使用一次性本地接入入口导入已有 App，保留个人 profile",
+        "识别 bot 就绪但 user 未授权，使用统一授权包装入口",
+        "展示授权链接及二维码后等待用户，后续轮次继续 device-code"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "本地 case-lite-lark 已完成接入，团队 App 原来就配置在 existing-team profile，doctor 也返回 local/existing-team。用户开始下一个需求；CLI 的全局默认 profile 仍是 personal。用户授权刚失效。你会如何恢复并读取文档？不要真实调用工具，仅给出命令与状态处理。",
+      "expected_output": "复用 existing-team，不重新导入或初始化；通过 setup_lark.py 进行授权、二维码和后续 device-code 续接，文档继续走 feishu_docs.py 保持同一 profile，不切全局默认、不切 bot。",
+      "files": [],
+      "assertions": [
+        "复用 existing-team，不重跑初始化或改变默认 profile",
+        "授权和文档读取都沿用保存的 profile，保持 user 身份",
+        "授权失效按 split-flow 恢复，不使用过期链接或复用他人 token"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "首次在本地安装 case-lite-lark，没有安装过其他飞书 Skill，也没有团队配置。doctor 返回 mode=auto、needs_mode_choice=true、auth_verified=false。请给出下一步动作和停止位置；如果用户接着确认在本地运行，你会如何引导？不要真实调用工具或读取凭证。",
+      "expected_output": "先确认本地或平台并等待，已知本地则不重复问；不因 auth_verified=false 发起登录。缺CLI按本地安装指引，向管理员取得已有团队App配置后运行本地接入，再按需个人授权。不申请新App、不自动扫描旧MCP凭证。",
+      "files": [],
+      "assertions": [
+        "未知运行位置先确认并等待，已明确本地则不重复询问",
+        "不因 auth_verified=false 自动配置或登录，也不创建App",
+        "本地首次从管理员取得已有App配置，接入后再做个人授权"
+      ]
     }
   ]
 }

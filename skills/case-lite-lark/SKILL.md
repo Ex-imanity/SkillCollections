@@ -1,11 +1,11 @@
 ---
 name: case-lite-lark
-version: 0.1.0
+version: 0.2.1
 description: >-
   使用 lark-cli 从飞书 Docx、Wiki 或原生 Markdown 中手动选章，为单一功能点生成测试用例并可选写回搬山。
   用户明确说 case-lite-lark、lark-cli 版用例生成，或要求在云端 Claude Code 中不配置 stdio MCP 生成小需求用例时使用。
   保留选章、补充信息、场景分层复核、完整用例审核和可选自检；适用于 1-2 篇主要文档及经用户确认纳入的子文档。
-compatibility: Python 3.10+、lark-cli（已核对 1.0.97）、具备图片 Read 能力的 Agent；可选搬山 HTTP 服务。
+compatibility: Python 3.10+、lark-cli（读取已核对 1.0.97，接入契约核对 1.0.98）、具备图片 Read 能力的 Agent；可选搬山 HTTP 服务。
 metadata:
   requires:
     bins: [python3, lark-cli]
@@ -13,8 +13,9 @@ metadata:
 
 # case-lite-lark
 
-把用户选择的需求原文和图示转成可执行测试用例。飞书请求统一通过平台的
-`lark-cli --as user`，不注册 MCP，不读取 CLI token，不复制其他应用的凭证。
+把用户选择的需求原文和图示转成可执行测试用例。飞书请求统一通过当前模式的
+`lark-cli --as user`，不注册 MCP，不读取 CLI token。平台复用绑定配置；本地首次
+导入用户指定的内部团队应用配置，成员各自授权，不创建新应用。
 这是独立安装单元，运行时不访问原始 case-lite 或 FeishuMCP 仓库。
 
 ## 入口与运行条件
@@ -26,10 +27,22 @@ metadata:
 python3 "{skill}/scripts/feishu_docs.py" doctor
 ```
 
-`doctor` 仅检查 CLI 版本和命令参数，`auth_verified:false` 不代表认证失败。
-普通任务先尝试实际读取；只有认证、身份或 scope 错误时，读取
-[认证与云端运行](references/auth-and-runtime.md)。不要自动运行登录、安装、
-`config init` 或升级命令；平台可能已统一管理应用配置。
+`doctor` 返回 `mode`、`profile` 和 `needs_mode_choice`，仅检查 CLI 能力；
+`auth_verified:false` 不代表认证失败，不能据此发起配置或授权。
+若返回 `mode:auto`、`needs_mode_choice:true`（缺 CLI 时也可能在 `error` 中），先询问
+“这次在本地 Agent 还是公司平台运行？”并等待回复，不先登录、导入或读取文档。
+用户已明确说明运行位置时直接采用，不重复询问。
+
+用户选择平台后，对本次后续入口显式传入 `CASE_LITE_LARK_MODE=platform`，保留绑定配置；
+平台 Agent 建议预置这个环境变量。选择本地且尚未接入时，读取
+[认证与运行模式](references/auth-and-runtime.md)，用内部提供的配置路径执行一次接入。
+本地设置保存后自动复用；不从旧 case-lite/MCP 自动搬取凭证或登录态。
+
+普通任务先尝试实际读取。只有认证、身份或 scope 错误时，按上述认证指引恢复；
+缺少应用配置与缺少用户授权分开处理。平台缺配置交由管理员接入绑定应用；
+本地缺配置引导一次性接入。即使 CLI hint 建议 `config init --new`，也不要执行。
+不要自动安装、升级、覆盖应用或重置已有登录态。用户授权统一使用
+`setup_lark.py login/status/qrcode`，确保与文档读取使用同一 profile。
 授权恢复后重试读取；资源访问拒绝应由文档所有者授权，不能靠切换 bot 绕过。
 
 输出 JSON 的 `ok:true` 代表命令完成；`read` 的 `data.status` 还须检查：

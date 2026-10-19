@@ -1,4 +1,4 @@
-"""Read-only lark-cli boundary. Credentials stay in the platform CLI."""
+"""Read-only lark-cli boundary. Credentials stay in the selected CLI context."""
 from __future__ import annotations
 
 import json
@@ -7,6 +7,8 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from lark_runtime import CLI_INSTALL_HINT, cli_environment, load_runtime
 
 
 def redact(value: Any) -> Any:
@@ -37,6 +39,10 @@ class LarkCLI:
     def __init__(self, cwd: Path | None = None, timeout: int = 120):
         self.cwd = (cwd or Path.cwd()).resolve()
         self.timeout = timeout
+        try:
+            self.runtime = load_runtime()
+        except ValueError as exc:
+            raise CLIError(str(exc)) from exc
 
     def call(self, *args: str) -> dict:
         if tuple(args[:2]) not in self.READ_COMMANDS and tuple(args[:2]) != ("api", "GET"):
@@ -46,13 +52,13 @@ class LarkCLI:
         return self._json([*args, "--as", "user", "--format", "json"])
 
     def _json(self, args: list[str]) -> dict:
-        env = dict(os.environ, LARKSUITE_CLI_NO_UPDATE_NOTIFIER="1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER="1")
+        env = cli_environment()
         try:
-            result = subprocess.run(["lark-cli", *args], cwd=self.cwd, env=env,
+            result = subprocess.run(self.runtime.command(*args), cwd=self.cwd, env=env,
                                     capture_output=True, text=True, encoding="utf-8",
                                     timeout=self.timeout, check=False)
         except FileNotFoundError as exc:
-            raise CLIError("未安装 lark-cli；请由平台预置 CLI 后重试") from exc
+            raise CLIError(CLI_INSTALL_HINT, self.runtime.describe() | {"message": CLI_INSTALL_HINT}) from exc
         except subprocess.TimeoutExpired as exc:
             raise CLIError("lark-cli 调用超时；请检查网络和平台执行时限") from exc
         stream = result.stdout if result.returncode == 0 else result.stderr
@@ -67,6 +73,16 @@ class LarkCLI:
             error = envelope.get("error") or {"message": "CLI 未确认成功", "exit_code": result.returncode}
             if not isinstance(error, dict):
                 error = {"message": "invalid CLI error envelope"}
+            if error.get("subtype") == "not_configured":
+                if self.runtime.mode == "auto":
+                    hint = "请先确认在本地还是平台运行；本地导入内部提供的已有团队应用配置，平台联系管理员接入绑定 App；不要创建新应用"
+                elif self.runtime.mode == "platform":
+                    hint = "请由平台管理员将绑定应用接入本 Pod 的 lark-cli；不要创建新应用"
+                else:
+                    hint = "请运行 setup_lark.py local --config-file <内部配置> 接入已有团队应用；不要创建新应用"
+                error = error | {"case_lite_mode": self.runtime.mode,
+                                 "needs_mode_choice": self.runtime.mode == "auto",
+                                 "hint": hint, "case_lite_hint": hint}
             raise CLIError(str(error.get("message", "CLI 调用失败")), error)
         if envelope.get("identity") != "user":
             raise CLIError("CLI 未确认 user 身份；请检查平台用户登录态，禁止回退到 bot")

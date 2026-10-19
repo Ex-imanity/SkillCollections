@@ -1,0 +1,5 @@
+{
+  "app_id": "<团队已有应用的AppID>",
+  "app_secret": "<通过内部渠道提供的AppSecret>",
+  "brand": "feishu"
+}
