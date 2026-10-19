@@ -14,6 +14,8 @@ import json,sys,pathlib
 args=sys.argv[1:]
 if args[:2]==['api','GET']:
     if args[2].endswith('/blocks'):
+        if 'document_revision_id' in json.loads(args[args.index('--params')+1]):
+            print(json.dumps({'ok':False,'error':{'code':1770032,'message':'forbidden'}}),file=sys.stderr);sys.exit(1)
         def block(i,t,k=2):
             key='text' if k==2 else 'heading1'
             return {'block_id':i,'block_type':k,key:{'elements':[{'text_run':{'content':t}}]}}

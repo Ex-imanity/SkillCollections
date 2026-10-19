@@ -1,6 +1,6 @@
 ---
 name: case-lite-lark
-version: 0.2.1
+version: 0.2.2
 description: >-
   使用 lark-cli 从飞书 Docx、Wiki 或原生 Markdown 中手动选章，为单一功能点生成测试用例并可选写回搬山。
   用户明确说 case-lite-lark、lark-cli 版用例生成，或要求在云端 Claude Code 中不配置 stdio MCP 生成小需求用例时使用。
@@ -105,8 +105,9 @@ python3 "{skill}/scripts/feishu_docs.py" outline "{url}" \
   --output "{产物根目录}/chapters/{doc-key}.json"
 ```
 
-脚本识别 Docx/Wiki/原生 Markdown。Docx 保存 revision_id，Markdown 保存内容
-哈希；输出仅包含标题等元数据。脚本内部读取文档用于解析，不向模型提前返回全文。
+脚本识别 Docx/Wiki/原生 Markdown。Docx 读取最新 blocks，不传入或校验 revision_id；
+Markdown 保存内容哈希。输出仅包含标题等元数据，脚本内部读取文档用于解析，
+不向模型提前返回全文。
 将目录转成用户编号树，写入 `chapters/{doc-key}-chapters.md` 并展示。
 用户可按编号、关键词或“全选”选择；将展示编号映射到 JSON 的真实 `sections[].id`，
 并记录标题、ID、range。Docx 的 ID 是 block ID，Markdown 的 ID 是 `1`/`1.1`。
@@ -144,7 +145,8 @@ python3 "{skill}/scripts/feishu_docs.py" read \
 用户确认全文导入时，用 `--all` 代替 `--section-id ...`。
 每篇完成后脚本立即更新原文分片、媒体 manifest 和 `selected-corpus.md`。
 同文档重跑替换其分片，不重复追加；不同文档不得复用同一 doc-key。
-版本/哈希变化时重新展示目录并确认选择，不沿用旧 position/ID 强行继续。
+Docx 按最新 blocks 中的章节 ID 重新计算范围，不因版本或块数量变化中止；
+所选章节已不存在时重新展示目录并确认选择。Markdown 哈希变化时仍须重新选章。
 
 `selected-corpus.md` 是脚本提取的选定原文，保留代码、字段、JSON、curl 和完整表格；
 不得摘要、精简或改写。其 `SOURCE` 注释记录来源与章节。

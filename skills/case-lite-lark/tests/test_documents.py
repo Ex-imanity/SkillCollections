@@ -141,13 +141,43 @@ class DocumentTest(unittest.TestCase):
             result = reader.read(outline, ["h1"], Path(temp), "doc")
             self.assertIn("[协议接口](https://example.com/api/v2/pay)", Path(result["corpus_path"]).read_text())
 
-    def test_outline_only_contains_metadata_and_pins_revision(self):
+    def test_outline_only_contains_metadata_without_pinning_revision(self):
         cli = FakeCLI()
         outline = DocumentReader(cli).outline("https://example.feishu.cn/docx/doc")
-        self.assertEqual(outline["revision_id"], 7)
+        self.assertNotIn("revision_id", outline)
         self.assertEqual([s["id"] for s in outline["sections"]], ["h1", "h2"])
         self.assertNotIn("amount=100", json.dumps(outline))
         self.assertEqual([c[1]["page_token"] for c in cli.calls if c[0].endswith("/blocks") and "page_token" in c[1]], ["next"])
+
+    def test_view_only_docx_and_wiki_can_outline_and_read_all_pages(self):
+        class ViewOnly(FakeCLI):
+            def get(self, path, params=None):
+                if path.endswith("/blocks") and "document_revision_id" in (params or {}):
+                    raise CLIError("forbidden", {"code": 1770032})
+                return super().get(path, params)
+        for kind in ("docx", "wiki"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temp:
+                cli = ViewOnly()
+                reader = DocumentReader(cli)
+                outline = reader.outline(f"https://example.feishu.cn/{kind}/doc")
+                result = reader.read(outline, ["h2"], Path(temp), "doc")
+                self.assertEqual(result["status"], "complete")
+                self.assertIn("退款原文", Path(result["corpus_path"]).read_text())
+                self.assertTrue(all("document_revision_id" not in call[1] for call in cli.calls
+                                    if call[0].endswith("/blocks")))
+
+    def test_docx_metadata_does_not_require_revision_id(self):
+        class WithoutRevision(FakeCLI):
+            def get(self, path, params=None):
+                data = super().get(path, params)
+                if "document" in data:
+                    data["document"].pop("revision_id")
+                return data
+        reader = DocumentReader(WithoutRevision())
+        outline = reader.outline("https://example.feishu.cn/docx/doc")
+        with tempfile.TemporaryDirectory() as temp:
+            result = reader.read(outline, ["h1"], Path(temp), "doc")
+            self.assertIn("amount=100", Path(result["corpus_path"]).read_text())
 
     def test_selected_corpus_preserves_text_excludes_other_sections_and_is_idempotent(self):
         reader = DocumentReader(FakeCLI())
@@ -161,13 +191,36 @@ class DocumentTest(unittest.TestCase):
             reader.read(outline, ["h1"], root, "01-backend")
             self.assertEqual(Path(first["corpus_path"]).read_text(), content)
 
-    def test_document_change_rejects_stale_selection_before_writing(self):
+    def test_legacy_outline_reads_latest_content_after_revision_and_block_count_change(self):
         cli = FakeCLI()
         reader = DocumentReader(cli)
         outline = reader.outline("https://example.feishu.cn/docx/doc")
+        outline["revision_id"] = cli.revision
         cli.revision += 1
-        with tempfile.TemporaryDirectory() as temp, self.assertRaisesRegex(CLIError, "变化"):
-            reader.read(outline, ["h1"], Path(temp), "doc")
+        cli.blocks[1] = text_block("p1", "amount=200")
+        cli.blocks.insert(0, text_block("intro", "不应读取的新增前言"))
+        with tempfile.TemporaryDirectory() as temp:
+            result = reader.read(outline, ["h1"], Path(temp), "doc")
+            content = Path(result["corpus_path"]).read_text()
+            self.assertIn("amount=200", content)
+            self.assertNotIn("amount=100", content)
+            self.assertNotIn("不应读取的新增前言", content)
+            self.assertNotIn("退款原文", content)
+
+    def test_removed_heading_requires_reselection_without_replacing_corpus(self):
+        cli = FakeCLI()
+        reader = DocumentReader(cli)
+        outline = reader.outline("https://example.feishu.cn/docx/doc")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            result = reader.read(outline, ["h1"], root, "doc")
+            corpus = Path(result["corpus_path"])
+            previous = corpus.read_bytes()
+            cli.blocks = cli.blocks[1:]
+            cli.revision += 1
+            with self.assertRaisesRegex(CLIError, "章节不存在"):
+                reader.read(outline, ["h1"], root, "doc")
+            self.assertEqual(corpus.read_bytes(), previous)
 
     def test_native_markdown_change_is_detected_and_no_media_is_downloaded(self):
         cli = FakeCLI()

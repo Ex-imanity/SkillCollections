@@ -94,16 +94,12 @@ class DocumentReader:
 
     def _document(self, source: dict) -> dict:
         data = self.cli.get(f"/open-apis/docx/v1/documents/{identifier(source['token'])}")
-        document = data.get("document", {})
-        revision = document.get("revision_id")
-        if not isinstance(revision, int) or revision < 0:
-            raise CLIError("文档未返回有效 revision_id，无法保证选章一致性")
-        return document
+        return data.get("document", {})
 
-    def _blocks(self, source: dict, revision: int) -> list[dict]:
+    def _blocks(self, source: dict) -> list[dict]:
         result, seen, cursors, cursor = [], set(), set(), None
         for _ in range(200):
-            params = {"document_revision_id": revision, "page_size": 500}
+            params = {"page_size": 500}
             if cursor:
                 params["page_token"] = cursor
             page = self.cli.get(f"/open-apis/docx/v1/documents/{identifier(source['token'])}/blocks", params)
@@ -198,9 +194,9 @@ class DocumentReader:
             return {"source": source, "content_sha256": hashlib.sha256(raw.encode()).hexdigest(),
                     "sections": [metadata(s) for s in sections if s["level"] <= max_level]}
         document = self._document(source)
-        blocks = self._blocks(source, document["revision_id"])
+        blocks = self._blocks(source)
         source["title"] = document.get("title", source.get("title", ""))
-        return {"source": source, "revision_id": document["revision_id"], "total_blocks": len(blocks),
+        return {"source": source, "total_blocks": len(blocks),
                 "sections": [s for s in self._docx_sections(blocks) if s["level"] <= max_level]}
 
     def read(self, outline: dict, ids: list[str], output_dir: Path, doc_key: str, all_content: bool = False) -> dict:
@@ -229,12 +225,8 @@ class DocumentReader:
             for section in chosen:
                 chunks.append(self._chunk(source, doc_key, section, section["content"]))
         elif source["type"] == "docx":
-            if self._document(source)["revision_id"] != outline.get("revision_id"):
-                raise CLIError("Docx 文档版本已发生变化，请重新获取目录并确认选章")
-            blocks = self._blocks(source, outline["revision_id"])
+            blocks = self._blocks(source)
             sections = self._docx_sections(blocks)
-            if len(blocks) != outline.get("total_blocks"):
-                raise CLIError("Docx 块数量发生变化，请重新获取目录")
             chosen = [{"id": "all", "title": "全文", "range": {"start_position": 0, "end_position": len(blocks) - 1}}] if all_content else select_sections(sections, ids)
             for section in chosen:
                 bounds = section["range"]

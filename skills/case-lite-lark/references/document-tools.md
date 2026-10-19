@@ -10,7 +10,7 @@ shortcuts 和 raw GET，通过 subprocess argv 调用 CLI，不使用 shell 拼�
 | outline | URL、--output、可选 --max-level | 目录 JSON；无章节正文 |
 | read | --outline-file、--section-id ID... 或 --all、--doc-key、--output-dir | 直接落盘原文和媒体 manifest；JSON 返回路径与状态 |
 
-Docx 通过 raw GET 获取 document metadata 与分页 blocks，固定 revision_id，不使用
+Docx 通过 raw GET 获取 document metadata 与最新分页 blocks，不传入或校验 revision_id，不使用
 可能返回瘦身表格的 `docs +fetch --scope section`。使用 FeishuMCP 3.4.0 的纯 Python
 BlockProcessor 渲染文本、完整表格、代码块和表格单元格内图片锚点。
 只保存目录与选定语料，不持久化全文 blocks 缓存。一个 read 可批量处理多个章节，
@@ -18,8 +18,9 @@ BlockProcessor 渲染文本、完整表格、代码块和表格单元格内图�
 
 Docx ID 是真实 block ID；先按 parent/children 重建文档顺序，标题 range 是该顺序的
 全局 0-based inclusive position，不能把未选表格的后置子块混进其他章节。
-读取时重新获取相同 revision 的 blocks，并检查当前版本和块数量。Markdown 用原文
-SHA256 检测变化；只识别代码围栏外 ATX 标题，保留原文换行符和空白。
+读取时重新获取最新 blocks，按章节 ID 重新计算范围，不比较目录中的版本和块数量；
+旧目录文件中的 revision_id 会被忽略。Markdown 用原文 SHA256 检测变化；
+只识别代码围栏外 ATX 标题，保留原文换行符和空白。
 目录展示为 H1-H4，未展示的深层标题仍保留在父章节内容里。
 
 ## 媒体与内嵌资源
@@ -54,7 +55,8 @@ lark-cli api GET "/open-apis/sheets/v2/spreadsheets/<spreadsheet_token>/values/<
 - stdout 为成功 JSON，stderr 为失败 JSON；不能用 OpenAPI 顶层 code==0 判断 CLI 成功。
 - 返回 bot 身份直接中止；登录与 scope 按认证指南处理。
 - 分页 cursor 缺失/重复、重复 block ID、子块缺失、超过上限均报错，不能使用半篇正文。
-- 文档变化：重新 outline 并确认选章，不复用旧目录的 ID/range。
+- Docx 所选章节 ID 已不存在时，重新 outline 并确认选章；读取使用当前内容，不锁定版本。
+- Markdown 哈希变化时重新 outline 并确认选章，不复用旧目录的 ID/range。
 - read 按 doc-key 替换原文分片并重建 selected-corpus.md；修改选择时重新执行该文档的
   read 即可。用户补充和图示解读放独立文件，不手改生成的原文文件。
 - 网络或解析失败不会替换既有语料；媒体部分失败会保存已取得的正文、缺口清单和 partial 状态。
