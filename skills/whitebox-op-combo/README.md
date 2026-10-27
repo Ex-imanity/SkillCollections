@@ -52,21 +52,26 @@ whitebox-op-combo/
 │   ├── verification.md          状态标记、复现、定级、归属、快速指纹
 │   └── output-templates.md      atoms.md / analysis.md / cases.md 模板
 ├── scripts/op_matrix.py         覆盖检查 + 组合剪枝 + 三元链 + 中断点（仅标准库）
-├── examples/ai-search-answer-card/
-│   ├── atoms.json               真实功能的读写点与原子
-│   └── pairs.md                 脚本输出
-└── tests/test_op_matrix.py
+└── examples/ai-search-answer-card/
+    ├── atoms.json               真实功能的读写点与原子
+    └── pairs.md                 脚本输出
 ```
 
 ## 脚本
 
 ```bash
 python3 scripts/op_matrix.py examples/ai-search-answer-card/atoms.json --out /tmp/pairs.md [--max-chains 30]
-python3 -m pytest -q tests/
 ```
 
 输出包含：覆盖缺口、带依赖标记的有序对（RAW / WAW / STALE / RACE / LAYER 与得分）、剪枝统计、三元穿透链、中断点。
 atoms.json 结构错误（缺必填字段、id 重复、引用不存在的读写点或原子、`represented_by` 链或环）时返回 1。
+
+脚本回归测试保留在源码仓库的 `tests/whitebox-op-combo/`，安装包中的示例可直接
+用于运行脚本。开发验证在源码仓库根目录执行：
+
+```bash
+python tools/run_tests.py
+```
 
 ## 产物
 

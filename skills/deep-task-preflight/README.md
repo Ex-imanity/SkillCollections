@@ -51,9 +51,7 @@ deep-task-preflight/
 ├── SKILL.md
 ├── README.md
 ├── CHANGELOG.md
-├── evals/evals.json
 └── references/
-    ├── adapter-template.md
     ├── packet-template.md
     ├── challenge-checks.md
     └── adapters/
@@ -69,3 +67,13 @@ deep-task-preflight/
 
 复制整个 `deep-task-preflight/` 目录到目标 Agent 的 skills 目录，不要只复制
 `SKILL.md`。
+
+## 源码维护与验证
+
+评估场景在源码仓库的 `evals/deep-task-preflight/`，新增领域 adapter 的维护指南在
+`docs/maintainers/deep-task-preflight.md`；安装和运行不需要这些开发文件。
+维护时在源码仓库根目录执行：
+
+```bash
+python tools/run_tests.py
+```

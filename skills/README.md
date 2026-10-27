@@ -4,7 +4,8 @@
 为 `SKILL.md`。
 
 安装某个 Skill 时复制整个子目录，不要把多个 Skill 合并成一个目录，也不要删除其
-`references/`、`scripts/`、`assets/` 或 `tests/`。
+`references/`、`scripts/`、`assets/` 或 `examples/`（如有）。测试和评估工具保留在
+源码仓库，不属于独立安装单元。
 
 | Skill | 入口 |
 | --- | --- |

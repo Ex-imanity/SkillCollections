@@ -1,5 +1,9 @@
 # Changelog — case-lite-lark
 
+## 0.2.3 - 2026-10-28
+
+- 单元测试与行为评估迁到仓库级 tests/case-lite-lark、evals/case-lite-lark；保留运行脚本、规则资源与配置模板，更新源码检查说明。
+
 ## 0.2.2 - 2026-10-19
 
 - Docx/Wiki 的目录和正文请求不再传入 document_revision_id，改为读取最新 blocks。

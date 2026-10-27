@@ -45,3 +45,6 @@ docs/plans/
 docs/superpowers/
 .test-mrs-scripts/
 .test-discovery/
+
+# Business-derived evaluations stay local until reviewed and redacted.
+/evals/repository-code-style/.local/

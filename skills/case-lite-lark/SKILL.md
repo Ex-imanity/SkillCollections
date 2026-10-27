@@ -1,6 +1,6 @@
 ---
 name: case-lite-lark
-version: 0.2.2
+version: 0.2.3
 description: >-
   使用 lark-cli 从飞书 Docx、Wiki 或原生 Markdown 中手动选章，为单一功能点生成测试用例并可选写回搬山。
   用户明确说 case-lite-lark、lark-cli 版用例生成，或要求在云端 Claude Code 中不配置 stdio MCP 生成小需求用例时使用。

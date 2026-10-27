@@ -1,6 +1,6 @@
 ---
 name: internal-api-cookie-auth
-version: 1.0.1
+version: 1.0.2
 description: >-
   Handle Cookie (CAS) authentication for internal HTTPS API calls without asking users to
   manually paste session Cookies. Use this skill whenever a script, service, or API

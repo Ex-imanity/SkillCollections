@@ -1,6 +1,6 @@
 ---
 name: case-design-strategy-skill
-version: 1.0.0
+version: 1.0.1
 description: Test design strategy and coverage-review guidance for requirement-based cases. Use when the user asks for 用例设计策略, 覆盖度补充, 用例评审, 边界/异常/权限/状态/埋点覆盖, telemetry/cross-end risk analysis, or when no end-to-end case generator is responsible. Also use during `case-lite` self-review when the active workflow explicitly enters coverage review / boundary-exception review. Do not trigger for `case-lite` document ingestion, chapter selection, full generation, or writeback steps.
 ---
 
@@ -46,7 +46,6 @@ If the source is incomplete, continue with explicit assumptions unless one missi
 - Read `references/general-test-design-strategy.md` when the request is broad or the scenario type is unclear.
 - Read `references/pattern-library.md` for complex flows involving state matrices, strategy/fallback logic, cross-end metrics, time windows, frequency limits, or deduplication.
 - Read `references/telemetry-event-testing.md` whenever event tables, `eventid`, exposure/click/conversion tracking, or parameter validation appears.
-- Read `references/skill-evolution.md` only when improving this skill from new historical case samples.
 
 ## Generation Workflow
 1. **Extract Scope**: summarize objective, roles, endpoints/pages, core entities, actions, dependencies, and explicit out-of-scope items.
@@ -142,4 +141,7 @@ Before final output, verify:
 - Pattern bank: `references/pattern-library.md`
 - Universal checklist baseline: `references/general-test-design-strategy.md`
 - Telemetry testing reference: `references/telemetry-event-testing.md`
-- Skill expansion workflow (maintainers only): `references/skill-evolution.md`
+
+Skill maintenance is separate from case design. Maintainers can use
+`docs/maintainers/case-design-strategy-skill.md` in the source repository; it is
+not required to install or run this skill.

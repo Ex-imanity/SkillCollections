@@ -11,6 +11,10 @@
 
 规则：不是每个 commit 都要升版本，但每次升版本必须在此留下条目。
 
+## 1.0.2 - 2026-10-28
+
+- 单元测试和评估迁到仓库级 tests/internal-api-cookie-auth、evals/internal-api-cookie-auth，运行认证和请求脚本及安装使用边界保持不变。
+
 ## 1.0.1 - 2026-10-04
 
 - 修复 `--discover-cas` 只识别 `code=700`、漏掉高途接口实际使用的 `errorCode=700`。

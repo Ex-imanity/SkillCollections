@@ -18,18 +18,28 @@ cross-agent-review/
 │   ├── codex-primary-claudecode-review-loop.md # 基础协作清单（角色/停止条件/失败模式；agent 映射可换）
 │   ├── timeout-continuation.md                 # Codex/Grok/ClaudeCode 超时后原会话续跑与计数边界
 │   └── claude-to-codex-mapping.md              # 可选官方 Codex plugin 映射（fallback）
-├── scripts/                 # 作为 Python 包运行：`python -m scripts.<module>`
+└── scripts/                 # 作为 Python 包运行：`python -m scripts.<module>`
+    ├── __init__.py                  # Python 包入口
     ├── common.py                    # 共享 fail-closed 协议运行时 + run_review_gate 编排
     ├── continuation.py              # 未完成 gate 的会话身份、内容绑定和续跑状态
     ├── to_claude.py                  # 任意 primary→ClaudeCode（claude -p）
     ├── to_codex.py                   # 任意 primary→Codex（codex exec 全权限无确认）
     ├── to_grok.py                    # 任意 primary→Grok（grok --prompt-file headless）
-    ├── runtime_capabilities.py       # 本机已知 agent CLI 能力报告（不发起评审）
-    └── measure_claude_skill_trigger.py  # 真 skill 自动触发量具（eval 工具）
-└── tests/                   # 适配器与本机能力发现回归测试
+    └── runtime_capabilities.py       # 本机已知 agent CLI 能力报告（不发起评审）
 ```
 
 ## 用法
+
+代码 Review 默认要求 reviewer 独立核对实际修改和新增/未跟踪源码、适用规范及
+同职责历史实现。Primary 交接比较基准、风格依据、自审和偏离理由；reviewer 自行
+打开来源验证，不接受“已检查”背书，也不能把通用最佳实践直接称为仓库风格。
+
+最终回复除总体 verdict 外，单列 `Style consistency: PASS | NEEDS CHANGES |
+NOT VERIFIED`，选择一个状态并附双方路径、检查范围及偏离/缺口。纯计划或文档使用
+`NOT APPLICABLE`，不强求代码 diff；混合任务只检查代码部分。状态不自动决定严重度，
+依据不可访问只限制相应审查范围。可以联动 `repository-code-style`，未安装也能按
+共用 prompt 的自包含清单完成。适配器的成功校验没有机械检查这些新增字段或语义，
+primary 必须复核后才能声称风格闭环；prompt 不是工具拦截器。
 
 从本 skill 目录运行（`scripts/` 需作为包解析）：
 
@@ -45,7 +55,7 @@ python -m scripts.runtime_capabilities --json # 本机 agent CLI 发现（不发
 
 每个 review gate 需显式传入：request 文件、artifact key、可读/工作目录、输出路径、超时和用户明确批准。Claude 评审还必须传 `--max-budget-usd`；Codex / Grok CLI 在此路径没有等价 USD 上限，只能以用户批准、超时和固定 attempt cap 限制。先读 `references/cross-agent-review-protocol.md`。
 
-Codex/Grok/ClaudeCode 审核已启动但超时时，可在原命令上增加 `--resume`，继续同一个 gate 和会话，**不增加 attempt 次数**；最终完成只计一次 success。初次调用与续跑都用 `--artifact-path <file>` 登记所有被审文件，防止文件已变更却复用旧审核。每次续跑仍单独计费、记录时长且需要处于用户已批准的范围内；不会自动无限续跑。仅支持新版启动并记录过状态的 Codex/Grok/ClaudeCode gate；ClaudeCode 的原预算上限及读取范围也必须保持一致。Codex 从超时前的原生 JSONL 事件获取 UUID，并使用 `codex exec resume <UUID>`；本地会话记录缺失时拒绝启动续跑。两个 primary 的反向调用方法见 [Codex 测试入口](references/reverse-codex-test.md)。细节见 [超时续跑](references/timeout-continuation.md)。
+Codex/Grok/ClaudeCode 审核已启动但超时时，可在原命令上增加 `--resume`，继续同一个 gate 和会话，**不增加 attempt 次数**；最终完成只计一次 success。初次调用与续跑都用 `--artifact-path <file>` 登记所有被审文件，防止文件已变更却复用旧审核。每次续跑仍单独计费、记录时长且需要处于用户已批准的范围内；不会自动无限续跑。仅支持新版启动并记录过状态的 Codex/Grok/ClaudeCode gate；ClaudeCode 的原预算上限及读取范围也必须保持一致。Codex 从超时前的原生 JSONL 事件获取 UUID，并使用 `codex exec resume <UUID>`；本地会话记录缺失时拒绝启动续跑。ClaudeCode/Grok primary 调用 Codex reviewer 的方法见包内 [Codex reviewer 入口](references/timeout-continuation.md#codex-reviewer)。细节见 [超时续跑](references/timeout-continuation.md)。
 
 约定输出目录（与现有一致，Grok 对称扩展）：
 
@@ -94,25 +104,28 @@ python -m scripts.to_grok <正常的必填 gate 参数> --model grok-4.5
 - 无官方 Codex plugin 依赖（plugin 仅作可选 fallback，见 mapping reference）。
 - Python 3.8+，仅用标准库。跨平台：POSIX 用 `fcntl`、Windows 用 `msvcrt` 做 marker 锁；两者都没有的平台 fail closed，而不是跳过串行化。
 - 连续性契约：marker/成本日志为调用方指定的文件路径，可由任意 MRS/task-state 机制（如 `context-resilient-task`）满足；本 skill 不硬依赖它。
+- 证据分类与缺失处理使用包内清单和协议；历史 play-book 本机路径只是可选出处，不是分发安装后的必读依赖。
 
 ## 验证与历史证据
 
+- **2.3.0 源码验证（2026-10-28）**：113 项技能测试及 8 项仓库约定通过；三向 runner 捕获的 prompt 风格契约断言先失败、修改共用 prompt 后通过。fresh-context 合成审核能输出独立风格状态、双侧依据，以及证据不足/纯文档分流。旧版在同一简单场景也发现偏离，不能宣称漏检率降低。集合内的 repository-code-style 另有合成对照记录；没有为风格状态增加机械结果校验。
+- **2.3.0 ClaudeCode 真实只读审核（2026-10-28）**：用户授权 1200 秒 / USD 5，首次调用 241.986 秒完成，报告费用 USD 1.548766；结论 `APPROVE WITH NITS`、`Style consistency: PASS`，20 个受审文件保持不变。唯一非阻断项是基础清单继承的本机路径必读指令，随后已改为包内指引；这次文档修正经过本地检查，未再次付费复审，不把原 verdict 扩大为对修正后版本的复审结论。
 - **2.2.0 源码验证（2026-10-19）**：113 项技能测试、8 项仓库约定检查及 `git diff --check` 通过。覆盖三向超时续跑、文件与会话绑定、attempt 复用、单次 success 提交、完成后拒绝续跑，以及 Codex 启动器/原生子进程终止。
 - **Codex 真实本机验证**：macOS、`codex-cli 0.163.0`，首段 60.021 秒超时，原 UUID 续跑 111.935 秒完成；计数从 `attempts=1/successes=0` 变为 `1/1`，完成后再次续跑被拒绝且没有启动模型调用。这验证的是适配器生命周期，不代表独立跨 Agent 审核通过。
 - **ClaudeCode 真实本机验证**：首段及原会话续跑均在约 60 秒超时，计数保持 `attempts=1/successes=0`；本次尚未真实验证续跑后的最终完成分支。Grok 的本次 2.2.0 续跑实现已通过确定性回归，尚未对本次源码完成真实模型验证。
 - **平台边界**：Codex 真实调用验证在 macOS 进行；Windows 的 `taskkill` 超时与失败分支通过受控回归测试验证，未在 Windows 实机运行。审核发现的该清理分支问题在真实调用后修复，并重新通过完整回归。
 
-在仓库根目录运行当前回归：
+适配器回归位于源码仓库的 `tests/cross-agent-review/`，自动触发量具与真实调用
+验证说明位于 `evals/cross-agent-review/`。这些是维护资料，不属于安装后的运行依赖。
+在源码仓库根目录运行当前回归：
 
 ```bash
-python3 -m unittest discover -s skills/cross-agent-review/tests
-python3 -m unittest discover -s tests
-git diff --check
+python tools/run_tests.py
 ```
 
 以下为历史证据，不能替代当前版本的验证：
 
-- 历史 play-book 适配器单测 `124 passed` 及其他数字仅为 provenance；安装者应运行本 bundle 的测试和实际 review gate。
-- 端到端：正向 Claude adapter first-use PASS；2026-07-25 使用真实 `claude-cli/2.1.216` 子进程身份完成网关兼容 gate；Codex `codex exec` 直连 PASS。Grok 方向以本 bundle 单测 + 本机 `grok` headless 能力为准，安装后仍需各自做一次真实 gate 再宣称 e2e。
+- 历史 play-book 适配器单测 `124 passed` 及其他数字仅为 provenance；维护者应在源码仓库运行当前回归，实际 review gate 仍需在用户批准范围内验证。
+- 端到端：正向 Claude adapter first-use PASS；2026-07-25 使用真实 `claude-cli/2.1.216` 子进程身份完成网关兼容 gate；Codex `codex exec` 直连 PASS。Grok 方向的历史依据是当时的源码单测 + 本机 `grok` headless 能力，安装后仍需各自做一次真实 gate 再宣称 e2e。
 - 压力 A/B：with-skill 拒绝伪造 verdict 有明显 uplift。
 - 真 installed-skill 自动触发量具（历史）：**正例 9/10、负例 10/10（0 误触发），19/20 确定、0 ambiguous**。

@@ -593,3 +593,9 @@ skill 读取 `task_state.md`，从 `Active Todos` 和 `Next Action` 中还原工
 ---
 
 **设计理念：** Context is not input, it's output.
+
+## 开发验证
+
+开发测试与评估保留在源码仓库的 `tests/`、`evals/`，不随本目录分发。维护者在源码
+仓库根目录使用 Python 3.11+ 执行 `python tools/run_tests.py`；安装后执行用户任务不依赖
+这些开发目录。

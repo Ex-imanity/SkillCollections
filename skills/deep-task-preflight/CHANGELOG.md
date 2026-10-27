@@ -1,5 +1,9 @@
 # Changelog — deep-task-preflight
 
+## 1.2.1 - 2026-10-28
+
+- 合成评估迁到仓库级 evals/deep-task-preflight，维护者新增 adapter 模板迁到 docs/maintainers；保留实际 preflight 模板、检查表和各领域 adapter。
+
 ## 1.2.0 - 2026-10-06
 
 - 重构核心流程为通用 preflight、gate、追踪和四级验证梯度，核心只保留跨领域规则。

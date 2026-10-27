@@ -75,15 +75,16 @@ Docx/Wiki 始终读取最新 blocks，不显式指定或校验 revision_id，所
 写回必须先 dry-run，用户确认后加 `--confirm`。已有节点会阻塞，脚本不覆盖或删除。
 写回成功还须读回并核对内容。超时或状态未知时不自动重发。
 
-## 验证
+## 源码验证
+
+以下开发检查在源码仓库根目录执行，安装后的 Skill 不依赖测试或评估目录：
 
 ```bash
-python3 -m unittest discover -s skills/case-lite-lark/tests
-python3 -m unittest discover -s tests
-git diff --check
+python tools/run_tests.py
 ```
 
 测试使用合成文档与模拟 CLI/搬山响应，不需要账号，覆盖首次接入、重复接入、配置冲突、
 跨命令 profile 一致性和平台模式不初始化。云端发布前仍需验证实际授权、
 真实文档/图片读取、模型视觉输入与 Pod 重建后的状态恢复。
-行为评估场景见 [evals/evals.json](evals/evals.json)，实现来源见 [UPSTREAM.md](UPSTREAM.md)。
+测试位于源码仓库的 `tests/case-lite-lark/`，行为评估场景位于
+`evals/case-lite-lark/evals.json`；实现来源见包内 [UPSTREAM.md](UPSTREAM.md)。

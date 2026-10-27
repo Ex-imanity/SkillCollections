@@ -61,8 +61,17 @@ The reviewer is not the primary continuity owner in this workflow. It should cha
   - do not upgrade text mentions, review documents, or exported notes into transcript evidence
 - A target review output path under `Review/ByClaudeCode/`, `Review/ByCodex/`, or `Review/ByGrok/`.
 - Explicit review questions.
+- For source-code changes: repository/module and comparison base, actual changed
+  and new/untracked files, applicable conventions, local style evidence and
+  self-review/deviation rationale. If the implementation has no such record, the
+  reviewer reconstructs it from source rather than assuming compliance or failure.
 
-For raw-session reading, use `/Users/gaotu/Projects/play-book/docs/reference/session-reading.md`. For evidence layering and artifact-only review handling, follow the Evidence Rules in `/Users/gaotu/Projects/play-book/docs/templates/evidence-indexed-retrospective.md`.
+For evidence classification, use the Required Inputs above and the
+[bundled protocol](cross-agent-review-protocol.md). Read only evidence authorized
+by the review request. If raw sessions are unavailable, state that limitation and
+keep review artifacts distinct from transcript evidence. Author-machine paths in
+Evidence Basis and Review Closure Notes below are optional historical provenance,
+not prerequisites for an installed bundle.
 
 ## Workflow
 
@@ -105,6 +114,12 @@ The request should include:
 - instruction not to directly edit the reviewed artifact
 - known limitations, such as verified-absent raw sessions, pruned sessions, artifact-only reviews, or repo access uncertainty
 
+For code, include the style evidence above and ask the reviewer to independently
+open pre-existing same-role implementations. Provide paths to an available
+`repository-code-style` skill and only applicable references when readable by the
+peer; otherwise include the necessary checklist in the request. The bundled
+shared prompt already supplies a minimal checklist without a skill dependency.
+
 For multi-repo work, include the repo paths explicitly. If review needs subagents, suggest a partition:
 
 - one reviewer per repo or owner
@@ -121,6 +136,13 @@ Expected review shape:
 - Findings ordered by severity, such as P0/P1/P2/P3.
 - Each finding cites exact paths, raw-session locators, file lines, commits, or command output.
 - Explicit answers to the review questions.
+- For code, a separate `Style consistency: PASS | NEEDS CHANGES | NOT VERIFIED`
+  conclusion with changed-file and historical-comparator paths/lines, relevant
+  scope and deviations. Review directory ownership, injection/annotations, naming,
+  reuse/query/object construction, errors/logging, comments and tests as relevant.
+  Verify implementer claims; generic best-practice praise is not repository
+  evidence. Use `NOT APPLICABLE` for plans/documents without source-code changes;
+  apply the code checklist only to the code portion of mixed artifacts.
 - Recommendation for next step.
 
 If ClaudeCode cannot access a target repo or raw session, it must mark the review area blocked or evidence-limited. If raw ClaudeCode sessions are verified absent but project-local review files exist, it must label those files as artifact evidence, not transcript evidence. It must not infer findings from memory.
@@ -169,6 +191,11 @@ Codex processes the review:
 4. Update the reviewed artifact.
 5. Add review closure notes that map findings to changes.
 
+For style findings, distinguish explicit rule violations, supported local-pattern
+deviations, justified exceptions, suggestions and unavailable evidence. Determine
+severity from impact; do not dismiss an explicit convention violation merely
+because it was labeled P3, or treat every style suggestion as a blocker.
+
 ### 6. Codex Updates MRS
 
 Codex updates:
@@ -191,6 +218,9 @@ Before handing off to ClaudeCode, confirm:
 - Raw-session gaps are classified as pruned, verified-absent, artifact-only, or unknown.
 - The request asks about overgeneralization, missing risks, and evidence strength.
 - The request asks ClaudeCode not to edit the reviewed artifact directly.
+- For code, the request provides a comparison base and style evidence/questions;
+  the reviewer can access the actual source and pre-existing comparators or the
+  limitation is explicit. A skill name alone is not a self-contained handoff.
 
 ## Review Closure Checklist
 
@@ -201,6 +231,11 @@ Before claiming the loop is complete, confirm:
 - The reviewed artifact includes review closure notes or the MRS records the closure.
 - MRS verification passes.
 - Any remaining candidate/promotion decision is explicit.
+- For code, the style conclusion and both sides' evidence match the delivered
+  revision, and confirmed required changes are resolved or supported exceptions
+  are recorded. Missing evidence remains `NOT VERIFIED`; it cannot be called
+  style closure. A passing envelope/verdict or functional test is not proof of
+  this check. Pure documents/plans are not blocked for having no code diff.
 
 ## Stop Conditions
 

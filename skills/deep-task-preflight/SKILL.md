@@ -1,6 +1,6 @@
 ---
 name: deep-task-preflight
-version: 1.2.0
+version: 1.2.1
 description: >-
   Use before work when the goal, scope, completion criteria, or evidence boundary is unclear;
   when a previous attempt was rejected for missing context or incomplete verification; when
@@ -113,9 +113,10 @@ multi-agent work, persist the packet and decisions with `context-resilient-task`
 
 ## Route to an adapter
 
-Read only the relevant reference before execution; new domains should add an adapter rather
-than expand this core. The adapter must describe representative inputs, boundary checks,
-consumer read-back, failure cases, and evidence to retain.
+Read only the relevant bundled reference before execution. The adapter describes
+representative inputs, boundary checks, consumer read-back, failure cases, and evidence
+to retain. If no adapter fits, use the universal verification ladder and state the
+task-specific boundary checks in the preflight packet.
 
 | Task shape | Reference |
 |---|---|
