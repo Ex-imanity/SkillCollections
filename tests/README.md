@@ -15,6 +15,12 @@ identical test/module names and their own `scripts` package, so combining them
 in one interpreter can test the wrong imported module. Bytecode generation is
 disabled to avoid contaminating folders that users copy for installation.
 
+MRS validation fixtures use isolated `.test-mrs-*` directories in the repository,
+because the runtime validator rejects state stored under `/tmp/`. These
+directories are cleaned up after each test and ignored by Git. CLI adapter tests
+mock executable discovery and reviewer calls; installed Codex, Claude Code or Grok
+programs and provider credentials are not required.
+
 For a focused suite:
 
 ```bash

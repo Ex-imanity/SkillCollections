@@ -7,12 +7,13 @@ import os
 from pathlib import Path
 
 
-SKILL_ROOT = Path(__file__).resolve().parents[2] / "skills" / "context-resilient-task"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SKILL_ROOT = REPO_ROOT / "skills" / "context-resilient-task"
 
 
 class MrsScriptsTest(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="crt-mrs-scripts-")
+        self.temp = tempfile.TemporaryDirectory(prefix=".test-mrs-", dir=REPO_ROOT)
         self.addCleanup(self.temp.cleanup)
         self.work_root = Path(self.temp.name)
 

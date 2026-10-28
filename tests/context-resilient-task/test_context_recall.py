@@ -9,12 +9,13 @@ import tempfile
 import unittest
 
 
-SCRIPTS = Path(__file__).resolve().parents[2] / "skills" / "context-resilient-task" / "scripts"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS = REPO_ROOT / "skills" / "context-resilient-task" / "scripts"
 
 
 class ContextRecallTest(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="crt-recall-")
+        self.temp = tempfile.TemporaryDirectory(prefix=".test-mrs-", dir=REPO_ROOT)
         self.project = Path(self.temp.name)
         self.mrs = self.project / ".task-state"
         self.run_script("init_mrs.py", "--dir", self.mrs, "--goal", "Recover test",

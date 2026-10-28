@@ -95,7 +95,7 @@ for path in sorted((bundle / 'scripts').glob('*.py')):
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_copied_mrs_skill_initializes_from_packaged_templates(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(prefix=".test-mrs-", dir=REPO_ROOT) as directory:
             copied = Path(directory) / "context-resilient-task"
             shutil.copytree(SKILLS_ROOT / copied.name, copied)
             state = Path(directory) / "project" / ".task-state"

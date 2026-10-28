@@ -44,6 +44,7 @@ skills/context-resilient-task/docs/
 docs/plans/
 docs/superpowers/
 .test-mrs-scripts/
+.test-mrs-*/
 .test-discovery/
 
 # Business-derived evaluations stay local until reviewed and redacted.

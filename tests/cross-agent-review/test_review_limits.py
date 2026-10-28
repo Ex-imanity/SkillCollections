@@ -685,9 +685,10 @@ class ReviewLimitTests(unittest.TestCase):
                 "timeout_seconds": 1,
             }
 
-            first = to_codex.codex_review_gate(**arguments)
-            second = to_codex.codex_review_gate(**arguments)
-            third = to_codex.codex_review_gate(**arguments)
+            with mock.patch.object(to_codex.shutil, "which", return_value="/opt/codex"):
+                first = to_codex.codex_review_gate(**arguments)
+                second = to_codex.codex_review_gate(**arguments)
+                third = to_codex.codex_review_gate(**arguments)
 
             self.assertEqual("other_error", first.status)
             self.assertEqual("other_error", second.status)
@@ -1047,7 +1048,7 @@ class ModelSelectionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with mock.patch.object(to_codex, "codex_available", return_value=True):
+            with mock.patch.object(to_codex.shutil, "which", return_value="/opt/codex"):
                 result = to_codex.codex_review_gate(
                     request_prompt="Review the artifact.",
                     cd=str(root),
@@ -1437,7 +1438,7 @@ class GrokReviewerTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with mock.patch.object(to_grok, "grok_available", return_value=True):
+            with mock.patch.object(to_grok.shutil, "which", return_value="/opt/grok"):
                 result = to_grok.grok_review_gate(
                     request_prompt="Review the artifact.",
                     cd=str(root),
