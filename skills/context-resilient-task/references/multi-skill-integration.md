@@ -199,7 +199,7 @@ project/
   │   └── plans/                   # superpowers ≥ 5.0 plans (writing-plans)
   ├── .superpowers/sdd/<plan>/     # superpowers 6.x ledger (git-ignored, transient)
   │
-  ├── .task-state/                 # MRS (context-resilient-task)
+  ├── .task-state/main/            # default MRS slot (context-resilient-task)
   │   ├── task_state.md            # Source of truth (in-place updated)
   │   ├── plan.md                  # Active plan + Plan Registry
   │   ├── snapshot.md              # Latest checkpoint
@@ -207,7 +207,7 @@ project/
   │   ├── progress.md              # Session log (append-only)
   │   ├── decisions.md             # ADRs (Tier 2)
   │   ├── blockers.md              # Blockers (Tier 2)
-  │   └── archive/                 # Completed MRS snapshots
+  │   └── snapshots/               # Prior checkpoints for this task
   │
   └── src/                         # Code being developed
 ```
@@ -224,7 +224,7 @@ When the MRS is being created after plan files already exist, the agent should:
 1. **Run the bundled initializer** to create Tier 0 from templates:
 
    ```
-   python <skill-root>/scripts/init_mrs.py --dir .task-state \
+   python <skill-root>/scripts/init_mrs.py --slot main \
        --goal "<task goal>" --complexity <small|medium|large> \
        --requirements "<req1;req2;...>"
    ```
@@ -235,7 +235,7 @@ When the MRS is being created after plan files already exist, the agent should:
 
 2. **Seed plan.md from the most recent existing implementation plan.** Read the newest file in
    `docs/superpowers/plans/` (or, for older projects, the newest non-`-design` file in
-   `docs/plans/`) and merge its phases into the freshly generated `.task-state/plan.md`. Preserve
+   `docs/plans/`) and merge its phases into the freshly generated `.task-state/main/plan.md`. Preserve
    the Plan Registry section inserted by the initializer.
 
 3. **Build the Plan Registry rows.** Scan every plan root (`docs/plans/`,
@@ -249,7 +249,7 @@ When the MRS is being created after plan files already exist, the agent should:
 5. **Generate a snapshot** to capture this initial state:
 
    ```
-   python <skill-root>/scripts/generate_snapshot.py .task-state
+   python <skill-root>/scripts/generate_snapshot.py .task-state/main
    ```
 
 The exact tool used to read existing plan files (Read, cat, file viewer, etc.) is
@@ -276,6 +276,6 @@ When all work is done:
 1. Set `task_state.md` → `status: completed`
 2. Verify all Plan Registry entries are `completed` or `abandoned`
 3. Generate final snapshot with `--archive` flag
-4. Optionally move `.task-state/` to `.task-state/archive/YYYY-MM-DD/`
+4. Optionally archive the completed `.task-state/<slot>/` leaf under `.task-state/archive/`, updating its entry points.
 
 On next invocation, the skill detects `status=completed` and prompts archival instead of resuming.

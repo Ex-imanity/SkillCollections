@@ -19,6 +19,7 @@ import argparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _state_probe import read_context_entry_records, utils_records, format_context_entry, bounded_text, work_root_for  # noqa: E402
 from _context_recall import balanced_sections, context_sections  # noqa: E402
+from _mrs_discovery import mrs_project_root, resolve_mrs_dir  # noqa: E402
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOT_TEMPLATE_PATH = SKILL_ROOT / "assets" / "snapshot.template.md"
@@ -175,13 +176,9 @@ def normalize_blockers(raw: str) -> str:
 def infer_project_root(mrs_dir: Path) -> Path:
     """Infer project root from an MRS directory.
 
-    Directories named .task-state or .task-state-<slug> scan the parent
-    project. Otherwise preserve the historical behavior and scan the
-    provided directory.
+    Delegate to shared routing so nested leaves scan their owning project.
     """
-    if mrs_dir.name == ".task-state" or mrs_dir.name.startswith(".task-state-"):
-        return mrs_dir.parent
-    return mrs_dir
+    return mrs_project_root(mrs_dir)
 
 
 def generate_snapshot(mrs_dir: Path, project_root: Path | None = None) -> str:
@@ -280,7 +277,10 @@ def main():
     parser.add_argument("directory", nargs="?", default=".", help="MRS directory (default: current)")
 
     args = parser.parse_args()
-    directory = Path(args.directory).resolve()
+    try:
+        directory = resolve_mrs_dir(Path(args.directory))
+    except ValueError as exc:
+        parser.error(str(exc))
     project_root = Path(args.project_root).resolve() if args.project_root else None
 
     if not directory.is_dir():

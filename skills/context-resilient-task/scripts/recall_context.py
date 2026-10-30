@@ -9,6 +9,7 @@ from pathlib import Path
 
 from _context_recall import balanced_sections, clip, search_context
 from _state_probe import configure_utf8_stdout, has_sensitive_value
+from _mrs_discovery import resolve_mrs_dir
 
 
 def bounded_value(value: str, budget: int) -> str:
@@ -41,6 +42,10 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     configure_utf8_stdout()
+    try:
+        args.mrs = resolve_mrs_dir(args.mrs)
+    except ValueError as exc:
+        parser.error(str(exc))
     if not args.mrs.is_dir():
         parser.error("MRS directory does not exist")
     if has_sensitive_value(args.query) or any(has_sensitive_value(s) for s in args.scope):

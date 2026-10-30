@@ -11,23 +11,49 @@ superpowers `.superpowers/sdd/` ledgers live at that worktree's git toplevel
 from __future__ import annotations
 
 import subprocess
+import re
 from functools import lru_cache
 from pathlib import Path
 
 
 MRS_PREFIX = ".task-state"
+MRS_ARTIFACTS = ("task_state.md", "plan.md", "snapshot.md", "architecture.md", "findings.md",
+                 "progress.md", "decisions.md", "utils.md", "problems.md", "blockers.md")
+RESERVED_SLOTS = {"archive", "cross-agent-review", "snapshots"}
+
+
+def validate_slot(value: str) -> str:
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value) or value in RESERVED_SLOTS:
+        raise ValueError("slot must use lowercase letters/numbers/hyphens and not be a reserved directory")
+    return value
+
+
+def has_mrs_artifacts(path: Path) -> bool:
+    """One surviving artifact is enough: damaged/partial MRS must stay visible."""
+    return any((path / name).is_file() for name in MRS_ARTIFACTS)
 
 
 def is_mrs_dir(path: Path) -> bool:
-    """True for `.task-state` or `.task-state-<slug>` directories."""
-    return path.is_dir() and (
-        path.name == MRS_PREFIX or path.name.startswith(f"{MRS_PREFIX}-")
-    )
+    """Recognize legacy records and nested leaves, never a runtime-only container."""
+    if not path.is_dir():
+        return False
+    if path.name.startswith(f"{MRS_PREFIX}-"):
+        return True  # Legacy named, including incomplete records.
+    if path.name == MRS_PREFIX:
+        return has_mrs_artifacts(path)
+    return (path.parent.name == MRS_PREFIX and path.name not in RESERVED_SLOTS
+            and not path.name.startswith(".") and has_mrs_artifacts(path))
 
 
 def _mrs_dirs_in(directory: Path) -> list[Path]:
     try:
-        return sorted(p for p in directory.iterdir() if is_mrs_dir(p))
+        found = []
+        for path in directory.iterdir():
+            if is_mrs_dir(path):
+                found.append(path.resolve())
+            if path.name == MRS_PREFIX and path.is_dir():
+                found.extend(p.resolve() for p in path.iterdir() if is_mrs_dir(p))
+        return sorted(set(found))
     except OSError:
         return []
 
@@ -107,6 +133,8 @@ def _walk_up(start: Path, stop: Path | None = None) -> list[Path]:
     """MRS dirs at the first ancestor of start (up to stop, inclusive) containing any."""
     current = start
     while True:
+        if is_mrs_dir(current):
+            return [current.resolve()]
         matches = _mrs_dirs_in(current)
         if matches or current == stop or current.parent == current:
             return matches
@@ -143,10 +171,26 @@ def find_mrs_dirs(start: Path) -> list[Path]:
 
 
 def mrs_project_root(mrs_dir: Path) -> Path:
-    """Project that owns an MRS directory (its parent for `.task-state*`)."""
+    """Owning project for legacy, nested and explicitly selected archive records."""
     if mrs_dir.name == MRS_PREFIX or mrs_dir.name.startswith(f"{MRS_PREFIX}-"):
         return mrs_dir.parent
+    for parent in mrs_dir.parents:
+        if parent.name == MRS_PREFIX:
+            return parent.parent
     return mrs_dir
+
+
+def resolve_mrs_dir(path: Path) -> Path:
+    """Resolve an explicit old path; a bare multi-slot container stays ambiguous."""
+    from _mrs_paths import resolve_path
+    target = resolve_path(path)
+    if target.name == MRS_PREFIX and not has_mrs_artifacts(target):
+        leaves = _mrs_dirs_in(target)
+        if len(leaves) > 1:
+            raise ValueError("MRS container contains multiple slots; pass an explicit slot directory")
+        if leaves:
+            target = leaves[0]
+    return target
 
 
 def work_root_for(mrs_dir: Path, start: Path | None = None) -> Path:

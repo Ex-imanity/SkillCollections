@@ -45,6 +45,7 @@ from _state_probe import (  # noqa: E402
     sdd_ledgers,
 )
 from _context_recall import balanced_sections, context_sections  # noqa: E402
+from _mrs_discovery import mrs_project_root, resolve_mrs_dir  # noqa: E402
 
 MARKER = "🗂  context-resilient-task"
 SDD_HINT = ".superpowers/sdd/"
@@ -73,7 +74,7 @@ def render_single(mrs_dir: Path, start: Path | None = None) -> str:
     state = read_state(mrs_dir)
     root = work_root_for(mrs_dir, start)
     lines = [f"{MARKER} — restored from disk: {mrs_dir}", ""]
-    if root != mrs_dir.parent:
+    if root != mrs_project_root(mrs_dir):
         lines.append(f"(shared MRS; current worktree: {root})")
         lines.append("")
 
@@ -196,7 +197,7 @@ def render_multiple(mrs_dirs: list[Path], start: Path | None = None) -> str:
 
 
 def build_output(start: Path, as_json: bool, mrs: Path | None = None) -> str:
-    mrs_dirs = [mrs] if mrs is not None else find_mrs_dirs(start)
+    mrs_dirs = [resolve_mrs_dir(mrs)] if mrs is not None else find_mrs_dirs(start)
     if not mrs_dirs:
         return ""
 
@@ -238,7 +239,7 @@ def main() -> int:
         start = resolve_start(args.start)
         if not start.is_dir():
             return 0 if args.hook else 1
-        mrs = Path(args.mrs).resolve() if args.mrs else None
+        mrs = resolve_mrs_dir(Path(args.mrs)) if args.mrs else None
         if mrs is not None and not mrs.is_dir():
             print(f"restore_context error: {mrs} is not a directory", file=sys.stderr)
             return 0 if args.hook else 1

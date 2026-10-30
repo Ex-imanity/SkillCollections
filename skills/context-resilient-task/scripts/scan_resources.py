@@ -25,7 +25,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = SCRIPT_DIR.parent / "assets"
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from _mrs_discovery import find_mrs_dirs  # noqa: E402
+from _mrs_discovery import find_mrs_dirs, resolve_mrs_dir  # noqa: E402
 from _state_probe import configure_utf8_stdout  # noqa: E402
 
 # A bracketed IPv6 host is matched as a unit, otherwise the class stops at `]`
@@ -312,7 +312,10 @@ def main() -> int:
     args = parser.parse_args()
     configure_utf8_stdout()
 
-    target = Path(args.directory).resolve()
+    try:
+        target = resolve_mrs_dir(Path(args.directory))
+    except ValueError as exc:
+        parser.error(str(exc))
     if not target.is_dir():
         print(f"not a directory: {target}", file=sys.stderr)
         return 1

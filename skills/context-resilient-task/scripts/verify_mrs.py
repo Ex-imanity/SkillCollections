@@ -633,7 +633,11 @@ def main():
     parser.add_argument("--json", action="store_true", help="Output as JSON for agent consumption")
 
     args = parser.parse_args()
-    directory = Path(args.directory)
+    from _mrs_discovery import resolve_mrs_dir
+    try:
+        directory = resolve_mrs_dir(Path(args.directory))
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if not directory.is_dir():
         if args.json:

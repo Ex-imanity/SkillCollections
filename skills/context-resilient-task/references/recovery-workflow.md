@@ -237,7 +237,7 @@ If task_state.md shows status=completed:
 task_state.md status=completed
 
 This task is marked done. Options:
-1. Archive MRS to .task-state/archive/
+1. Archive the selected .task-state/<slot>/ leaf under .task-state/archive/ (never move the whole container)
 2. Start new task (reinitialize)
 3. Reopen task (set status=active)
 ```

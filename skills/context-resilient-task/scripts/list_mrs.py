@@ -112,6 +112,9 @@ def main() -> int:
 
     start = Path(args.start).resolve()
     if not start.is_dir():
+        from _mrs_paths import resolve_path
+        start = resolve_path(start)
+    if not start.is_dir():
         print(f"Error: {start} is not a directory", file=sys.stderr)
         return 1
 

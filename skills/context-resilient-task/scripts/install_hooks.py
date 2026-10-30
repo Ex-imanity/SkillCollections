@@ -6,7 +6,7 @@ Registers three non-blocking hooks that call this skill's own scripts:
   PreCompact   -> precompact_digest.py  (surface survival digest before compaction)
   Stop         -> gate_check.py         (remind to flush state if the tree drifted)
 
-All three no-op silently when no `.task-state/` exists.
+All three no-op silently when no MRS is discoverable.
 
 Targets:
   Claude Code  settings.json  (default: ~/.claude/settings.json)
@@ -235,7 +235,7 @@ def main() -> int:
     if not args.uninstall:
         for event, script in EVENT_SCRIPTS.items():
             print(f"  {event:<13} -> {script}")
-        print("\nHooks no-op silently when no .task-state/ exists. Remove with: --uninstall")
+        print("\nHooks no-op silently when no MRS is discoverable. Remove with: --uninstall")
         if args.grok:
             print(
                 "Note: Grok does not inject SessionStart/PreCompact stdout into model "

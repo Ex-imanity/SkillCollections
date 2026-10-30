@@ -8,7 +8,7 @@ This snippet ensures all agents (Claude Code, Codex, etc.) follow the same MRS u
 
 ## MRS 操作规范 (.task-state/)
 
-本项目使用 `.task-state/` 目录管理跨会话任务状态。所有 agent 必须遵守以下规则。
+本项目使用 `.task-state/<slot>/` 管理跨会话任务状态，默认 slot 是 `main`；兼容旧 `.task-state/` 与 `.task-state-<slug>/`。所有 agent 必须遵守以下规则。
 
 ### 文件职责与更新方式
 - `task_state.md` — 当前状态唯一真相源。**原地修改**已有字段，不追加新的日期段落。限 300 行。
@@ -23,7 +23,7 @@ This snippet ensures all agents (Claude Code, Codex, etc.) follow the same MRS u
   - `Access` 写凭据名/角色/`open`/**读取命令**（如 `lark-cli docs +fetch --doc <url>`）；`Verified` 写日期 + **读到的版本**（如 `2026-09-07 (rev 607)`）。
   - 子资源清单（Base 表清单、文档章节）挂 `## Notes` 并以 ID 开头，不一行一条；作为证据引用的单个源码文件不登记。
   - 其他文件（findings/decisions/plan/task_state）**只按 ID 引用**（如 `(res: R3)`），不复制链接或路径。资源首次使用时立即登记。
-  - 遗留 MRS 迁移：`python <skill-root>/scripts/scan_resources.py .task-state`（只读草稿，加 `--write` 写入）。
+  - 遗留资源表补齐：`python <skill-root>/scripts/scan_resources.py <mrs-dir>`（只读草稿，加 `--write` 写入）。
 - `plan.md` — 任务计划 + Plan Registry。Registry 按仓库相对路径注册计划/设计文件，默认根目录：`docs/plans/`（superpowers ≤ 4.x）、`docs/superpowers/specs/`、`docs/superpowers/plans/`（superpowers ≥ 5.0）；项目另行存放时在该区块内加一行 `Plan roots: <dir>/`。不注册 `.superpowers/sdd/` 下的执行 ledger。
 
 ### 待办项规则
@@ -52,19 +52,20 @@ This snippet ensures all agents (Claude Code, Codex, etc.) follow the same MRS u
 Tier 0 文件存在但格式不合规时，**修复该文件，绝不重新初始化** —— MRS 里是真实历史。只有文件**不存在**才进初始化流程。
 
 ### 校验
-运行 `python <skill-root>/scripts/verify_mrs.py .task-state` 检查 MRS 健康度（或加 `--json` 获取结构化输出）。`<skill-root>` 为 context-resilient-task skill 的安装路径。
+运行 `python <skill-root>/scripts/verify_mrs.py <mrs-dir>` 检查 MRS 健康度（或加 `--json` 获取结构化输出）。`<skill-root>` 为 context-resilient-task skill 的安装路径。
 
 ## 多任务支持（Multiple MRS）
 
 同一项目内允许多个 MRS 共存：
 
-- 默认 `.task-state/` 不变；并行任务使用 `.task-state-<slug>/`（兄弟目录）
-- agent 启动时从 CWD 向上找 `.task-state/` 和 `.task-state-<slug>/`：
+- 新建默认 `.task-state/main/`，独立任务使用 `init_mrs.py --slot <slug>`；旧布局不自动搬迁。`main` 不是当前任务指针。
+- agent 启动时从 CWD 向上找嵌套 slot 和两种旧布局，容器、archive 和运行数据不是任务；部分核心文件缺失的旧 MRS 仍可发现以便修复：
   - 找到 0 个 → 初始化新 MRS
   - 找到 1 个 → 使用该 MRS
   - 找到多个 → 必须列出并询问用户恢复哪个，可推荐 mtime 最新的，但不自动选
-- 切换任务靠用户在对话中明示，不写"当前任务"指针文件
-- 已完成的任务归档到 `.task-state/archive/<slug>-completed/`
+- 切换任务靠用户在对话中明示，不写"当前任务"指针文件；已有明确选择时沿用，不重新询问。
+- 已完成的任务归档到 `.task-state/archive/<slug>-completed/`，同步其路径入口。
+- 迁移用 `python <skill-root>/scripts/migrate_mrs.py <project>` 先预览，再显式 `--apply`；先升级所有读取脚本/hooks，停止任务写入，未完成审核或同名目标不迁移。保留 `.task-state/.migrations/`，CRT 可解析迁移前的旧路径。历史相对链接使用 `migrate_mrs.py <project> --resolve <path> --from-file <document>`；原始文件系统链接不会自动重定向。
 
 完整规则见项目内的 `references/multi-task-workflow.md`（如已安装 context-resilient-task skill）。
 

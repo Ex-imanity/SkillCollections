@@ -115,13 +115,13 @@
 
 **子资源不占行**：Base 的表清单、文档的章节目录、数据集的文件列表 —— 容器登记为一行，清单挂到 `## Notes` 并以 ID 开头。**作为 finding 证据引用的单个源码文件不是资源**，它属于引用它的那条 finding。
 
-### 遗留 MRS 迁移
+### 遗留 MRS 的资源表补齐
 
 已有 MRS（1.5.0 之前创建的都没有 `utils.md`）不需要手工补：
 
 ```bash
-python <skill-root>/scripts/scan_resources.py .task-state          # 只读，打印草稿
-python <skill-root>/scripts/scan_resources.py .task-state --write   # 写入 utils.md
+python <skill-root>/scripts/scan_resources.py .task-state/main          # 只读，打印草稿
+python <skill-root>/scripts/scan_resources.py .task-state/main --write   # 写入 utils.md
 ```
 
 它扫描 MRS 内所有文档里的指针，按类型分类，把"可达资源"排在"本地文件噪音"之前，标出**已不存在的本地路径**，并给每行附 `file:line` 出处。
@@ -243,38 +243,38 @@ finishing-a-development-branch → 合并/PR/清理
 
 ### 多任务并行 / 中断切换
 
-当一个项目内同时存在多个独立任务时（例如同 repo 多个独立模块、或正在做的 feature 被高优任务中断），可使用兄弟目录命名让多个 MRS 共存：
+独立任务使用 `.task-state/<slot>/`，默认任务是 `main`。同一目标的阶段仍在原 MRS 中维护：
 
-```
+```text
 project/
-  ├── .task-state/                  # 默认任务（保持向后兼容）
-  ├── .task-state-auth-refactor/    # 长期重构任务
-  └── .task-state-bugfix-x42/       # 中断进来的紧急任务
+└── .task-state/
+    ├── main/                 # 默认任务的完整 MRS
+    ├── auth-refactor/        # 独立任务
+    ├── bugfix-x42/           # 中断进来的任务
+    ├── archive/              # 已归档任务，不参与常规发现
+    └── .migrations/          # 显式迁移的映射、校验与回滚记录
 ```
 
-关键规则：
-- 默认 `.task-state/` 行为不变，旧项目无需迁移
-- 新增任务用 `.task-state-<slug>/` 命名（slug 用 kebab-case 短标识）
-- skill 调用时从 CWD 向上找 `.task-state/` 和 `.task-state-<slug>/`，多个时询问用户恢复哪个
-- mtime 最新的会被标记为推荐，但永远不自动选择
-
-典型使用：
+- 旧 `.task-state/` 和 `.task-state-<slug>/` 继续可读，不要求立即迁移；容器中只有运行数据时不误报为任务。
+- 发现、项目根目录和 worktree 路由共用规则。混合布局中的任务全部列出；`main` 不代表当前任务，不按名称或 mtime 自动选择。已有明确选择时沿用该选择。
+- 初始化省略 `--slot`/`--dir` 时创建 `.task-state/main/`；显式旧 `--dir` 保持兼容。
 
 ```bash
-# 中断场景：A 还在做，B 紧急插队
-python <skill-root>/scripts/init_mrs.py \
-    --dir .task-state-bugfix-x42 \
+python <skill-root>/scripts/init_mrs.py --slot bugfix-x42 \
     --goal "修复鉴权绕过" --complexity small
-
-# 列出当前 repo 内所有 MRS（含状态、最近更新时间）
-python <skill-root>/scripts/list_mrs.py
-
-# 任务完成后归档（保留可追溯）
-mkdir -p .task-state/archive
-mv .task-state-bugfix-x42 .task-state/archive/bugfix-x42-completed
+python <skill-root>/scripts/list_mrs.py --json
+python <skill-root>/scripts/migrate_mrs.py /repo --json
+python <skill-root>/scripts/migrate_mrs.py /repo --slot auth-refactor --apply
+python <skill-root>/scripts/migrate_mrs.py /repo --rollback <migration-id>
 ```
 
-完整工作流（命名约定、切换协议、归档模式、反模式）见 [`references/multi-task-workflow.md`](references/multi-task-workflow.md)。
+迁移默认只预览：旧默认任务的文件进入 `.task-state/main/`，平铺任务整体进入对应 slot。同名目标、未知目录归属、未完成审核和未恢复事务会阻止应用。当前状态/资源表及 AGENTS/CLAUDE 入口中的路径定向更新；历史日志不改，通过保留的映射解析旧路径及相对链接。原始旧链接不会变成文件系统软链接。先升级读取脚本/hooks，再停写迁移，不自动安装。
+
+解析统一项目软链接路径，保留带空格的 Markdown/代码引用及查询、行号、fragment 后缀；疑似凭据只在审计中脱敏。当前指针不是 UTF-8 时阻止迁移，历史文件跳过会明确提示。回滚先记录 `rolling_back`，普通写入/改名失败后可重试，仍拒绝覆盖迁移后新增的工作。
+
+百分号编码的文件名保留编码，解码后跨出状态目录的路径按文档新位置重定位；句末标点保留。含空字节的当前引用阻止迁移，历史无效引用单独报告并继续扫描。裸路径中的空格、Markdown 链接标题和计算路径需要人工复核，详见目录迁移说明。
+
+已完成 slot 可归档到 `.task-state/archive/<slug>-completed/`；再次人工移动需同步入口，已有迁移映射不会猜测新的归档位置。详细操作见 [多任务工作流](references/multi-task-workflow.md) 和 [目录迁移](references/mrs-layout-migration.md)。
 
 ### 目录结构
 
@@ -285,7 +285,7 @@ project/
   │   └── ...（所有计划/设计文件均在 Plan Registry 中注册）
   ├── .superpowers/sdd/        # superpowers 6.x 执行 ledger（git 忽略，临时，不注册）
   │
-  ├── .task-state/             # MRS 目录
+  ├── .task-state/main/        # 默认任务 MRS 目录
   │   ├── task_state.md        # 当前状态（原地修改，含 Active Todos）
   │   ├── plan.md              # 任务计划 + Plan Registry
   │   ├── snapshot.md          # 最新快照
@@ -294,9 +294,9 @@ project/
   │   ├── decisions.md         # 设计决策（可选）
   │   ├── utils.md             # 唯一资源注册表（新 MRS 自动创建）
   │   ├── blockers.md          # 阻塞项（可选）
-  │   └── archive/             # 已完成任务的归档快照
+  │   └── snapshots/           # 当前任务的历史检查点
   │
-  ├── .task-state-<slug>/      # 可选：并行任务的兄弟 MRS（同结构）
+  ├── .task-state/<slug>/     # 可选：独立任务 slot（同结构）
   │
   └── src/
 ```
@@ -326,7 +326,7 @@ project/
 ```bash
 # CLI 模式（全自动）
 python <skill-root>/scripts/init_mrs.py \
-  --dir .task-state \
+  --slot main \
   --goal "构建支付服务" \
   --complexity medium \
   --requirements "Stripe 集成;3DS 处理;Webhook 校验"
@@ -345,8 +345,8 @@ python <skill-root>/scripts/init_mrs.py
 ### 验证 MRS
 
 ```bash
-python <skill-root>/scripts/verify_mrs.py .task-state
-python <skill-root>/scripts/verify_mrs.py --json .task-state   # 结构化输出供 agent 消费
+python <skill-root>/scripts/verify_mrs.py .task-state/main
+python <skill-root>/scripts/verify_mrs.py --json .task-state/main   # 结构化输出供 agent 消费
 ```
 
 检查 Tier 0/1/2 完整性、文件格式、禁止路径。退出码：
@@ -362,23 +362,23 @@ python <skill-root>/scripts/list_mrs.py
 python <skill-root>/scripts/list_mrs.py --json   # 结构化输出供 agent 消费
 ```
 
-从当前目录向上发现 `.task-state/` 和 `.task-state-<slug>/`。如果存在多个 MRS，输出会按最近更新时间排序并标记推荐项，但 agent 仍需询问用户后再恢复。
+从当前目录向上发现 `.task-state/<slot>/` 与两种旧布局。如果存在多个 MRS，输出会按最近更新时间排序并标记推荐项，但 agent 仍需询问用户后再恢复。
 
 ### 生成快照
 
 ```bash
-python <skill-root>/scripts/generate_snapshot.py .task-state
-python <skill-root>/scripts/generate_snapshot.py .task-state --project-root .   # 显式指定源码扫描根目录
-python <skill-root>/scripts/generate_snapshot.py --archive .task-state   # 同时归档
+python <skill-root>/scripts/generate_snapshot.py .task-state/main
+python <skill-root>/scripts/generate_snapshot.py .task-state/main --project-root .   # 显式指定源码扫描根目录
+python <skill-root>/scripts/generate_snapshot.py --archive .task-state/main   # 同时归档
 ```
 
-> 所有脚本均从 `assets/` 读取模板，因此渲染出的 MRS 文件始终与文档化的 schema 保持一致。对 `.task-state` 或 `.task-state-<slug>` 生成快照时，默认扫描其父目录作为项目根目录；也可用 `--project-root` 显式指定。
+> 所有脚本均从 `assets/` 读取模板，因此渲染出的 MRS 文件始终与文档化的 schema 保持一致。对新旧布局的 MRS 生成快照时，共享解析器会定位到所属项目，linked worktree 的变更仍在当前 worktree 检查；也可用 `--project-root` 显式指定。
 
 ---
 
 ## 自动 Hooks（自动上下文恢复）
 
-前面的脚本都要"记得手动跑"。自动 hooks 让 agent 在**关键时刻自动**重建 / 落盘 / 自检 MRS,无需手动调用。三个脚本全部**只读、非阻塞(exit 0)、无 `.task-state/` 时静默**,所以一次全局安装对所有项目都安全。
+前面的脚本都要"记得手动跑"。自动 hooks 让 agent 在**关键时刻自动**重建 / 落盘 / 自检 MRS,无需手动调用。三个脚本全部**只读、非阻塞(exit 0)、没有可发现 MRS 时静默**,所以一次全局安装对所有项目都安全。
 
 | 触发时机 | 脚本 | 效果 |
 |---------|------|------|

@@ -364,7 +364,7 @@ def validate_consistency():
 
 ```
 project-root/
-├── .task-state/
+├── .task-state/main/
 │   ├── task_state.md          # Current state (Tier 0)
 │   ├── plan.md                # Task plan + Registry (Tier 0)
 │   ├── snapshot.md            # Latest snapshot (Tier 0)

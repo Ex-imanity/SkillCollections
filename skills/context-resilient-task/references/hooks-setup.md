@@ -5,7 +5,7 @@ remembering to*. The auto-hooks close that gap: they make an agent rehydrate,
 flush, and self-check the MRS at the right moments **without being asked**.
 
 Three events, three scripts. All are **read-only by default**, **non-blocking**
-(always exit 0), and **silent when no `.task-state/` exists** — so they are safe
+(always exit 0), and **silent when no MRS is discoverable** — so they are safe
 to install once, globally, for every project.
 
 | Event | Script | What it does |

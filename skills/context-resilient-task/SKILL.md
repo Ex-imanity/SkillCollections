@@ -1,7 +1,7 @@
 ---
 name: context-resilient-task
-version: 1.9.2
-description: Context-resilient task management via a filesystem Minimum Recovery Set (MRS in .task-state/). Reconstructs task state from on-disk artifacts so work survives /clear, session interruption, agent switches, and context-window loss. Use this skill whenever the user mentions multi-phase tasks, multi-session work, cross-session recovery, task state restoration, MRS, .task-state, lost context, hallucinated todos, forgotten work, 任务状态恢复, 跨会话任务, 多会话开发, 上下文丢失, /clear 后继续, 任务恢复, or asks the agent to remember a task across sessions. Also trigger proactively when starting any task likely to span more than one session, even if the user doesn't explicitly request recovery — the upfront MRS structure prevents context-loss surprises later.
+version: 1.10.0
+description: Context-resilient task management via a filesystem Minimum Recovery Set (MRS slots in .task-state/<slot>/; legacy layouts remain readable). Reconstructs task state from on-disk artifacts so work survives /clear, session interruption, agent switches, and context-window loss. Use this skill whenever the user mentions multi-phase tasks, multi-session work, cross-session recovery, task state restoration, MRS, .task-state, lost context, hallucinated todos, forgotten work, 任务状态恢复, 跨会话任务, 多会话开发, 上下文丢失, /clear 后继续, 任务恢复, or asks the agent to remember a task across sessions. Also trigger proactively when starting any task likely to span more than one session, even if the user doesn't explicitly request recovery — the upfront MRS structure prevents context-loss surprises later.
 ---
 
 # Context-Resilient Task
@@ -49,8 +49,10 @@ Full MRS specification: [references/minimum-recovery-set.md](references/minimum-
 ## On-Invoke Detection
 
 ```
-1. Discover MRS: walk up from CWD; collect `.task-state/` and `.task-state-<slug>/`
-   at the first ancestor level where any exist (run: `python <skill-root>/scripts/list_mrs.py`)
+1. Discover MRS: walk up from CWD; collect `.task-state/<slot>/` plus legacy
+   `.task-state/` records and `.task-state-<slug>/` at the first owning project
+   with records (run: `python <skill-root>/scripts/list_mrs.py`). Containers and
+   archives are not tasks; partial MRS records remain visible for repair.
 2. If 0 MRS found → Initialization mode
 3. If 1 MRS found → use it; proceed to step 5
 4. If >1 MRS found → ASK user which task to resume
@@ -69,6 +71,12 @@ Full MRS specification: [references/minimum-recovery-set.md](references/minimum-
 Task lifecycle: `active` → `paused` / `blocked` → `active` → `completed`
 
 For parallel/interrupted tasks (multiple MRS in one project), see [references/multi-task-workflow.md](references/multi-task-workflow.md).
+
+New tasks use `.task-state/main/` by default or `init_mrs.py --slot <slug>`.
+`main` is not a current-task pointer. Existing MRS stays in place until explicitly
+migrated. Read [references/mrs-layout-migration.md](references/mrs-layout-migration.md)
+for preview/apply, historical path resolution and guarded rollback. Upgrade all
+readers/hooks before moving data; do not migrate a task with unfinished reviews.
 
 ## Structured Output Template
 
@@ -230,7 +238,7 @@ If Tier 0 missing, run the bundled script (CLI or interactive):
 ```bash
 # CLI form
 python <skill-root>/scripts/init_mrs.py \
-  --dir .task-state \
+  --slot main \
   --goal "Build payment service" \
   --complexity medium \
   --requirements "Stripe integration;3DS handling;Webhook verifier"
@@ -290,31 +298,31 @@ Locate scripts relative to this SKILL.md.
 
 ```bash
 # Initialize a fresh MRS (CLI or interactive)
-python <skill-root>/scripts/init_mrs.py --dir .task-state \
+python <skill-root>/scripts/init_mrs.py --slot main \
     --goal "..." --complexity medium --requirements "a;b;c"
 python <skill-root>/scripts/init_mrs.py                       # interactive wizard
 
 # Check MRS health
-python <skill-root>/scripts/verify_mrs.py .task-state
-python <skill-root>/scripts/verify_mrs.py --json .task-state  # JSON for agents
+python <skill-root>/scripts/verify_mrs.py .task-state/main
+python <skill-root>/scripts/verify_mrs.py --json .task-state/main  # JSON for agents
 
 # Search complete history before retrying an error/blocker (read-only)
-python <skill-root>/scripts/recall_context.py .task-state --query 'error component'
-python <skill-root>/scripts/recall_context.py .task-state --query 'error component' --scope env=local --json
+python <skill-root>/scripts/recall_context.py .task-state/main --query 'error component'
+python <skill-root>/scripts/recall_context.py .task-state/main --query 'error component' --scope env=local --json
 
 # Draft a Resource Registry from pointers already in a legacy MRS (read-only by default)
-python <skill-root>/scripts/scan_resources.py .task-state
-python <skill-root>/scripts/scan_resources.py .task-state --write   # insert draft rows
-python <skill-root>/scripts/scan_resources.py .task-state --json    # for agents
+python <skill-root>/scripts/scan_resources.py .task-state/main
+python <skill-root>/scripts/scan_resources.py .task-state/main --write   # insert draft rows
+python <skill-root>/scripts/scan_resources.py .task-state/main --json    # for agents
 
 # List all MRS directories discoverable from CWD
 python <skill-root>/scripts/list_mrs.py
 python <skill-root>/scripts/list_mrs.py --json  # JSON for agents
 
 # Generate snapshot (overwrites snapshot.md)
-python <skill-root>/scripts/generate_snapshot.py .task-state
-python <skill-root>/scripts/generate_snapshot.py .task-state --project-root .  # explicit source scan root
-python <skill-root>/scripts/generate_snapshot.py --archive .task-state  # also archive
+python <skill-root>/scripts/generate_snapshot.py .task-state/main
+python <skill-root>/scripts/generate_snapshot.py .task-state/main --project-root .  # explicit source scan root
+python <skill-root>/scripts/generate_snapshot.py --archive .task-state/main  # also archive
 
 # Auto-hook scripts (read-only, non-blocking, silent when no MRS) — see Automatic Hooks below
 python <skill-root>/scripts/restore_context.py     # rehydrate task state (session start / after /clear)
@@ -325,13 +333,13 @@ python <skill-root>/scripts/install_hooks.py --codex  # install into .codex/hook
 python <skill-root>/scripts/install_hooks.py --grok   # install into ~/.grok/hooks/context-resilient-task.json
 ```
 
-All scripts read templates from `assets/` so the rendered MRS files always match the documented schema. When the snapshot target is `.task-state` or `.task-state-<slug>`, `generate_snapshot.py` scans that directory's parent project for recently modified source files unless `--project-root` is provided.
+All scripts read templates from `assets/` so the rendered MRS files always match the documented schema. Snapshot, drift and ledger probes share the owning-project resolver for nested and legacy layouts; linked-worktree work still follows the current worktree unless `--project-root` is provided.
 
 ## Automatic Hooks (optional)
 
 Reading the MRS still depends on *remembering to*. The auto-hooks make an agent
 rehydrate, flush, and self-check the MRS at the right moments unprompted. All are
-read-only, non-blocking (exit 0), and **silent when no `.task-state/` exists**, so
+read-only, non-blocking (exit 0), and **silent when no MRS is discoverable**, so
 a single global install is safe for every project.
 
 | Event | Script | Effect |

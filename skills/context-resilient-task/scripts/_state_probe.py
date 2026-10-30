@@ -20,7 +20,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from _mrs_discovery import find_mrs_dirs, ledger_root_for, work_root_for  # noqa: E402
+from _mrs_discovery import find_mrs_dirs, ledger_root_for, work_root_for, mrs_project_root  # noqa: E402
 from list_mrs import extract_field, read_mrs_metadata  # noqa: E402
 
 # Re-exported so hook scripts import everything MRS-related from one place.
@@ -225,12 +225,9 @@ def human_time(mtime: float | None) -> str:
 def project_root_for(mrs_dir: Path) -> Path:
     """Project root that owns an MRS directory.
 
-    `.task-state` / `.task-state-<slug>` live inside the project; any other
-    directory is treated as its own root (mirrors generate_snapshot.py).
+    Shared routing understands legacy and nested layouts, including worktrees.
     """
-    if mrs_dir.name == ".task-state" or mrs_dir.name.startswith(".task-state-"):
-        return mrs_dir.parent
-    return mrs_dir
+    return mrs_project_root(mrs_dir)
 
 
 def is_meaningful(value: str) -> bool:

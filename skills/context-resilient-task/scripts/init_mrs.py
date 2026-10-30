@@ -11,7 +11,8 @@ Usage:
     python init_mrs.py
 
 Options:
-    --dir PATH          Target MRS directory (default: ./.task-state)
+    --dir PATH          Explicit MRS directory (default without --dir: .task-state/main)
+    --slot SLUG         New task under .task-state (default: main)
     --goal TEXT         One-sentence task goal
     --complexity LEVEL  small | medium | large
     --requirements TEXT Semicolon-separated list, e.g. "a;b;c"
@@ -29,6 +30,7 @@ import sys
 import argparse
 from pathlib import Path
 from datetime import datetime
+from _mrs_discovery import has_mrs_artifacts, is_mrs_dir, validate_slot
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 ASSETS_DIR = SKILL_ROOT / "assets"
@@ -184,11 +186,17 @@ def write_files(
     force: bool,
 ) -> dict[str, Path]:
     """Render and write MRS files. Returns mapping of filename → written path."""
+    if (target_dir.name == ".task-state" and target_dir.is_dir() and not has_mrs_artifacts(target_dir)
+            and any(is_mrs_dir(p) for p in target_dir.iterdir())):
+        raise FileExistsError("target is a slot container; choose --slot <slug> or an explicit leaf --dir")
     if target_dir.exists() and any(target_dir.iterdir()) and not force:
-        suggestion = target_dir.parent / f"{target_dir.name}-<slug>"
+        container = (target_dir if target_dir.name == ".task-state" else
+                     target_dir.parent if target_dir.parent.name == ".task-state" else
+                     target_dir.parent / ".task-state")
+        suggestion = container / "<slug>"
         raise FileExistsError(
             f"{target_dir} is non-empty.\n"
-            "\nTo start a parallel task without destroying existing MRS, use a sibling directory:\n"
+            "\nTo start a parallel task without destroying existing MRS, use a nested slot:\n"
             f"  --dir {suggestion}\n"
             "(replace <slug> with a short task identifier, e.g. 'auth' or 'bugfix-x42')\n"
             "\nOr use --force to overwrite (DESTRUCTIVE - loses current MRS state)."
@@ -248,7 +256,9 @@ def main() -> int:
         description="Initialize a Minimum Recovery Set (MRS) for a new task.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--dir", default=".task-state", help="Target MRS directory (default: ./.task-state)")
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--dir", help="Explicit MRS directory (legacy paths remain supported)")
+    target.add_argument("--slot", help="Task slot under .task-state (default: main)")
     parser.add_argument("--goal", default=None, help="One-sentence task goal")
     parser.add_argument("--complexity", choices=VALID_COMPLEXITY, default=None)
     parser.add_argument(
@@ -274,7 +284,12 @@ def main() -> int:
             )
 
     requirements = parse_requirements(args.requirements or "")
-    target_dir = Path(args.dir).resolve()
+    try:
+        target_dir = (Path(args.dir) if args.dir else Path(".task-state") / validate_slot(args.slot or "main")).resolve()
+        if target_dir.name == "main" and target_dir.parent.name == ".task-state" and has_mrs_artifacts(target_dir.parent):
+            raise ValueError("legacy default MRS already exists; migrate it first or choose --slot <slug>")
+    except ValueError as exc:
+        parser.error(str(exc))
 
     try:
         created = write_files(

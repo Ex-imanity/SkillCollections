@@ -399,7 +399,7 @@ class MrsScriptsTest(unittest.TestCase):
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(".task-state-", result.stderr)
+        self.assertIn(".task-state/<slug>", result.stderr)
         self.assertIn("--dir", result.stderr)
 
 
