@@ -39,11 +39,11 @@ Skill 不应直接用于不具备相应权限的环境。
 | `case-lite-lark` | 0.2.3 | 本地或平台复用团队飞书应用，通过 lark-cli 选章生成用例，无需配置 stdio MCP | [README](skills/case-lite-lark/README.md) |
 | `case-reorganize` | 1.0.0 | 将搬山已有用例按业务链路合并和重组 | [SKILL.md](skills/case-reorganize/SKILL.md) |
 | `context-resilient-task` | 1.9.2 | 用文件化 MRS 保存任务状态，支持跨会话恢复、问题集与完整历史召回 | [README](skills/context-resilient-task/README.md) |
-| `cross-agent-review` | 2.3.1 | 本地 Agent 带证据互审，代码评审独立核对历史风格，支持三向超时续跑 | [README](skills/cross-agent-review/README.md) |
+| `cross-agent-review` | 2.4.0 | 本地 Agent 带证据互审，核对目录职责、复用语义及 CR 逐项闭环，支持三向超时续跑 | [README](skills/cross-agent-review/README.md) |
 | `deep-task-preflight` | 1.2.1 | 通用的实现前目标/验收闸门与输入—转换—结果验证 | [README](skills/deep-task-preflight/README.md) |
 | `dify-dsl-generator` | 1.0.0 | 生成、重构或评审 Dify workflow/chatflow/agent DSL | [SKILL.md](skills/dify-dsl-generator/SKILL.md) |
 | `internal-api-cookie-auth` | 1.0.2 | 内部 HTTPS/CAS 认证与安全请求封装 | [README](skills/internal-api-cookie-auth/README.md) |
-| `repository-code-style` | 1.3.1 | 编辑前取证、diff 自审及普通/跨 Agent Review 的历史风格一致性核验 | [README](skills/repository-code-style/README.md) |
+| `repository-code-style` | 1.4.0 | 本地风格档案、近期取样、目录分层/复用语义、CR 核销及普通/跨 Agent Review | [README](skills/repository-code-style/README.md) |
 | `whitebox-op-combo` | 1.0.1 | 按读写集分析多操作组合、代码路径和缺陷候选 | [README](skills/whitebox-op-combo/README.md) |
 
 `internal-api-cookie-auth` 和 `repository-code-style` 包含内部

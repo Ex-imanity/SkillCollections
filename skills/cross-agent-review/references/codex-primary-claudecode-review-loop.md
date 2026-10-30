@@ -62,8 +62,10 @@ The reviewer is not the primary continuity owner in this workflow. It should cha
 - A target review output path under `Review/ByClaudeCode/`, `Review/ByCodex/`, or `Review/ByGrok/`.
 - Explicit review questions.
 - For source-code changes: repository/module and comparison base, actual changed
-  and new/untracked files, applicable conventions, local style evidence and
-  self-review/deviation rationale. If the implementation has no such record, the
+  and new/untracked files, applicable conventions, accessible local profile/style
+  evidence, recent substantive comparators and justified older fallbacks,
+  file-placement/capability ownership and self-review/deviation rationale.
+  If the implementation has no such record, the
   reviewer reconstructs it from source rather than assuming compliance or failure.
 
 For evidence classification, use the Required Inputs above and the
@@ -113,12 +115,40 @@ The request should include:
 - expected output path
 - instruction not to directly edit the reviewed artifact
 - known limitations, such as verified-absent raw sessions, pruned sessions, artifact-only reviews, or repo access uncertainty
+- the actual review/verification snapshot and file scope; when CR inputs exist,
+  the original item dispositions, verification evidence and inherited open items
 
 For code, include the style evidence above and ask the reviewer to independently
 open pre-existing same-role implementations. Provide paths to an available
 `repository-code-style` skill and only applicable references when readable by the
 peer; otherwise include the necessary checklist in the request. The bundled
 shared prompt already supplies a minimal checklist without a skill dependency.
+
+Validate the profile against its branch/base, relevant committed and dirty
+changes, and scoped source. Prefer roughly the last six months of substantive
+same-role changes, compare conflicts and later CR, and explain older still-valid
+examples. Recent formatting or the reviewed batch itself is not new authority.
+Review file/class necessity, directories, layer ownership and production/framework
+use before reuse/semantic parity and internal expression. Keep runtime checks of
+async proxies, transactions, failure handlers and extension points separate.
+
+If the profile is inaccessible, inline authorized minimal evidence: mechanism
+identity for key types (annotation/interface/registration), the closest
+same-mechanism production peer's path + symbol + commit, and relevant capability
+or configuration ownership, together with repository/scope/base. These map to
+the organization, examples and capability sections of the local profile
+template. Mark unavailable fields as gaps for source reconstruction; do not
+copy a whole private profile or assume the peer can read a private path.
+
+Ask the reviewer to compare deleting/merging new layers or directly using
+existing capabilities, and verify adopted APIs, effective versions and semantic
+equivalence. Candidate names and actual callers alone do not justify reuse or
+an extra layer. Reconcile original CR items without promoting suggestions into
+requirements; retain unresolved items and separate implementation from
+verification. Check changed business documentation for accuracy after refactoring.
+Bind conclusions to the reviewed snapshot, including declaration/reference/
+registration and release dependencies for moves or renames. Working-tree
+success does not prove a partially staged snapshot passes.
 
 For multi-repo work, include the repo paths explicitly. If review needs subagents, suggest a partition:
 
@@ -189,12 +219,16 @@ Codex processes the review:
 2. Push back only with evidence, tests, or direct source citations.
 3. Leave optional polish for later when it does not affect the current gate.
 4. Update the reviewed artifact.
-5. Add review closure notes that map findings to changes.
+5. Add review closure notes that map findings to changes, retained suggestions
+   or justified exceptions, and verification evidence or remaining gaps.
 
 For style findings, distinguish explicit rule violations, supported local-pattern
 deviations, justified exceptions, suggestions and unavailable evidence. Determine
 severity from impact; do not dismiss an explicit convention violation merely
 because it was labeled P3, or treat every style suggestion as a blocker.
+When original CR inputs exist, preserve each item's source/scope and strength,
+inherit unresolved items, and keep implementation and verification states
+separate. New findings do not erase old ones, and a TODO is not closure.
 
 ### 6. Codex Updates MRS
 
@@ -221,6 +255,9 @@ Before handing off to ClaudeCode, confirm:
 - For code, the request provides a comparison base and style evidence/questions;
   the reviewer can access the actual source and pre-existing comparators or the
   limitation is explicit. A skill name alone is not a self-contained handoff.
+- The request identifies the actual snapshot/file scope and, when applicable,
+  original CR item dispositions and open findings; inaccessible profiles have
+  the authorized minimum inline evidence or explicit gaps described above.
 
 ## Review Closure Checklist
 
@@ -236,6 +273,9 @@ Before claiming the loop is complete, confirm:
   are recorded. Missing evidence remains `NOT VERIFIED`; it cannot be called
   style closure. A passing envelope/verdict or functional test is not proof of
   this check. Pure documents/plans are not blocked for having no code diff.
+- Original CR items and inherited findings each retain a disposition and
+  verification status. Review and check results correspond to the delivered
+  snapshot; unverified staged/commit/PR content is not certified by worktree checks.
 
 ## Stop Conditions
 
