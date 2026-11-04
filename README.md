@@ -36,7 +36,7 @@ Skill 不应直接用于不具备相应权限的环境。
 | --- | ---: | --- | --- |
 | `case-design-strategy-skill` | 1.0.1 | 需求用例评审、覆盖度补充、边界/异常/权限/埋点分析 | [SKILL.md](skills/case-design-strategy-skill/SKILL.md) |
 | `case-lite` | 1.2.1 | 从飞书文档选章，生成小需求测试用例并可选写回搬山 | [README](skills/case-lite/README.md) |
-| `case-lite-lark` | 0.2.3 | 本地或平台复用团队飞书应用，通过 lark-cli 选章生成用例，无需配置 stdio MCP | [README](skills/case-lite-lark/README.md) |
+| `case-lite-lark` | 0.2.4 | 复用已有 lark-cli 或团队飞书应用，选章生成用例，无需配置 stdio MCP | [README](skills/case-lite-lark/README.md) |
 | `case-reorganize` | 1.0.0 | 将搬山已有用例按业务链路合并和重组 | [SKILL.md](skills/case-reorganize/SKILL.md) |
 | `context-resilient-task` | 1.10.0 | 文件化 MRS 跨会话恢复与问题召回，支持嵌套 slot、旧布局兼容和可回滚迁移 | [README](skills/context-resilient-task/README.md) |
 | `cross-agent-review` | 2.4.0 | 本地 Agent 带证据互审，核对目录职责、复用语义及 CR 逐项闭环，支持三向超时续跑 | [README](skills/cross-agent-review/README.md) |

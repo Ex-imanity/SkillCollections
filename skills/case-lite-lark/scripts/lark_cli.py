@@ -74,14 +74,14 @@ class LarkCLI:
             if not isinstance(error, dict):
                 error = {"message": "invalid CLI error envelope"}
             if error.get("subtype") == "not_configured":
-                if self.runtime.mode == "auto":
+                if self.runtime.mode == "cli":
                     hint = "请先确认在本地还是平台运行；本地导入内部提供的已有团队应用配置，平台联系管理员接入绑定 App；不要创建新应用"
                 elif self.runtime.mode == "platform":
                     hint = "请由平台管理员将绑定应用接入本 Pod 的 lark-cli；不要创建新应用"
                 else:
                     hint = "请运行 setup_lark.py local --config-file <内部配置> 接入已有团队应用；不要创建新应用"
                 error = error | {"case_lite_mode": self.runtime.mode,
-                                 "needs_mode_choice": self.runtime.mode == "auto",
+                                 "needs_mode_choice": self.runtime.mode == "cli",
                                  "hint": hint, "case_lite_hint": hint}
             raise CLIError(str(error.get("message", "CLI 调用失败")), error)
         if envelope.get("identity") != "user":
@@ -106,8 +106,8 @@ class LarkCLI:
         if not expected.is_relative_to(root):
             raise CLIError("媒体输出路径越界")
         expected.parent.mkdir(parents=True, exist_ok=True)
-        # Paths passed to CLI stay relative to its CWD. Image filenames may gain a suffix.
-        output = os.path.relpath(expected, self.cwd)
+        # The renderer's .png is a placeholder; let CLI infer JPEG/PNG from the response.
+        output = os.path.relpath(expected.with_suffix(""), self.cwd)
         if output.startswith(".."):
             raise CLIError("媒体目录必须位于 CLI 当前工作目录下")
         token = media.get("token", "")

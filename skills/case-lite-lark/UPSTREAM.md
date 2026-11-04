@@ -14,12 +14,16 @@
 - 上游 pyproject.toml 声明 MIT；本包随附 LICENSE。未复制凭证、授权文件或上游调试数据。
 - CLI 适配按官方 v1.0.97 源码核对：raw API 使用单层 CLI data，Wiki nodes 是 nodes，
   Markdown 是 content，媒体是 saved_path，画板是 preview_image_path。
+  2026-11-04 按 v1.0.98 与 main 重新核对画板预览输出：格式由响应 Content-Type 决定，
+  无扩展名输出会补真实后缀，显式不匹配后缀会报错。本包在 CLI 边界移除渲染器的 PNG
+  占位后缀，并使用 CLI 报告的路径；不修改上游 BlockProcessor 的命名和内容。
 - 新写回脚本复用已有搬山业务接口，增加显式确认、格式警告阻塞、空用例检查、
   JSON-RPC/MCP/业务响应检查和树内容读回比较；原 case-lite 未修改。
 
 参考：
 - [PyPI 3.4.0](https://pypi.org/project/feishu-docx-blocks/3.4.0/)
 - [Lark CLI v1.0.97](https://github.com/larksuite/cli/tree/v1.0.97)
+- [v1.0.98 画板导出与路径检查](https://github.com/larksuite/cli/blob/v1.0.98/shortcuts/whiteboard/whiteboard_export.go)
 
 升级时先核对上游 diff 与 CLI 帮助/JSON 契约，更新 fixtures 并运行回归。
 离线验证不代表真实平台 OAuth、下载和模型视觉已验收。

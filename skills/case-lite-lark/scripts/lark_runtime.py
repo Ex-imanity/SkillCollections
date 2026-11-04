@@ -1,4 +1,4 @@
-"""Select platform credentials or an explicitly onboarded local CLI profile."""
+"""Keep the current CLI context, platform provider, or explicitly onboarded profile."""
 from __future__ import annotations
 
 import json
@@ -39,26 +39,28 @@ class LarkRuntime:
         return [*prefix, *args]
 
     def describe(self) -> dict:
-        return {"mode": self.mode, "profile": self.profile, "needs_mode_choice": self.mode == "auto"}
+        return {"mode": self.mode, "profile": self.profile, "needs_mode_choice": False}
 
 
 def load_runtime() -> LarkRuntime:
     mode = os.environ.get("CASE_LITE_LARK_MODE", "")
-    if mode not in {"", "platform", "local"}:
-        raise ValueError("CASE_LITE_LARK_MODE 只接受 platform 或 local")
+    if mode not in {"", "platform", "local", "cli"}:
+        raise ValueError("CASE_LITE_LARK_MODE 只接受 platform、local 或 cli")
     if mode == "platform":
         return LarkRuntime()  # Keep the platform's provider, environment and profile selection intact.
     if platform_managed():
         if mode == "local":
             raise ValueError("当前 CLI 由平台管理，不能强制使用本地 profile；请使用 platform 模式")
         return LarkRuntime()
+    if mode == "cli":
+        return LarkRuntime("cli")
     path = settings_path()
     try:
         settings = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         if mode == "local":
             raise ValueError("本地尚未接入团队应用；请先运行 setup_lark.py local --config-file <内部配置>") from None
-        return LarkRuntime("auto")
+        return LarkRuntime("cli")
     except (OSError, ValueError):
         raise ValueError("本地运行设置无法读取；请检查 CASE_LITE_LARK_SETTINGS 或重新执行本地接入") from None
     if not isinstance(settings, dict) or settings.get("mode") != "local":

@@ -240,8 +240,10 @@ class DocumentReader:
                         try:
                             root.mkdir(parents=True, exist_ok=True)
                             path = self.cli.media(item, root)
-                            text = text.replace(item["expected_path"], str(Path(path).relative_to(root)))
-                            item.update(status="downloaded", path=path)
+                            relative_path = str(Path(path).relative_to(root))
+                            text = text.replace(item["expected_path"], relative_path)
+                            item.update(status="downloaded", path=path, expected_path=relative_path,
+                                        expected_filename=Path(path).name)
                         except CLIError as exc:
                             item.update(status="failed", error=exc.details)
                             text += f"\n[图片下载失败: block_id={item['block_id']}，需补充视觉信息]\n"

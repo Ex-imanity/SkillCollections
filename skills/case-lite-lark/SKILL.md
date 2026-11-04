@@ -1,11 +1,11 @@
 ---
 name: case-lite-lark
-version: 0.2.3
+version: 0.2.4
 description: >-
   使用 lark-cli 从飞书 Docx、Wiki 或原生 Markdown 中手动选章，为单一功能点生成测试用例并可选写回搬山。
   用户明确说 case-lite-lark、lark-cli 版用例生成，或要求在云端 Claude Code 中不配置 stdio MCP 生成小需求用例时使用。
   保留选章、补充信息、场景分层复核、完整用例审核和可选自检；适用于 1-2 篇主要文档及经用户确认纳入的子文档。
-compatibility: Python 3.10+、lark-cli（读取已核对 1.0.97，接入契约核对 1.0.98）、具备图片 Read 能力的 Agent；可选搬山 HTTP 服务。
+compatibility: Python 3.10+、lark-cli（媒体与接入契约已核对 1.0.98）、具备图片读取能力的 Agent；可选搬山 HTTP 服务。
 metadata:
   requires:
     bins: [python3, lark-cli]
@@ -14,8 +14,8 @@ metadata:
 # case-lite-lark
 
 把用户选择的需求原文和图示转成可执行测试用例。飞书请求统一通过当前模式的
-`lark-cli --as user`，不注册 MCP，不读取 CLI token。平台复用绑定配置；本地首次
-导入用户指定的内部团队应用配置，成员各自授权，不创建新应用。
+`lark-cli --as user`，不注册 MCP，不读取 CLI token。已安装并配置 CLI 时直接复用当前
+上下文；平台复用绑定配置；本地未配置时才导入用户指定的内部团队应用，成员各自授权。
 这是独立安装单元，运行时不访问原始 case-lite 或 FeishuMCP 仓库。
 
 ## 入口与运行条件
@@ -29,9 +29,10 @@ python3 "{skill}/scripts/feishu_docs.py" doctor
 
 `doctor` 返回 `mode`、`profile` 和 `needs_mode_choice`，仅检查 CLI 能力；
 `auth_verified:false` 不代表认证失败，不能据此发起配置或授权。
-若返回 `mode:auto`、`needs_mode_choice:true`（缺 CLI 时也可能在 `error` 中），先询问
-“这次在本地 Agent 还是公司平台运行？”并等待回复，不先登录、导入或读取文档。
-用户已明确说明运行位置时直接采用，不重复询问。
+`mode:cli` 表示直接使用已有 CLI 默认或环境变量选定的上下文，无需先导入团队配置，
+可继续实际读取。已保存的本地 profile 和平台管理上下文仍优先。
+仅实际请求返回 `not_configured`，或缺 CLI 且运行位置不明时，确认本地/平台接入方式；
+用户已明确说明运行位置时直接采用，不重复询问。不要仅因已安装 CLI 就声称已登录。
 
 用户选择平台后，对本次后续入口显式传入 `CASE_LITE_LARK_MODE=platform`，保留绑定配置；
 平台 Agent 建议预置这个环境变量。选择本地且尚未接入时，读取
@@ -145,6 +146,8 @@ python3 "{skill}/scripts/feishu_docs.py" read \
 用户确认全文导入时，用 `--all` 代替 `--section-id ...`。
 每篇完成后脚本立即更新原文分片、媒体 manifest 和 `selected-corpus.md`。
 同文档重跑替换其分片，不重复追加；不同文档不得复用同一 doc-key。
+媒体命令传不带扩展名的路径，由 CLI 按实际格式保存；正文标记及 manifest 使用其
+返回的真实路径。更新 Skill 后原样重跑失败文档的 `read` 即可重试画板，无需改选章。
 Docx 按最新 blocks 中的章节 ID 重新计算范围，不因版本或块数量变化中止；
 所选章节已不存在时重新展示目录并确认选择。Markdown 哈希变化时仍须重新选章。
 
@@ -152,8 +155,9 @@ Docx 按最新 blocks 中的章节 ID 重新计算范围，不因版本或块数
 不得摘要、精简或改写。其 `SOURCE` 注释记录来源与章节。
 原生 Markdown 保留原始文本和图片链接，不自动下载其外链图片。
 
-**对 manifest 中每个 `status:downloaded` 的图片/画板，实际调用 Agent 的 `Read`
-读取其绝对路径。** 将图中规则、分支、章节关联写入 `visual-notes.md`，不改写原文。
+**对 manifest 中每个 `status:downloaded` 的图片/画板，实际调用 Agent 的图片读取工具
+（如支持图片的 `Read` 或图片查看工具）读取 `path` 的绝对路径。** 将图中规则、分支、
+章节关联写入 `visual-notes.md`，不改写原文。
 只打印路径、下载成功或在网页显示预览均不算模型已读图。
 下载失败、Read 不可用或 `needs_context/unsupported` 内嵌资源时，参考
 [工具与资源指南](references/document-tools.md)，报告具体缺口，请用户补充、重试或

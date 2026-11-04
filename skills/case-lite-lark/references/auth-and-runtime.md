@@ -14,13 +14,15 @@
 - 已识别的平台凭证代理或 OpenClaw/Hermes/Lark Channel 上下文，默认走平台模式；
   此时本地接入脚本拒绝改配，不加 `--force-init` 绕过。
 - 本地执行一次接入后，使用 `~/.config/case-lite-lark/runtime.json` 中记录的 profile。
-- 没有本地设置且没有明确的平台上下文时，返回 `mode:auto`、`needs_mode_choice:true`。
-  先确认用户是在本地还是平台运行并等待回复，不仅凭 Linux/macOS 或 `not_configured` 猜测。
-  已明确运行位置时不重复询问。`auto` 是诊断返回值，不是环境变量的可选值。
-  用户选择平台后，对后续 doctor、授权和读取入口显式传 `CASE_LITE_LARK_MODE=platform`；
-  用户选择本地后按下文接入一次。本轮未选择前不发起登录、配置或文档读取。
+- 没有本地设置且没有明确的平台上下文时，返回 `mode:cli`，直接复用当前 CLI。
+  不加新的 `--profile`，保留 CLI 默认选择和 `LARKSUITE_CLI_PROFILE` 等环境变量；
+  不扫描旧 MCP 凭证，不要求已有 CLI 用户重新接入。`doctor` 不验证应用或用户授权。
+- 仅实际请求返回 `not_configured` 时，错误中的 `needs_mode_choice:true` 才要求确认
+  本地/平台接入方式；缺 CLI 且运行位置不明时也需确认。已明确时不重复询问。
+  平台入口显式传 `CASE_LITE_LARK_MODE=platform`；本地未配置应用时按下文接入一次。
 - 可用 `CASE_LITE_LARK_SETTINGS` 指定用户运行设置文件位置；文件不含 Secret/token。
   `CASE_LITE_LARK_MODE=local` 显式要求本地设置存在；损坏/缺失时中止，不回退其他身份。
+  `CASE_LITE_LARK_MODE=cli` 可显式选择当前 CLI；已识别的平台管理上下文仍优先。
 
 ## 平台：复用绑定应用
 
@@ -64,6 +66,8 @@ python3 "{skill}/scripts/setup_lark.py" local --config-file "/path/to/private/te
 
 两端统一使用下面的包装入口，确保授权与文档读取落在同一凭证上下文，不自行拼接
 另一套 `--profile`。缺配置先处理上述接入问题；有应用但缺用户授权时才执行 login。
+`mode:cli` 的 login/续接先通过 CLI status 确认已配置 App，再沿用当前上下文授权；
+缺配置时停止，不初始化应用、不把 Secret 或 token 取出交给脚本。
 
 需要诊断时：
 
@@ -111,7 +115,7 @@ code 仅用于本次流程，不写入任务产物、不复用过期链接。成
 
 ## 运行条件与验收
 
-- Python 3.10+、lark-cli；原读取契约核对 1.0.97，新增接入/命名 profile 契约核对 1.0.98。
+- Python 3.10+、lark-cli；媒体输出与接入/命名 profile 契约已核对 1.0.98。
 - 网络可访问飞书 API；写回搬山另需对应内部 HTTP 服务。
 - 本地用户设置和 CLI 状态跨任务保留；平台负责登录态隔离、刷新和 Pod 重建恢复。
 - 图片保存在任务工作目录，CLI 传相对路径，manifest 返回绝对路径供 Agent Read。

@@ -7,19 +7,21 @@
 ## 安装与依赖
 
 复制整个 `case-lite-lark/` 到 Agent 的 skills 目录。运行依赖为 Python 3.10+ 和
-本机或平台预置的 lark-cli；读取契约已按 1.0.97、接入契约按 1.0.98 核对。Python 脚本仅使用标准库，
+本机或平台预置的 lark-cli；媒体输出与接入契约已按 1.0.98 核对。Python 脚本仅使用标准库，
 无需安装 feishu-docx-blocks、MCP SDK、httpx 或其他 Skill。
-同一份 Skill 支持两种接入方式，成员各自授权自己的飞书账号：
+已安装并配置 lark-cli 的用户可直接使用当前上下文，成员各自授权自己的飞书账号：
 
 | 模式 | 应用配置 | 首次接入 |
 | --- | --- | --- |
+| 已有 CLI | 保留当前默认或环境变量选择的 profile | 直接读取，缺用户授权时按需恢复 |
 | 平台 | 复用 Agent 绑定并提供给 CLI 的已有应用 | 平台完成配置；用户按需授权 |
 | 本地 | 复用团队提供的已有应用，使用命名 profile | 导入一次内部配置，随后按需授权 |
 
 平台建议在 Agent 环境中设置 `CASE_LITE_LARK_MODE=platform`；脚本不会创建或重配应用。
-未明确模式且没有本地接入设置时，doctor 返回 `mode:auto`、`needs_mode_choice:true`，
-Agent 先确认本地或平台，再进入对应接入流程；不会默认把本地新用户交给平台管理员。
-本地接入后自动复用，平台明确选择模式后沿用现有 CLI 上下文。首次本地接入：
+没有本地接入设置及平台上下文时，doctor 返回 `mode:cli`，直接复用已有 CLI；
+不会因未导入本 Skill 的配置而要求重新接入。实际请求返回 `not_configured` 时才确认
+本地/平台接入方式，缺 CLI 时按运行位置安装或由平台预置。本地接入后自动复用指定
+profile，平台模式沿用绑定上下文。本地尚未配置 CLI 时的一次性接入：
 
 ```bash
 python3 /path/to/case-lite-lark/scripts/setup_lark.py local \
@@ -33,8 +35,8 @@ python3 /path/to/case-lite-lark/scripts/setup_lark.py local \
 后续无需重复接入。首次使用或 scope 变化时，按 [认证指南](references/auth-and-runtime.md)
 通过 `setup_lark.py login` 完成用户授权。
 
-已有 case-lite/feishu-docx-blocks 的成员仍需首次接入 CLI，可使用同一个团队 App；
-旧 MCP 配置和 token 不自动迁移。仅移除旧 Skill 目录不影响独立保存的 CLI 配置。
+仅配置旧 case-lite/feishu-docx-blocks 的成员仍需首次接入 CLI，可使用经确认的团队 App；
+已经配置 CLI 的成员直接复用。旧 MCP 配置和 token 不自动迁移；移除旧 Skill 目录不影响 CLI 配置。
 全新成员从管理员取得已有团队应用配置并授权自己的账号，无需申请或创建新 App。
 
 ```bash
@@ -64,7 +66,9 @@ Docx 原文通过 CLI 原始 blocks API 读取，复用上游渲染器保留完�
 Docx/Wiki 始终读取最新 blocks，不显式指定或校验 revision_id，所选章节按当前内容
 重新定位；章节已删除时需重新选章。Markdown 内容哈希变化时仍须重新选章。
 
-图片/画板保存在任务目录，并返回可供 Claude Code Read 的绝对路径。
+图片/画板保存在任务目录。下载时不预设 `.png`，CLI 按真实格式保存，正文和 manifest
+使用返回的真实路径；Agent 用支持图片的 Read 或图片查看工具读取 manifest.path。
+旧版本出现 JPEG/PNG 扩展名冲突时，更新 Skill 后用原参数重跑该文档的 read 即可。
 媒体失败或未读取的内嵌 Sheet 等会报告 partial，须补充或由用户确认带缺口继续。
 内嵌资源的处理边界见 [工具指南](references/document-tools.md)。
 

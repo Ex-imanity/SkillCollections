@@ -67,18 +67,38 @@ class LarkCLITest(unittest.TestCase):
             with self.subTest(args=args), self.assertRaises(CLIError):
                 LarkCLI().call(*args)
 
-    def test_whiteboard_uses_preview_image_path_and_returns_absolute_path(self):
+    def test_whiteboard_infers_jpeg_or_png_and_returns_reported_absolute_path(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve()
-            path = root / "feishu_images/board.png"
-            path.parent.mkdir()
-            path.write_bytes(b"fake")
             cli = LarkCLI(cwd=root)
-            with patch.object(cli, "call", return_value={"preview_image_path": str(path)}) as call:
-                saved = cli.media({"media_type": "board", "token": "boardtoken", "expected_path": "feishu_images/board.png"}, root)
-            self.assertEqual(saved, str(path))
-            self.assertEqual(call.call_args.args[:2], ("whiteboard", "+export"))
-            self.assertEqual(call.call_args.args[call.call_args.args.index("--output") + 1], "feishu_images/board.png")
+            for suffix in (".jpg", ".png"):
+                with self.subTest(suffix=suffix):
+                    path = root / f"feishu_images/board{suffix}"
+                    path.parent.mkdir(exist_ok=True)
+                    path.write_bytes(b"fake-image")
+                    with patch.object(cli, "call", return_value={"preview_image_path": str(path.relative_to(root))}) as call:
+                        saved = cli.media({"media_type": "board", "token": "boardtoken", "expected_path": "feishu_images/board.png"}, root)
+                    self.assertEqual(saved, str(path))
+                    self.assertEqual(call.call_args.args[:2], ("whiteboard", "+export"))
+                    self.assertEqual(call.call_args.args[call.call_args.args.index("--output") + 1], "feishu_images/board")
+
+    def test_image_preview_and_permission_fallback_use_extensionless_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            path = root / "feishu_images/image.jpeg"
+            path.parent.mkdir()
+            path.write_bytes(b"fake-image")
+            cli = LarkCLI(cwd=root)
+            for fallback in (False, True):
+                with self.subTest(fallback=fallback):
+                    responses = [CLIError("denied", {"code": 403})] if fallback else []
+                    responses.append({"saved_path": str(path)})
+                    with patch.object(cli, "call", side_effect=responses) as call:
+                        saved = cli.media({"media_type": "image", "token": "image", "expected_path": "feishu_images/image.png"}, root)
+                    self.assertEqual(saved, str(path))
+                    self.assertEqual(len(call.call_args_list), 2 if fallback else 1)
+                    for invocation in call.call_args_list:
+                        self.assertEqual(invocation.args[invocation.args.index("--output") + 1], "feishu_images/image")
 
     def test_media_empty_file_and_unexpected_external_path_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -15,7 +15,7 @@ args = sys.argv[1:]
 root = pathlib.Path(os.environ['FAKE_LARK_STATE'])
 with (root/'calls.jsonl').open('a') as f:
     f.write(json.dumps(args)+'\n')
-profile = args[args.index('--profile')+1] if '--profile' in args else 'platform'
+profile = args[args.index('--profile')+1] if '--profile' in args else os.environ.get('LARKSUITE_CLI_PROFILE','platform')
 if '--profile' in args:
     i=args.index('--profile'); del args[i:i+2]
 profiles_path = root/'profiles.json'
@@ -280,12 +280,12 @@ class OnboardingTest(unittest.TestCase):
         self.assertFalse(data["auth_verified"])
         self.assertTrue(all("auth" not in call for call in self.calls()))
 
-    def test_first_use_doctor_requests_runtime_choice_without_auth_or_config_calls(self):
+    def test_installed_cli_doctor_does_not_require_onboarding_choice(self):
         result = self.run_script("feishu_docs.py", "doctor")
         self.assertEqual(result.returncode, 0, result.stderr)
         data = json.loads(result.stdout)["data"]
-        self.assertEqual(data["mode"], "auto")
-        self.assertTrue(data["needs_mode_choice"])
+        self.assertEqual(data["mode"], "cli")
+        self.assertFalse(data["needs_mode_choice"])
         self.assertFalse(data["auth_verified"])
         self.assertTrue(all("--help" in call or call == ["--version"] for call in self.calls()))
         self.assertFalse(self.settings.exists())
@@ -295,7 +295,7 @@ class OnboardingTest(unittest.TestCase):
         result = self.run_script("feishu_docs.py", "outline", "https://example.feishu.cn/docx/doc", "--output", "outline.json")
         self.assertEqual(result.returncode, 1)
         error = json.loads(result.stderr)["error"]
-        self.assertEqual(error["case_lite_mode"], "auto")
+        self.assertEqual(error["case_lite_mode"], "cli")
         self.assertTrue(error["needs_mode_choice"])
         self.assertIn("本地", error["hint"])
         self.assertIn("平台", error["hint"])
@@ -307,7 +307,22 @@ class OnboardingTest(unittest.TestCase):
         result = self.run_script("setup_lark.py", "login", "--domain", "docs")
         self.assertEqual(result.returncode, 1)
         self.assertIn("确认", json.loads(result.stderr)["error"]["message"])
-        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.calls(), [["auth", "status", "--json"]])
+
+    def test_existing_cli_profile_is_used_for_reads_and_authorization_without_import(self):
+        self.profiles({"existing-team": {"appId": "cli_synthetic123", "users": ["alice"]}})
+        self.env["LARKSUITE_CLI_PROFILE"] = "existing-team"
+        before = (self.root / "profiles.json").read_bytes()
+        for args in [
+            ("feishu_docs.py", "outline", "https://example.feishu.cn/docx/doc", "--output", "outline.json"),
+            ("setup_lark.py", "login", "--scope", "docx:document:readonly"),
+            ("setup_lark.py", "login", "--device-code", "synthetic-device-code"),
+        ]:
+            result = self.run_script(*args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.settings.exists())
+        self.assertEqual((self.root / "profiles.json").read_bytes(), before)
+        self.assertTrue(all("--profile" not in call and "init" not in call for call in self.calls()))
 
     def test_first_use_missing_cli_still_gives_both_runtime_choices(self):
         (self.root / "bin/lark-cli").unlink()

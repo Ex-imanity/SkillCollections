@@ -18,8 +18,9 @@ def doctor() -> dict:
     runtime = load_runtime()
     checks = [("api", "--help"), ("wiki", "+node-get", "--help"),
               ("wiki", "+node-list", "--help"), ("markdown", "+fetch", "--help"),
-              ("docs", "+media-preview", "--help"), ("whiteboard", "+export", "--help")]
-    expected = ["--params", "--node-token", "--page-token", "--file-token", "--output", "--output-type"]
+              ("docs", "+media-preview", "--help"), ("docs", "+media-download", "--help"),
+              ("whiteboard", "+export", "--help")]
+    expected = ["--params", "--node-token", "--page-token", "--file-token", "--output", "--output", "--output-type"]
     try:
         version = subprocess.run(runtime.command("--version"), capture_output=True, text=True, timeout=15, check=False, env=env)
         if version.returncode:
@@ -29,7 +30,8 @@ def doctor() -> dict:
             if response.returncode or flag not in response.stdout:
                 raise CLIError(f"CLI 缺少 {' '.join(args[:-1])} 所需参数 {flag}，请由平台升级 CLI")
     except FileNotFoundError as exc:
-        raise CLIError(CLI_INSTALL_HINT, runtime.describe() | {"message": CLI_INSTALL_HINT}) from exc
+        raise CLIError(CLI_INSTALL_HINT, runtime.describe() | {"message": CLI_INSTALL_HINT,
+                                                             "needs_mode_choice": runtime.mode == "cli"}) from exc
     except subprocess.TimeoutExpired as exc:
         raise CLIError("CLI 能力检查超时") from exc
     return {**runtime.describe(), "cli_version": version.stdout.strip(), "capabilities": "available", "auth_verified": False,

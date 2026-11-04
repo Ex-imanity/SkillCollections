@@ -27,11 +27,15 @@ Docx ID 是真实 block ID；先按 parent/children 重建文档顺序，标题 
 
 - 图片使用 CLI `docs +media-preview`，特定权限错误时尝试 `+media-download`。
 - 画板使用 `whiteboard +export --output-type preview`。
-- 两种图片路径分别来自 saved_path 和 preview_image_path；检查实际非空文件。
+- `--output` 传不带扩展名的相对路径，让 CLI 按响应格式补 `.jpg`/`.png` 等扩展名。
+  渲染器预生成的 `.png` 仅为占位，不代表资源格式；不把 JPEG 改名成 PNG。
+- 两种图片路径分别来自 saved_path 和 preview_image_path；检查任务目录内实际非空文件，
+  并同步正文标记及 manifest 的 path、expected_path、expected_filename。
 - 同步更新渲染标记中的媒体路径。manifest 记录 block_id、section_id、章节上下文、
   状态与保存路径。下载失败会在原文后附缺口说明，不阻塞其余章节下载。
 - 表格里的图片同样处理；Native Markdown 外链作为原文保留，不发起自动外网下载。
-- `partial` 要查看 manifest。图片下载成功还须调用 Read，读图结果写 visual-notes.md。
+- `partial` 要查看 manifest。图片下载成功还须用支持图片的 Read/图片查看工具读取
+  manifest.path，读图结果写 visual-notes.md；普通文本读取不代表读图成功。
 
 ## 内嵌 Sheet 等资源
 
@@ -59,4 +63,7 @@ lark-cli api GET "/open-apis/sheets/v2/spreadsheets/<spreadsheet_token>/values/<
 - Markdown 哈希变化时重新 outline 并确认选章，不复用旧目录的 ID/range。
 - read 按 doc-key 替换原文分片并重建 selected-corpus.md；修改选择时重新执行该文档的
   read 即可。用户补充和图示解读放独立文件，不手改生成的原文文件。
+- 旧版本因 `.jpg` 响应与 `.png` 输出路径冲突时，更新 Skill 后用原参数重跑 read；
+  脚本会重新下载并替换失败状态，不必删除语料或手工改 manifest。读图能力/模型网关
+  问题须另行检查，CLI 下载成功本身不能解决模型未接收图片的问题。
 - 网络或解析失败不会替换既有语料；媒体部分失败会保存已取得的正文、缺口清单和 partial 状态。

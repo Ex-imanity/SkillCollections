@@ -69,13 +69,35 @@
     },
     {
       "id": 7,
-      "prompt": "首次在本地安装 case-lite-lark，没有安装过其他飞书 Skill，也没有团队配置。doctor 返回 mode=auto、needs_mode_choice=true、auth_verified=false。请给出下一步动作和停止位置；如果用户接着确认在本地运行，你会如何引导？不要真实调用工具或读取凭证。",
+      "prompt": "首次安装 case-lite-lark，运行位置尚未说明，CLI 尚未安装，doctor 的错误返回 needs_mode_choice=true。请给出下一步动作和停止位置；如果用户接着确认在本地运行，你会如何引导？不要真实调用工具或读取凭证。",
       "expected_output": "先确认本地或平台并等待，已知本地则不重复问；不因 auth_verified=false 发起登录。缺CLI按本地安装指引，向管理员取得已有团队App配置后运行本地接入，再按需个人授权。不申请新App、不自动扫描旧MCP凭证。",
       "files": [],
       "assertions": [
         "未知运行位置先确认并等待，已明确本地则不重复询问",
         "不因 auth_verified=false 自动配置或登录，也不创建App",
         "本地首次从管理员取得已有App配置，接入后再做个人授权"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "本机已安装并配置 lark-cli 1.0.98，当前通过 LARKSUITE_CLI_PROFILE=existing-team 选择应用。首次安装 case-lite-lark，没有它的 runtime.json，doctor 返回 mode=cli、auth_verified=false。用户要求直接用已有 CLI 读取文档，你会怎么继续？不要真实调用工具。",
+      "expected_output": "直接通过 feishu_docs.py 读取，保留当前 CLI 上下文；不要求重导团队配置或仅因 auth_verified=false 发起登录。实际缺用户授权时用同一 setup_lark.py 入口恢复，缺 App 时才确认接入方式。",
+      "files": [],
+      "assertions": [
+        "直接复用已有 CLI，不强制本地接入或切换 profile",
+        "不凭 doctor 判断已登录或授权失败",
+        "仅按实际配置或授权错误恢复"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "使用旧版 case-lite-lark 时三个画板下载失败，错误为 preview response is .jpg but output path has extension .png。更新 Skill 后需要恢复；Agent 有图片查看工具但没有名为 Read 的工具。你会如何继续？不要真实调用工具。",
+      "expected_output": "按已确认选章和原 doc-key 重跑 read，用无扩展名 CLI 输出和报告的真实 JPG 路径；检查 manifest 状态并用现有图片查看工具读取 path，把解读写 visual-notes.md。不手工将 JPEG 改名 PNG，不改写原文或宣称仅下载就已读图。",
+      "files": [],
+      "assertions": [
+        "更新后重跑 read，无需删除语料或重新选章",
+        "使用实际保存路径而不是 PNG 占位路径",
+        "使用 Agent 现有图片读取工具，下载不等于完成读图"
       ]
     }
   ]

@@ -151,8 +151,15 @@ def configure_profile(app_id: str, secret: str, brand: str, profile: str) -> dic
 def forward_auth(runtime: LarkRuntime, args: list[str]) -> int:
     # Preserve native split-flow JSON (including the one-time device_code), exit
     # codes and QR output. Do not store auth output or copy another user's login.
-    if args[0] == "login" and runtime.mode == "auto":
-        raise CLIError("请先确认在本地还是平台运行；本地先接入团队应用，平台显式选择 platform 后再授权")
+    if args[0] == "login" and runtime.mode == "cli":
+        try:
+            status = control_json(runtime, "auth", "status", "--json")
+        except CLIError as exc:
+            if exc.details.get("subtype") != "not_configured":
+                raise
+            status = {}
+        if not isinstance(status, dict) or not status.get("appId"):
+            raise CLIError("当前 CLI 未确认已有应用；请先确认本地或平台接入方式，不创建新应用")
     result = subprocess.run(runtime.command("auth", *args), env=cli_environment(),
                             check=False, timeout=120)
     return result.returncode
