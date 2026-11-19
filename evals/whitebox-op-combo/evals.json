@@ -1,0 +1,53 @@
+{
+  "skill_name": "whitebox-op-combo",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "请用 whitebox-op-combo 分析维护通知，双端代码、基线和需求见附件。请按该 Skill 正常流程工作，产出可审阅材料。",
+      "expected_output": "无额外提示即比较空值、遮罩与入场顺序；不能只报告端内 bug",
+      "files": [
+        "fixtures/popup-entry.md"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "请用 whitebox-op-combo 对附件中的功能做完整白盒分析，按正常流程工作并输出测试建议。所有可用材料均在附件。",
+      "expected_output": "主动对照三个提示的等待与互斥；正确记两端冲突优先；代码差异与真机遮挡分开",
+      "files": [
+        "fixtures/popup-entry.md"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "请按附件中各端版本、配置和历史数据分析升级提醒及展示结果，判断目前能确认哪些问题。",
+      "expected_output": "按各端相对门槛和策略比较；合法字段类型差异不自动判 bug；鸿蒙未知保持未知",
+      "files": [
+        "fixtures/platform-baselines.md"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "请在已有差异记录基础上继续；我已在附件给出这次统一口径。附件中的模拟旧产物无需实际修改，给出完整回流建议。",
+      "expected_output": "记录决定来源及影响端/用例；旧 SHA 不当最新证据；列出模拟 full/cases/analysis 回流，不外部写入",
+      "files": [
+        "fixtures/decision-feedback.md"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "请对附件中的 Android 回答卡操作顺序做白盒分析。只有这一端代码可用。",
+      "expected_output": "保持单端工作流；原子表审阅前不越过门槛；不索要无关三端资料或强制三端矩阵",
+      "files": [
+        "fixtures/single-end.md"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "双端代码如附件。目前需求没规定统一规则。请比较可选验收方案并给出你建议采用的行为，继续完成不受影响的分析。",
+      "expected_output": "候选方案及理由、待定预期、继续独立工作；不能用多数端或某端现状擅定标准",
+      "files": [
+        "fixtures/popup-entry.md"
+      ]
+    }
+  ]
+}

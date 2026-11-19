@@ -44,7 +44,7 @@ Skill 不应直接用于不具备相应权限的环境。
 | `dify-dsl-generator` | 1.0.0 | 生成、重构或评审 Dify workflow/chatflow/agent DSL | [SKILL.md](skills/dify-dsl-generator/SKILL.md) |
 | `internal-api-cookie-auth` | 1.0.2 | 内部 HTTPS/CAS 认证与安全请求封装 | [README](skills/internal-api-cookie-auth/README.md) |
 | `repository-code-style` | 1.4.0 | 本地风格档案、近期取样、目录分层/复用语义、CR 核销及普通/跨 Agent Review | [README](skills/repository-code-style/README.md) |
-| `whitebox-op-combo` | 1.0.1 | 按读写集分析多操作组合、代码路径和缺陷候选 | [README](skills/whitebox-op-combo/README.md) |
+| `whitebox-op-combo` | 1.1.0 | 操作组合与跨端行为对照、标准决策及用例回流 | [README](skills/whitebox-op-combo/README.md) |
 
 `internal-api-cookie-auth` 和 `repository-code-style` 包含内部
 环境或组织资料。它们保留在集合中用于已授权环境，发布到其他组织前应完成独立的
