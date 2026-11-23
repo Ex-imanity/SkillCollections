@@ -1,6 +1,6 @@
 ---
 name: whitebox-op-combo
-version: 1.1.0
+version: 1.1.1
 description: >-
   白盒操作组合分析：在能看到源码（服务端和/或客户端）的前提下，把一个功能的用户操作拆成原子动作，
   按读写集排列组合出正向与异常的操作顺序，映射到代码执行路径，提前定位缺陷位置、判定服务端/客户端归属，
@@ -40,7 +40,7 @@ description: >-
 | `references/cross-end-consistency.md` | 用户提供≥2端代码/分支时，阶段 0 起**必读**：可比条件、单动作/流程对照、标准选择与回流 |
 | `references/defect-patterns.md` | 阶段 4 对每个候选组合做推演时：8 类缺陷模式和"排除"检查 |
 | `references/verification.md` | 阶段 5：状态标记、复现方法、定级、服务端/客户端归属、快速指纹 |
-| `references/output-templates.md` | 写 atoms.md / analysis.md / cases.md 时 |
+| `references/output-templates.md` | 写 atoms.md / analysis.md / cases.md / cross-end-consistency.md 时 |
 | `examples/ai-search-answer-card/` | 想看一个真实功能的 atoms.json 与脚本输出长什么样时 |
 
 ## 产物目录
@@ -52,6 +52,8 @@ baseline.md  atoms.json  atoms.md  pairs.md  analysis.md  cases.md
 ```
 
 多端任务另建 `cross-end-consistency.md`。单 slug 放原目录；多 slug 的批次根、唯一行为 ID 和反向链接按 `references/cross-end-consistency.md` §6，不在裸 `whitebox-output/` 混放不相关决定。只有一端时保留普通流程，不强制三端表。
+
+面向人的说明用自然语言写清关键前置、动作、对象和可观察结果。原子表保留读写、来源和端差异，供人工审阅和后续推演。跨端对照应当逐行可读，编号与链接用于追溯证据。
 
 ## 工作流
 
@@ -157,7 +159,7 @@ baseline.md  atoms.json  atoms.md  pairs.md  analysis.md  cases.md
 
 - 先 grep 写入点，只打开命中的方法，不整文件通读。
 - 远程分支文件导出到 `/tmp/<repo>/` 后再检索，避免反复 `git show`。
-- 读写点和原子一旦写进 atoms.json，后续推演引用 ID（W03、A2）而不是重复描述。
+- 后续推演可引用 atoms.json 中的 ID（W03、A2）追溯读写点和原子。需要人审阅的结论用自然语言概括操作和结果。
 - 候选组合多时，按脚本得分截断，未推演的在 analysis.md 里说明。
 
 ## 与其他 skill 的关系
