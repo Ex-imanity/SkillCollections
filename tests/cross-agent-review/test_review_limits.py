@@ -1816,5 +1816,94 @@ class CodexProvenanceTests(unittest.TestCase):
         self.assertIn("turn.completed", result.envelope["detail"])
 
 
+class CommonHardeningTests(unittest.TestCase):
+    def test_fail_closed_redacts_secret_in_gate_id_filename_and_heading(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            handoff_dir = Path(directory) / "handoffs"
+            gate_id = "gate-AIzaSySecretTokenValue1234567890-custom-secret-xyz"
+            written = common.fail_closed(
+                str(handoff_dir),
+                gate_id,
+                "other_error",
+                "boom",
+                "Review request",
+                sensitive_values=["custom-secret-xyz"],
+                reviewer="Antigravity",
+            )
+            self.assertNotIn("AIzaSySecretTokenValue1234567890", written)
+            self.assertNotIn("custom-secret-xyz", written)
+            body = Path(written).read_text(encoding="utf-8")
+            self.assertNotIn("AIzaSySecretTokenValue1234567890", body)
+            self.assertNotIn("custom-secret-xyz", body)
+
+            failure = common.gate_failure_result(
+                str(handoff_dir),
+                gate_id,
+                "other_error",
+                "boom",
+                "Review request",
+                sensitive_values=["custom-secret-xyz"],
+                reviewer="Antigravity",
+            )
+            self.assertEqual(written, failure.envelope["handoff_path"])
+
+    def test_fail_closed_respects_explicit_resumable_false_for_timeout(self) -> None:
+        self.assertIn("Antigravity", common.RESUMABLE_REVIEWERS)
+        with tempfile.TemporaryDirectory() as directory:
+            handoff_dir = Path(directory) / "handoffs"
+            non_resumable = common.fail_closed(
+                str(handoff_dir),
+                "gate-non-resumable",
+                "timeout",
+                "timed out without artifact-path",
+                "Review request",
+                reviewer="Antigravity",
+                resumable=False,
+            )
+            self.assertNotIn("--resume", Path(non_resumable).read_text(encoding="utf-8"))
+
+            explicit_resumable = common.fail_closed(
+                str(handoff_dir),
+                "gate-resumable",
+                "timeout",
+                "timed out",
+                "Review request",
+                reviewer="Antigravity",
+                resumable=True,
+            )
+            self.assertIn("--resume", Path(explicit_resumable).read_text(encoding="utf-8"))
+
+            default_resumable = common.fail_closed(
+                str(handoff_dir),
+                "gate-default-resumable",
+                "timeout",
+                "timed out",
+                "Review request",
+                reviewer="Antigravity",
+            )
+            self.assertIn("--resume", Path(default_resumable).read_text(encoding="utf-8"))
+
+    def test_log_cost_redacts_string_fields_and_google_api_key_patterns(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "cost.jsonl"
+            common.log_cost(
+                {"total_cost_usd": None},
+                str(log_path),
+                "gate-GEMINI_API_KEY=secretval",
+                1.23,
+                extra={
+                    "requested_model": "m-AIzaSyABCDEFGHIJKLMNOPQRSTUV",
+                    "usage": {"input_tokens": 5},
+                },
+                sensitive_values=["secretval"],
+            )
+            raw = log_path.read_text(encoding="utf-8")
+            self.assertNotIn("secretval", raw)
+            self.assertNotIn("AIzaSy", raw)
+            record = json.loads(raw.strip())
+            self.assertEqual({"input_tokens": 5}, record["usage"])
+            self.assertEqual(1.23, record["wall_seconds"])
+
+
 if __name__ == "__main__":
     unittest.main()

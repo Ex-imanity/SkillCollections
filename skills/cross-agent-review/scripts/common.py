@@ -172,8 +172,10 @@ _SECRET_PATTERNS = (
     (re.compile(r"(?i)(ANTHROPIC_AUTH_TOKEN\s*[=:]\s*)\S+"), r"\1[REDACTED]"),
     (re.compile(r"(?i)(ANTHROPIC_BASE_URL\s*[=:]\s*)\S+"), r"\1[REDACTED]"),
     (re.compile(r"(?im)(ANTHROPIC_CUSTOM_HEADERS\s*[=:]\s*)[^\r\n]+"), r"\1[REDACTED]"),
+    (re.compile(r"(?i)((?:GEMINI|GOOGLE|GOOGLE_CLOUD)_API_KEY\s*[=:]\s*)\S+"), r"\1[REDACTED]"),
     (re.compile(r"(?i)(Authorization\s*:\s*Bearer\s+)\S+"), r"\1[REDACTED]"),
     (re.compile(r"\bsk-[A-Za-z0-9_-]{6,}\b"), "[REDACTED]"),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"), "[REDACTED]"),
     (
         re.compile(
             r"(?i)https?://(?:"
@@ -186,6 +188,7 @@ _SECRET_PATTERNS = (
     ),
 )
 
+RESUMABLE_REVIEWERS = frozenset({"Grok", "ClaudeCode", "Codex", "Antigravity"})
 MAX_BUDGET_FLAG = "--max-budget-usd"
 MODEL_FLAG = "--model"
 MAX_REQUESTED_MODEL_LENGTH = 128
@@ -497,6 +500,16 @@ def _atomic_write_text(path: str, body: str) -> None:
             os.unlink(temporary_path)
 
 
+def _redact_value(value: Any, sensitive_values: Optional[list] = None) -> Any:
+    if isinstance(value, str):
+        return _redact_sensitive_text(value, sensitive_values)
+    if isinstance(value, dict):
+        return {k: _redact_value(v, sensitive_values) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(item, sensitive_values) for item in value]
+    return value
+
+
 def fail_closed(
     handoff_dir: str,
     gate_id: str,
@@ -505,6 +518,7 @@ def fail_closed(
     request_prompt: str,
     sensitive_values: Optional[list] = None,
     reviewer: str = "reviewer",
+    resumable: Optional[bool] = None,
 ) -> str:
     """Write a durable handoff instead of fabricating a reviewer response.
 
@@ -512,20 +526,26 @@ def fail_closed(
     A human continues the review interactively on the named reviewer route.
     """
     os.makedirs(handoff_dir, exist_ok=True)
-    path = os.path.join(handoff_dir, f"handoff-{_safe_gate_id(gate_id)}.md")
+    safe_gate_heading = _redact_sensitive_text(str(gate_id), sensitive_values)
+    path = os.path.join(handoff_dir, f"handoff-{_safe_gate_id(safe_gate_heading)}.md")
     safe_detail = _redact_sensitive_text(str(detail), sensitive_values)
     safe_request = _redact_sensitive_text(str(request_prompt), sensitive_values)
     safe_reviewer = _redact_sensitive_text(str(reviewer or "reviewer"), sensitive_values)
+    allow_resume_hint = (
+        status == "timeout" and reviewer in RESUMABLE_REVIEWERS
+        if resumable is None
+        else bool(resumable)
+    )
     next_step = (
         f"For a recorded resumable {safe_reviewer} timeout, the primary may repeat the original gate "
         "with --resume after the original subprocess exits, within the user's approved "
         "time/cost scope. Otherwise continue interactively and return the verdict to the primary."
-        if status == "timeout" and reviewer in {"Grok", "ClaudeCode", "Codex"} else
+        if allow_resume_hint else
         f"A human should continue this review interactively on the {safe_reviewer} route "
         "(handoff), then hand the verdict back to the primary."
     )
     body = (
-        f"# Cross-Agent Review Handoff — {gate_id}\n\n"
+        f"# Cross-Agent Review Handoff — {safe_gate_heading}\n\n"
         f"Status: **{status}** (fail-closed)\n\n"
         f"Detail: {safe_detail}\n\n"
         f"The {safe_reviewer} adapter could not obtain a verified reviewer "
@@ -547,12 +567,13 @@ def gate_failure_result(
     sensitive_values: Optional[list] = None,
     envelope: Optional[dict] = None,
     reviewer: str = "reviewer",
+    resumable: Optional[bool] = None,
 ) -> ReviewResult:
     """Return a structured failure and make a best effort to persist handoff."""
     failure_envelope = dict(envelope or {})
     failure_envelope["detail"] = detail
     try:
-        fail_closed(
+        failure_envelope["handoff_path"] = fail_closed(
             handoff_dir,
             gate_id,
             status,
@@ -560,8 +581,10 @@ def gate_failure_result(
             request_prompt,
             sensitive_values,
             reviewer=reviewer,
+            resumable=resumable,
         )
     except (OSError, ValueError) as exc:
+        failure_envelope["handoff_path"] = None
         failure_envelope["handoff_error"] = f"{type(exc).__name__}: {exc}"
     return ReviewResult(status, None, failure_envelope, exit_code=1)
 
@@ -604,6 +627,7 @@ def log_cost(
     gate_id: str,
     wall_seconds: float,
     extra: Optional[dict] = None,
+    sensitive_values: Optional[list] = None,
 ) -> None:
     """Append one cost/latency record per started segment, including continuations.
 
@@ -612,12 +636,12 @@ def log_cost(
     `extra` merges provider-specific fields such as token usage.
     """
     record = {
-        "gate_id": gate_id,
+        "gate_id": _redact_sensitive_text(str(gate_id), sensitive_values),
         "total_cost_usd": envelope.get("total_cost_usd"),
         "wall_seconds": round(float(wall_seconds), 3),
     }
     if extra:
-        record.update(extra)
+        record.update(_redact_value(extra, sensitive_values))
     line = json.dumps(record, sort_keys=True)
     os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as fh:
@@ -691,6 +715,7 @@ def run_review_gate(
                                        sensitive_values, reviewer=reviewer)
 
     def failure(*args, **kwargs) -> ReviewResult:
+        kwargs.setdefault("resumable", False)
         return finish(gate_failure_result(*args, **kwargs))
 
     try:
@@ -776,6 +801,7 @@ def run_review_gate(
                         gate_id,
                         time.monotonic() - start,
                         extra=extra,
+                        sensitive_values=sensitive_values,
                     )
                 except (OSError, ValueError) as exc:
                     log_error = exc
@@ -795,6 +821,7 @@ def run_review_gate(
                     request_prompt,
                     sensitive_values,
                     reviewer=reviewer,
+                    resumable=False,
                 )
 
             if log_error is not None:
@@ -808,6 +835,7 @@ def run_review_gate(
                     sensitive_values,
                     {"total_cost_usd": result.envelope.get("total_cost_usd")},
                     reviewer=reviewer,
+                    resumable=False,
                 )
 
             if result.status != "success":
@@ -815,6 +843,11 @@ def run_review_gate(
                     result.envelope["cleanup_warning"] = (
                         f"{type(cleanup_error).__name__}: {cleanup_error}"
                     )
+                result_resumable = (
+                    bool(result.envelope.get("resumable"))
+                    if continuation is not None and isinstance(result.envelope, dict)
+                    else None
+                )
                 return failure(
                     handoff_dir,
                     gate_id,
@@ -824,6 +857,7 @@ def run_review_gate(
                     sensitive_values,
                     result.envelope,
                     reviewer=reviewer,
+                    resumable=result_resumable,
                 )
 
             if cleanup_error is not None and isinstance(result.envelope, dict):
