@@ -22,11 +22,17 @@ import json
 import math
 import os
 import re
+import selectors
 import shutil
+import signal
 import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 from uuid import UUID
+
+from .continuation import ReviewContinuation
 
 from .common import (
     DEFAULT_SETTINGS_PATH,
@@ -44,6 +50,8 @@ from .common import (
 
 _REVIEWER_NAME = "Antigravity"
 _ORIGINAL_SUBPROCESS_RUN = subprocess.run
+POST_EXIT_DRAIN_SECONDS = 5.0
+CLEANUP_TIMEOUT_SECONDS = 5.0
 
 _AGY_SENSITIVE_ENV_KEYS = (
     "GEMINI_API_KEY",
@@ -405,6 +413,421 @@ def _provenance_failure_detail(parsed: dict, reason: str) -> str:
     return f"agy provenance incomplete: {reason}; observed_events={seen or 'none'}{hint_text}"
 
 
+class _AgyContinuation(ReviewContinuation):
+    """Capture CLI-issued conversation UUID and require resumed-segment receipt."""
+
+    def check(
+        self,
+        *,
+        marker_path: str,
+        gate_id: str,
+        artifact_key: str,
+        request_prompt: str,
+        reviewer: str,
+        requested_model: Optional[str],
+        output_path: Optional[str],
+        cost_log_path: str,
+    ) -> None:
+        if self.resume and not self.artifact_paths:
+            raise ValueError("Antigravity --resume requires --artifact-path for reviewed files")
+        super().check(
+            marker_path=marker_path,
+            gate_id=gate_id,
+            artifact_key=artifact_key,
+            request_prompt=request_prompt,
+            reviewer=reviewer,
+            requested_model=requested_model,
+            output_path=output_path,
+            cost_log_path=cost_log_path,
+        )
+
+    def decorate(self, result: ReviewResult) -> ReviewResult:
+        observed_id = _validate_uuid(result.envelope.get("observed_session_id"))
+        if result.status in {"timeout", "success"}:
+            if self.resume:
+                if observed_id is None or observed_id != self.session_id:
+                    result = ReviewResult(
+                        "provenance_failure",
+                        None,
+                        {
+                            **result.envelope,
+                            "detail": "resumed Antigravity segment did not return a matching native conversation UUID",
+                        },
+                        1,
+                    )
+            else:
+                if observed_id is None:
+                    result = ReviewResult(
+                        "provenance_failure",
+                        None,
+                        {
+                            **result.envelope,
+                            "detail": "Antigravity did not return a verified native conversation UUID; timeout cannot be resumed",
+                        },
+                        1,
+                    )
+                else:
+                    self.data["session_id"] = observed_id
+                    if result.status == "timeout" and not self.artifact_paths:
+                        result = ReviewResult(
+                            "other_error",
+                            None,
+                            {
+                                **result.envelope,
+                                "detail": "review subprocess timed out without --artifact-path; Antigravity timeout continuation requires registered reviewed files",
+                            },
+                            1,
+                        )
+        return super().decorate(result)
+
+    def require_history(self) -> None:
+        """Require an existing, non-empty regular `.db` strictly inside session_store."""
+        store_root = Path(self.session_store).resolve()
+        conversations_dir = store_root / "conversations"
+        if conversations_dir.is_symlink():
+            raise ValueError("original Antigravity native history is missing; cannot resume this gate")
+        db_path = conversations_dir / f"{self.session_id}.db"
+        if db_path.is_symlink() or not db_path.exists() or not db_path.is_file():
+            raise ValueError("original Antigravity native history is missing; cannot resume this gate")
+        try:
+            resolved = db_path.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError("original Antigravity native history is missing; cannot resume this gate") from exc
+        if store_root not in resolved.parents:
+            raise ValueError("original Antigravity native history escapes session store; cannot resume this gate")
+        if resolved.stat().st_size <= 0:
+            raise ValueError("original Antigravity native history is empty; cannot resume this gate")
+
+
+def _safe_close_stream(stream: Any) -> None:
+    if stream is None:
+        return
+    try:
+        stream.close()
+    except OSError:
+        pass
+
+
+def _run_agy_subprocess_posix(
+    argv: list,
+    *,
+    env: Optional[dict],
+    input_bytes: bytes,
+    timeout: float,
+    cwd: Optional[str],
+):
+    process = subprocess.Popen(
+        argv,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        start_new_session=True,
+        **({"cwd": cwd} if cwd is not None else {}),
+    )
+    stdout_chunks: list = []
+    stderr_chunks: list = []
+    sel = selectors.DefaultSelector()
+    open_readers: set = set()
+    stdin_stream = process.stdin
+    stdin_view = memoryview(input_bytes)
+    stdin_offset = 0
+
+    try:
+        if stdin_stream is not None:
+            if not input_bytes:
+                _safe_close_stream(stdin_stream)
+                stdin_stream = None
+            else:
+                os.set_blocking(stdin_stream.fileno(), False)
+                sel.register(stdin_stream, selectors.EVENT_WRITE, "stdin")
+
+        for tag, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+            if stream is not None:
+                os.set_blocking(stream.fileno(), False)
+                sel.register(stream, selectors.EVENT_READ, tag)
+                open_readers.add(tag)
+
+        overall_deadline = time.monotonic() + float(timeout)
+        exit_time: Optional[float] = None
+        drain_deadline: Optional[float] = None
+
+        while True:
+            now = time.monotonic()
+            if exit_time is None and process.poll() is not None:
+                exit_time = now
+                drain_deadline = min(overall_deadline, exit_time + POST_EXIT_DRAIN_SECONDS)
+            if exit_time is not None and not open_readers:
+                break
+            ceiling = drain_deadline if drain_deadline is not None else overall_deadline
+            remaining = ceiling - now
+            if remaining <= 0:
+                break
+            events = sel.select(timeout=min(remaining, 0.05))
+            for key, _mask in events:
+                tag = key.data
+                stream = key.fileobj
+                if tag == "stdin":
+                    try:
+                        written = os.write(stream.fileno(), stdin_view[stdin_offset : stdin_offset + 65536])
+                        stdin_offset += written
+                    except BlockingIOError:
+                        continue
+                    except (BrokenPipeError, OSError):
+                        stdin_offset = len(input_bytes)
+                    if stdin_offset >= len(input_bytes):
+                        sel.unregister(stream)
+                        _safe_close_stream(stream)
+                        stdin_stream = None
+                else:
+                    try:
+                        chunk = os.read(stream.fileno(), 65536)
+                    except BlockingIOError:
+                        continue
+                    except OSError:
+                        chunk = b""
+                    if not chunk:
+                        sel.unregister(stream)
+                        _safe_close_stream(stream)
+                        open_readers.discard(tag)
+                    elif tag == "stdout":
+                        stdout_chunks.append(chunk)
+                    else:
+                        stderr_chunks.append(chunk)
+
+        if exit_time is None and process.poll() is not None:
+            exit_time = time.monotonic()
+
+        if exit_time is not None:
+            if open_readers:
+                # Launcher exited, but a descendant kept stdout/stderr open past drain deadline.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
+                raise OSError("Antigravity post-exit pipe drain timed out; descendant held output open")
+            rc = process.wait(timeout=1.0)
+            return subprocess.CompletedProcess(
+                argv, rc, b"".join(stdout_chunks), b"".join(stderr_chunks)
+            )
+
+        # Timeout path: terminate adapter-owned process group, wait bounded, drain bounded.
+        if stdin_stream is not None:
+            try:
+                sel.unregister(stdin_stream)
+            except KeyError:
+                pass
+            _safe_close_stream(stdin_stream)
+            stdin_stream = None
+
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+
+        cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
+        try:
+            process.wait(timeout=max(0.01, cleanup_deadline - time.monotonic()))
+        except subprocess.TimeoutExpired as exc:
+            raise OSError("Antigravity timeout cleanup did not terminate owned process") from exc
+
+        while open_readers:
+            rem = cleanup_deadline - time.monotonic()
+            if rem <= 0:
+                break
+            events = sel.select(timeout=min(rem, 0.05))
+            for key, _mask in events:
+                tag = key.data
+                stream = key.fileobj
+                try:
+                    chunk = os.read(stream.fileno(), 65536)
+                except BlockingIOError:
+                    continue
+                except OSError:
+                    chunk = b""
+                if not chunk:
+                    sel.unregister(stream)
+                    _safe_close_stream(stream)
+                    open_readers.discard(tag)
+                elif tag == "stdout":
+                    stdout_chunks.append(chunk)
+                else:
+                    stderr_chunks.append(chunk)
+
+        if open_readers:
+            raise OSError("Antigravity timeout cleanup did not close owned process pipes")
+
+        raise subprocess.TimeoutExpired(
+            argv,
+            timeout,
+            output=b"".join(stdout_chunks),
+            stderr=b"".join(stderr_chunks),
+        )
+    finally:
+        for key in list(sel.get_map().values()):
+            try:
+                sel.unregister(key.fileobj)
+            except (KeyError, ValueError):
+                pass
+            _safe_close_stream(key.fileobj)
+        sel.close()
+        _safe_close_stream(stdin_stream)
+        _safe_close_stream(process.stdout)
+        _safe_close_stream(process.stderr)
+
+
+def _run_agy_subprocess_windows(
+    argv: list,
+    *,
+    env: Optional[dict],
+    input_bytes: bytes,
+    timeout: float,
+    cwd: Optional[str],
+):
+    process = subprocess.Popen(
+        argv,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        **({"cwd": cwd} if cwd is not None else {}),
+    )
+    stdout_chunks: list = []
+    stderr_chunks: list = []
+
+    def _write_stdin() -> None:
+        stream = process.stdin
+        if stream is None:
+            return
+        try:
+            view = memoryview(input_bytes)
+            offset = 0
+            while offset < len(input_bytes):
+                written = stream.write(view[offset : offset + 65536])
+                if not written:
+                    break
+                offset += written
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            _safe_close_stream(stream)
+
+    def _read_pipe(stream: Any, sink: list) -> None:
+        if stream is None:
+            return
+        try:
+            while True:
+                chunk = stream.read(65536)
+                if not chunk:
+                    break
+                sink.append(chunk)
+        except OSError:
+            pass
+
+    writer = threading.Thread(target=_write_stdin, daemon=True)
+    out_reader = threading.Thread(target=_read_pipe, args=(process.stdout, stdout_chunks), daemon=True)
+    err_reader = threading.Thread(target=_read_pipe, args=(process.stderr, stderr_chunks), daemon=True)
+    writer.start()
+    out_reader.start()
+    err_reader.start()
+
+    def _taskkill_tree() -> bool:
+        try:
+            killer = subprocess.Popen(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        try:
+            killer.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
+            return killer.returncode == 0
+        except subprocess.TimeoutExpired:
+            try:
+                killer.kill()
+            except OSError:
+                pass
+            try:
+                killer.wait(timeout=1.0)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            return False
+
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        cleanup_ok = False
+        try:
+            cleanup_ok = _taskkill_tree()
+        finally:
+            try:
+                process.kill()
+            except (ProcessLookupError, OSError):
+                pass
+            try:
+                process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
+            except (subprocess.TimeoutExpired, OSError):
+                cleanup_ok = False
+
+        drain_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
+        for reader in (out_reader, err_reader):
+            rem = max(0.0, drain_deadline - time.monotonic())
+            reader.join(timeout=rem)
+        readers_done = not out_reader.is_alive() and not err_reader.is_alive()
+        if readers_done:
+            _safe_close_stream(process.stdout)
+            _safe_close_stream(process.stderr)
+        if not cleanup_ok or not readers_done:
+            # Never call blocking close() on hung Windows pipes; fail closed and release lock.
+            raise OSError("Antigravity Windows process-tree cleanup failed; closure is unverified")
+        raise subprocess.TimeoutExpired(
+            argv,
+            timeout,
+            output=b"".join(stdout_chunks),
+            stderr=b"".join(stderr_chunks),
+        ) from None
+
+    # Normal exit: drain reader threads within POST_EXIT_DRAIN_SECONDS.
+    drain_deadline = time.monotonic() + POST_EXIT_DRAIN_SECONDS
+    for reader in (out_reader, err_reader):
+        rem = max(0.0, drain_deadline - time.monotonic())
+        reader.join(timeout=rem)
+    writer.join(timeout=0.5)
+    if out_reader.is_alive() or err_reader.is_alive():
+        _taskkill_tree()
+        raise OSError("Antigravity post-exit pipe drain timed out; descendant held output open")
+    _safe_close_stream(process.stdout)
+    _safe_close_stream(process.stderr)
+    return subprocess.CompletedProcess(
+        argv, process.returncode, b"".join(stdout_chunks), b"".join(stderr_chunks)
+    )
+
+
+def _run_agy_subprocess(
+    argv: list,
+    *,
+    env: Optional[dict],
+    input: bytes,
+    capture_output: bool,
+    text: bool,
+    timeout: float,
+    cwd: Optional[str] = None,
+):
+    """Strictly bounded subprocess runner for `agy` (never holds marker lock unboundedly)."""
+    input_bytes = _to_utf8_bytes(input)
+    if os.name == "posix":
+        return _run_agy_subprocess_posix(
+            argv, env=env, input_bytes=input_bytes, timeout=timeout, cwd=cwd
+        )
+    return _run_agy_subprocess_windows(
+        argv, env=env, input_bytes=input_bytes, timeout=timeout, cwd=cwd
+    )
+
+
 def _default_agy_runner(
     argv: list,
     *,
@@ -413,16 +836,16 @@ def _default_agy_runner(
     capture_output: bool,
     text: bool,
     timeout: float,
-    cwd: Optional[str],
+    cwd: Optional[str] = None,
 ):
-    return subprocess.run(
+    return _run_agy_subprocess(
         argv,
         env=env,
         input=input,
         capture_output=capture_output,
         text=text,
         timeout=timeout,
-        **({"cwd": cwd} if cwd is not None else {}),
+        cwd=cwd,
     )
 
 
@@ -818,7 +1241,20 @@ def agy_review_gate(
                     resumable=False,
                 )
 
+    store_path = os.path.realpath(
+        os.path.expanduser(agy_home or "~/.gemini/antigravity-cli")
+    )
+    continuation = _AgyContinuation(
+        resume=resume,
+        cwd=working_dir,
+        artifact_paths=artifact_paths or [],
+        session_store=store_path,
+        binding_context={"add_dirs": resolved_add_dirs},
+    )
+
     def prepare(_marker_dir: str) -> dict:
+        if resume:
+            continuation.require_history()
         prompt = request_prompt
         if resume:
             prompt = (
@@ -832,7 +1268,7 @@ def agy_review_gate(
             agy_executable=agy_executable,
             add_dirs=resolved_add_dirs,
             model=requested_model,
-            session_id=None,
+            session_id=continuation.session_id if resume else None,
             resume=resume,
         )
         child_env = dict(os.environ)
@@ -872,6 +1308,7 @@ def agy_review_gate(
         requested_model=requested_model,
         provider="agy",
         prepare=prepare,
+        continuation=continuation,
     )
 
 
