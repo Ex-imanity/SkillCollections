@@ -136,6 +136,27 @@ class RuntimeCapabilityTests(unittest.TestCase):
         self.assertLess(elapsed, 1.5, f"Windows agy --version probe blocked for {elapsed:.2f}s")
         self.assertFalse(ver_proc.communicate.called)
 
+    def test_agy_version_probe_import_failure_fails_closed_without_unbounded_subprocess_run(self) -> None:
+        real_import = __import__
+
+        def block_to_agy(name, globals=None, locals=None, fromlist=(), level=0):
+            if "to_agy" in name or (level > 0 and "to_agy" in (name or "")):
+                raise ImportError("simulated to_agy import failure")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with mock.patch("builtins.__import__", side_effect=block_to_agy), \
+                mock.patch.object(
+                    runtime_capabilities.subprocess,
+                    "run",
+                    side_effect=AssertionError("import fallback must not call unbounded subprocess.run"),
+                ):
+            report = runtime_capabilities.discover_local_agents(
+                which=lambda cmd: "/opt/bin/agy" if cmd == "agy" else None,
+                path_env="/test/bin",
+            )
+        agents = {entry["command"]: entry for entry in report["agents"]}
+        self.assertEqual("version_probe_failed:OSError", agents["agy"]["status"])
+
 
 if __name__ == "__main__":
     unittest.main()

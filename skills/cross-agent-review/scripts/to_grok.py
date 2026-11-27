@@ -34,6 +34,7 @@ from .common import (
     MODEL_FLAG,
     ReviewResult,
     _known_sensitive_values,
+    _normalize_cost_usd,
     build_reviewer_prompt,
     fail_closed as _fail_closed,
     gate_failure_result as _gate_failure_result,
@@ -288,12 +289,7 @@ def _parse_json_object(stdout: str) -> dict:
 
 def _normalize_total_cost(raw_cost: object) -> Optional[float]:
     """Record provider cost only when it is a real finite number; never fake 0."""
-    if isinstance(raw_cost, bool) or not isinstance(raw_cost, (int, float)):
-        return None
-    value = float(raw_cost)
-    if value != value or value in (float("inf"), float("-inf")):  # NaN/Inf
-        return None
-    return value
+    return _normalize_cost_usd(raw_cost)
 
 
 def run_grok_review(

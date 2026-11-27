@@ -2117,6 +2117,72 @@ class CommonHardeningTests(unittest.TestCase):
             self.assertNotIn("secret-line-1", dict_md)
             self.assertNotIn("secret-line-2", dict_md)
 
+    def test_r6_edge_cases_grok_huge_cost_fixed_audit_keys_and_agy_huge_timeout(self) -> None:
+        huge_int = 10**309
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            # 1) Grok gate with huge JSON integer cost (10**309) must complete cleanly without OverflowError.
+            grok_out = root / "grok-huge.md"
+            grok_cost = root / "grok-huge-cost.jsonl"
+            grok_marker = root / "grok-huge-rounds.json"
+            grok_stdout = json.dumps({
+                "sessionId": "11111111-2222-4333-8444-555555555555",
+                "stopReason": "end_turn",
+                "total_cost_usd": huge_int,
+                "usage": {"input_tokens": 5, "output_tokens": 2},
+                "result": "APPROVE\nVerified.",
+            })
+            with mock.patch.object(to_grok, "grok_available", return_value=True), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                grok_res = to_grok.grok_review_gate(
+                    request_prompt="Review.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(grok_marker),
+                    gate_id="gate-grok-huge",
+                    artifact_key="art-grok-huge",
+                    cost_log_path=str(grok_cost),
+                    output_path=str(grok_out),
+                    settings_path=str(root / "absent"),
+                    runner=lambda argv, **kw: subprocess.CompletedProcess(argv, 0, grok_stdout, ""),
+                    timeout_seconds=10,
+                )
+            self.assertEqual("success", grok_res.status)
+            self.assertTrue(grok_out.is_file())
+            self.assertEqual(huge_int, json.loads(grok_cost.read_text(encoding="utf-8").splitlines()[0])["total_cost_usd"])
+
+            # 2) Fixed audit schema keys (input_tokens, total_cost_usd) must NOT be rewritten by sensitive_values.
+            key_cost = root / "key-preserve-cost.jsonl"
+            common.log_cost(
+                {"total_cost_usd": 0.5},
+                str(key_cost),
+                gate_id="gate-keys",
+                wall_seconds=1.0,
+                extra={"usage": {"input_tokens": 10, "output_tokens": 3}, "total_cost_usd": float("nan")},
+                sensitive_values=["token", "cost"],
+            )
+            rec = json.loads(key_cost.read_text(encoding="utf-8").splitlines()[0])
+            self.assertIn("input_tokens", rec["usage"])
+            self.assertIn("output_tokens", rec["usage"])
+            self.assertIsNone(rec["total_cost_usd"])
+
+            # 3) Python caller passing timeout_seconds=10**309 to agy_review_gate returns setup_failure + handoff.
+            with mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"):
+                to_res = to_agy.agy_review_gate(
+                    request_prompt="Review.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "agy-huge-timeout-rounds.json"),
+                    gate_id="gate-huge-timeout",
+                    artifact_key="art-huge-timeout",
+                    cost_log_path=str(root / "agy-huge-timeout-cost.jsonl"),
+                    settings_path=str(root / "absent"),
+                    timeout_seconds=huge_int,
+                )
+            self.assertEqual("setup_failure", to_res.status)
+            self.assertTrue(Path(to_res.envelope["handoff_path"]).is_file())
+
 
 _AGY_VALID_HELP = """Usage of agy:
   --add-dir                       Add a directory to the workspace (repeatable)

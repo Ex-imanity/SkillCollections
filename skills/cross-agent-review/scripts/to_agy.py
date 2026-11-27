@@ -1432,12 +1432,13 @@ def agy_review_gate(
     sensitive_values = _agy_sensitive_values(settings_path, explicit_env)
     try:
         requested_model = validate_requested_model(model)
-        if (
-            not isinstance(timeout_seconds, (int, float))
-            or isinstance(timeout_seconds, bool)
-            or not math.isfinite(timeout_seconds)
-            or timeout_seconds <= 0
-        ):
+        if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool):
+            raise ValueError("timeout_seconds must be finite and positive")
+        try:
+            timeout_float = float(timeout_seconds)
+        except OverflowError as exc:
+            raise ValueError("timeout_seconds must be finite and positive") from exc
+        if not math.isfinite(timeout_float) or timeout_float <= 0:
             raise ValueError("timeout_seconds must be finite and positive")
         working_dir, resolved_add_dirs = _canonicalize_directories(cd, add_dirs)
     except ValueError as exc:

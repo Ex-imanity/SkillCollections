@@ -518,12 +518,7 @@ def _redact_value(value: Any, sensitive_values: Optional[list] = None) -> Any:
     if isinstance(value, float) and not math.isfinite(value):
         return None
     if isinstance(value, dict):
-        return {
-            (_redact_sensitive_text(k, sensitive_values) if isinstance(k, str) else k): _redact_value(
-                v, sensitive_values
-            )
-            for k, v in value.items()
-        }
+        return {k: _redact_value(v, sensitive_values) for k, v in value.items()}
     if isinstance(value, list):
         return [_redact_value(item, sensitive_values) for item in value]
     return value

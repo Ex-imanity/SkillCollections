@@ -40,14 +40,8 @@ def _bounded_agy_version_runner(
     """Run `agy --version` via `to_agy`'s bounded subprocess runner so Windows timeouts never hang."""
     try:
         from .to_agy import _run_agy_subprocess
-    except Exception:  # pragma: no cover - defensive fallback
-        return subprocess.run(
-            argv,
-            capture_output=capture_output,
-            text=text,
-            timeout=timeout,
-            env=env,
-        )
+    except Exception as exc:  # pragma: no cover - defensive: never fall back to unbounded subprocess.run
+        raise OSError(f"bounded agy version runner unavailable: {exc}") from exc
     completed = _run_agy_subprocess(
         argv,
         env=env,
