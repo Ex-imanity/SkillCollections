@@ -2043,6 +2043,80 @@ class CommonHardeningTests(unittest.TestCase):
                 rec = json.loads(line)
                 self.assertIsNone(rec["total_cost_usd"])
 
+    def test_huge_int_cost_completes_full_gate_and_persist_success_normalizes_cost(self) -> None:
+        huge_cost = 10**309
+        multiline_secret = "X-Auth: secret-line-1\nX-Token: secret-line-2"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # 1) Full gate with huge JSON integer (10**309) must NOT raise OverflowError.
+            out_huge = root / "huge-review.md"
+            cost_huge = root / "huge-cost.jsonl"
+            marker_huge = root / "huge-rounds.json"
+            from scripts.continuation import ReviewContinuation
+
+            cont_huge = ReviewContinuation(
+                resume=False,
+                cwd=str(root),
+                artifact_paths=[],
+                session_store=str(root / "store"),
+            )
+            with contextlib.redirect_stderr(io.StringIO()):
+                res = common.run_review_gate(
+                    request_prompt="Review.",
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(marker_huge),
+                    gate_id="gate-huge-int",
+                    artifact_key="art-huge-int",
+                    cost_log_path=str(cost_huge),
+                    sensitive_values=[],
+                    reviewer="ClaudeCode",
+                    invoke=lambda _state: common.ReviewResult(
+                        "success",
+                        "APPROVE\nChecked.",
+                        {"session_id": cont_huge.session_id, "total_cost_usd": huge_cost},
+                        0,
+                    ),
+                    output_path=str(out_huge),
+                    timeout_seconds=10,
+                    continuation=cont_huge,
+                )
+            self.assertEqual("success", res.status)
+            self.assertTrue(out_huge.is_file())
+            self.assertEqual(huge_cost, json.loads(cost_huge.read_text(encoding="utf-8").splitlines()[0])["total_cost_usd"])
+            state = json.loads(Path(res.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
+            self.assertEqual("completed", state["state"])
+
+            # 2) persist_success must normalize NaN and dict-with-multiline-secret total_cost_usd to None.
+            out_nan = root / "nan-review.md"
+            common.persist_success(
+                str(out_nan),
+                "gate-nan",
+                common.ReviewResult("success", "APPROVE", {"session_id": "sess-1", "total_cost_usd": float("nan")}, 0),
+                sensitive_values=[multiline_secret],
+                reviewer="ClaudeCode",
+            )
+            nan_md = out_nan.read_text(encoding="utf-8")
+            self.assertIn("Reported cost USD: `None`", nan_md)
+            self.assertNotIn("`nan`", nan_md.lower())
+
+            out_dict = root / "dict-review.md"
+            common.persist_success(
+                str(out_dict),
+                "gate-dict",
+                common.ReviewResult(
+                    "success",
+                    "APPROVE",
+                    {"session_id": "sess-2", "total_cost_usd": {"hdr": multiline_secret}},
+                    0,
+                ),
+                sensitive_values=[multiline_secret],
+                reviewer="ClaudeCode",
+            )
+            dict_md = out_dict.read_text(encoding="utf-8")
+            self.assertIn("Reported cost USD: `None`", dict_md)
+            self.assertNotIn("secret-line-1", dict_md)
+            self.assertNotIn("secret-line-2", dict_md)
+
 
 _AGY_VALID_HELP = """Usage of agy:
   --add-dir                       Add a directory to the workspace (repeatable)

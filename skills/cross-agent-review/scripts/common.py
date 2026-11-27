@@ -503,7 +503,11 @@ def _atomic_write_text(path: str, body: str) -> None:
 
 
 def _normalize_cost_usd(value: object) -> Optional[float]:
-    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
         return value
     return None
 
@@ -619,12 +623,22 @@ def persist_success(
     """Persist a verified reviewer result without serializing the raw envelope.
 
     `reviewer` names the agent that produced the review (ClaudeCode, Codex,
-    Grok, or a future peer).
+    Grok, Antigravity, or a future peer). `total_cost_usd` uses the same
+    finite non-boolean numeric normalization as `log_cost`.
     """
     if result.status != "success" or not isinstance(result.text, str) or not result.text.strip():
         raise ValueError("only a verified non-empty review can be persisted")
-    session_id = result.envelope.get("session_id") or "unknown"
-    total_cost = result.envelope.get("total_cost_usd", "unknown")
+    raw_session = result.envelope.get("session_id")
+    session_id = (
+        _redact_sensitive_text(raw_session, sensitive_values)
+        if isinstance(raw_session, str) and raw_session.strip()
+        else "unknown"
+    )
+    if "total_cost_usd" in result.envelope:
+        normalized_cost = _normalize_cost_usd(result.envelope.get("total_cost_usd"))
+        total_cost = "None" if normalized_cost is None else normalized_cost
+    else:
+        total_cost = "unknown"
     safe_gate = _safe_gate_id(_redact_sensitive_text(str(gate_id), sensitive_values))
     safe_text = _redact_sensitive_text(result.text, sensitive_values)
     body = (
@@ -652,15 +666,22 @@ def log_cost(
 ) -> None:
     """Append one cost/latency record per started segment, including continuations.
 
-    `total_cost_usd` is recorded verbatim from the envelope (may be None when a
-    provider like Codex reports token usage but no USD — never fabricate 0).
-    `extra` merges provider-specific fields such as token usage.
+    `total_cost_usd` records finite non-boolean numeric values (int/float);
+    absent, boolean, non-numeric, or non-finite (NaN/Inf) values are normalized
+    to ``null`` (never fabricated as ``0``). `wall_seconds` is rounded to 3
+    decimals when finite and otherwise ``null``. `extra` merges provider-specific
+    fields after recursive string redaction and non-finite float normalization
+    (re-normalizing `total_cost_usd` if overridden), serialized with
+    ``allow_nan=False``.
     """
-    wall = float(wall_seconds)
+    try:
+        wall = float(wall_seconds)
+    except (TypeError, ValueError, OverflowError):
+        wall = None
     record = {
         "gate_id": _redact_sensitive_text(str(gate_id), sensitive_values),
         "total_cost_usd": _normalize_cost_usd(envelope.get("total_cost_usd")),
-        "wall_seconds": round(wall, 3) if math.isfinite(wall) else None,
+        "wall_seconds": round(wall, 3) if wall is not None and math.isfinite(wall) else None,
     }
     if extra:
         record.update(_redact_value(extra, sensitive_values))
@@ -827,7 +848,7 @@ def run_review_gate(
                         extra=extra,
                         sensitive_values=sensitive_values,
                     )
-                except (OSError, ValueError) as exc:
+                except (OSError, ValueError, OverflowError) as exc:
                     log_error = exc
             finally:
                 if cleanup is not None:

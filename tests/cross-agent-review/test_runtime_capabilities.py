@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SKILL_DIR = Path(__file__).resolve().parents[2] / "skills" / "cross-agent-review"
@@ -70,6 +74,67 @@ class RuntimeCapabilityTests(unittest.TestCase):
         self.assertFalse(agents["gemini"]["review_supported"])
         self.assertEqual("detected_not_supported", agents["gemini"]["status"])
         self.assertEqual("not_found", agents["codex"]["status"])
+
+    def test_windows_agy_version_probe_timeout_is_bounded_without_unbounded_communicate(self) -> None:
+        from scripts import to_agy
+
+        class WindowsOS:
+            name = "nt"
+            def __getattr__(self, name):
+                return getattr(os, name)
+
+        unblock_reader = threading.Event()
+
+        class HungPipe:
+            def read(self, _n=-1):
+                unblock_reader.wait(timeout=3.0)
+                return b""
+            def close(self):
+                pass
+
+        class DoneStdin:
+            def close(self):
+                pass
+
+        ver_proc = mock.MagicMock()
+        ver_proc.pid = 777799
+        ver_proc.returncode = 1
+        ver_proc.stdin = DoneStdin()
+        ver_proc.stdout = HungPipe()
+        ver_proc.stderr = HungPipe()
+        ver_proc.wait.side_effect = [subprocess.TimeoutExpired(["agy", "--version"], 0.1), 1]
+        ver_proc.communicate.side_effect = AssertionError("agy --version probe must not call unbounded communicate()")
+
+        killer_proc = mock.MagicMock()
+        killer_proc.returncode = 0
+        killer_proc.wait.return_value = 0
+
+        try:
+            t0 = time.monotonic()
+            with mock.patch.object(to_agy, "os", WindowsOS()), \
+                    mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.1), \
+                    mock.patch.object(
+                        to_agy.subprocess,
+                        "Popen",
+                        side_effect=lambda argv, **kw: killer_proc if argv and argv[0] == "taskkill" else ver_proc,
+                    ), \
+                    mock.patch.object(
+                        runtime_capabilities.subprocess,
+                        "Popen",
+                        side_effect=lambda argv, **kw: killer_proc if argv and argv[0] == "taskkill" else ver_proc,
+                    ):
+                report = runtime_capabilities.discover_local_agents(
+                    which=lambda cmd: "/opt/bin/agy" if cmd == "agy" else None,
+                    path_env="/test/bin",
+                )
+            elapsed = time.monotonic() - t0
+        finally:
+            unblock_reader.set()
+
+        agents = {entry["command"]: entry for entry in report["agents"]}
+        self.assertTrue(agents["agy"]["status"].startswith("version_probe_failed:"))
+        self.assertLess(elapsed, 1.5, f"Windows agy --version probe blocked for {elapsed:.2f}s")
+        self.assertFalse(ver_proc.communicate.called)
 
 
 if __name__ == "__main__":

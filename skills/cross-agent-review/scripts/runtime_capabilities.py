@@ -29,6 +29,48 @@ _AGENT_CLI_CATALOG = (
 )
 
 
+def _bounded_agy_version_runner(
+    argv: list,
+    *,
+    capture_output: bool = True,
+    text: bool = True,
+    timeout: float = 5,
+    env: Optional[dict] = None,
+):
+    """Run `agy --version` via `to_agy`'s bounded subprocess runner so Windows timeouts never hang."""
+    try:
+        from .to_agy import _run_agy_subprocess
+    except Exception:  # pragma: no cover - defensive fallback
+        return subprocess.run(
+            argv,
+            capture_output=capture_output,
+            text=text,
+            timeout=timeout,
+            env=env,
+        )
+    completed = _run_agy_subprocess(
+        argv,
+        env=env,
+        input=b"",
+        capture_output=capture_output,
+        text=False,
+        timeout=timeout,
+    )
+    if text:
+        stdout = (
+            completed.stdout.decode("utf-8", errors="replace")
+            if isinstance(completed.stdout, bytes)
+            else (completed.stdout or "")
+        )
+        stderr = (
+            completed.stderr.decode("utf-8", errors="replace")
+            if isinstance(completed.stderr, bytes)
+            else (completed.stderr or "")
+        )
+        return subprocess.CompletedProcess(argv, completed.returncode, stdout, stderr)
+    return completed
+
+
 def _version_line(
     executable: str,
     version_runner: Callable,
@@ -47,7 +89,11 @@ def _version_line(
         return None, f"version_probe_failed:{type(exc).__name__}"
     if completed.returncode != 0:
         return None, "version_probe_nonzero"
-    output = (completed.stdout or completed.stderr or "").strip()
+    raw_out = completed.stdout if completed.stdout else completed.stderr
+    if isinstance(raw_out, bytes):
+        output = raw_out.decode("utf-8", errors="replace").strip()
+    else:
+        output = (raw_out or "").strip()
     if not output:
         return None, "version_probe_empty"
     return output.splitlines()[0].strip()[:160], None
@@ -73,7 +119,7 @@ def _probe_claude_max_budget(
 
 def discover_local_agents(
     which: Callable[[str], Optional[str]] = shutil.which,
-    version_runner: Callable = subprocess.run,
+    version_runner: Optional[Callable] = None,
     path_env: Optional[str] = None,
 ) -> dict:
     """Discover known local CLIs and state which ones this skill can use.
@@ -98,7 +144,13 @@ def discover_local_agents(
             "status": "not_found",
         }
         if executable:
-            version, reason = _version_line(executable, version_runner, resolved_path)
+            if version_runner is not None:
+                runner = version_runner
+            elif command == "agy":
+                runner = _bounded_agy_version_runner
+            else:
+                runner = subprocess.run
+            version, reason = _version_line(executable, runner, resolved_path)
             entry["version"] = version
             if reason:
                 entry["status"] = reason
@@ -108,7 +160,7 @@ def discover_local_agents(
                 entry["status"] = "detected_not_supported"
             if command == "claude" and entry["status"] == "supported":
                 entry["max_budget_supported"] = _probe_claude_max_budget(
-                    executable, version_runner, resolved_path
+                    executable, runner, resolved_path
                 )
         agents.append(entry)
     return {"agents": agents}
