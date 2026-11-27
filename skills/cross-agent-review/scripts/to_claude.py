@@ -511,7 +511,7 @@ def review_gate(
             )
     readiness = check_readiness(settings_path=settings_path, explicit_env=explicit_env)
     if readiness.credential_source == "missing":
-        fail_closed(
+        written = fail_closed(
             handoff_dir,
             gate_id,
             "credential_missing",
@@ -519,7 +519,7 @@ def review_gate(
             request_prompt,
             sensitive_values,
         )
-        return ReviewResult("credential_missing", None, {}, exit_code=1)
+        return ReviewResult("credential_missing", None, {"handoff_path": written}, exit_code=1)
 
     if session_help_runner is not None:
         flags = claude_supported_flags(executable=claude_executable, help_runner=session_help_runner)
@@ -690,7 +690,7 @@ def main(argv: Optional[list] = None) -> int:
         "handoff_path": (
             None
             if result.status == "success"
-            else os.path.join(args.handoff_dir, f"handoff-{_safe_gate_id(args.gate_id)}.md")
+            else result.envelope.get("handoff_path")
         ),
     }
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))

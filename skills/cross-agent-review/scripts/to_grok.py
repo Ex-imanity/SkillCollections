@@ -462,7 +462,7 @@ def grok_review_gate(
         )
 
     if not grok_available():
-        fail_closed(
+        written = fail_closed(
             handoff_dir,
             gate_id,
             "grok_unavailable",
@@ -470,7 +470,7 @@ def grok_review_gate(
             request_prompt,
             sensitive_values,
         )
-        return ReviewResult("grok_unavailable", None, {}, exit_code=1)
+        return ReviewResult("grok_unavailable", None, {"handoff_path": written}, exit_code=1)
     if requested_model is not None and model_help_runner is not None and (
         grok_supports_model(help_runner=model_help_runner) is False
     ):
@@ -613,7 +613,7 @@ def main(argv: Optional[list] = None) -> int:
         "handoff_path": (
             None
             if result.status == "success"
-            else os.path.join(args.handoff_dir, f"handoff-{_safe_gate_id(args.gate_id)}.md")
+            else result.envelope.get("handoff_path")
         ),
     }
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))

@@ -122,7 +122,7 @@ python -m scripts.to_agy <正常的必填 gate 参数> --model gemini-4-neon-hig
 
 ## 验证与历史证据
 
-- **2.5.0 源码验证（2026-11-26）**：全仓 `python3 tools/run_tests.py`（7 个 suite，含仓库约定、分发边界及 `tests/cross-agent-review/` 134 项确定性与真实子进程回归）及 `git diff --check` 通过。本机 macOS 完成两轮 **Antigravity primary → Codex reviewer** 真实设计评审 gate（`car-2.5.0-agy-design-r1` / `r2`），以及一次用户授权的 `agy 1.5.18`（`gemini-3.8-flash-low`）2 轮 `CLI-path verified (manual probe)`（验证 `stream-json` 输入/输出、`~/.gemini/antigravity-cli/conversations/<UUID>.db` 落盘及 `--conversation=<UUID>` 续跑）。`to_agy` 的真实 `timeout → native resume → success`、`adapter end-to-end first-use` 评审 gate、真实 `agy` 错误信封，以及 Linux/Windows/shim 实机运行均明确标记为 **pending**。
+- **2.5.0 源码验证（2026-11-26）**：全仓 `python3 tools/run_tests.py`（7 个 suite，含仓库约定、分发边界及 `tests/cross-agent-review/` 137 项确定性与真实子进程回归）及 `git diff --check` 通过。本机 macOS 完成两轮 **Antigravity primary → Codex reviewer** 真实设计评审 gate（`car-2.5.0-agy-design-r1` / `r2`），以及一次用户授权的 `agy 1.5.18`（`gemini-3.8-flash-low`）2 轮 `CLI-path verified (manual probe)`（验证 `stream-json` 输入/输出、`~/.gemini/antigravity-cli/conversations/<UUID>.db` 落盘及 `--conversation=<UUID>` 续跑）。`to_agy` 的真实 `timeout → native resume → success`、`adapter end-to-end first-use` 评审 gate、真实 `agy` 错误信封，以及 Linux/Windows/shim 实机运行均明确标记为 **pending**。
 
 - **2.3.0 源码验证（2026-10-28）**：113 项技能测试及 8 项仓库约定通过；三向 runner 捕获的 prompt 风格契约断言先失败、修改共用 prompt 后通过。fresh-context 合成审核能输出独立风格状态、双侧依据，以及证据不足/纯文档分流。旧版在同一简单场景也发现偏离，不能宣称漏检率降低。集合内的 repository-code-style 另有合成对照记录；没有为风格状态增加机械结果校验。
 - **2.3.0 ClaudeCode 真实只读审核（2026-10-28）**：用户授权 1200 秒 / USD 5，首次调用 241.986 秒完成，报告费用 USD 1.548766；结论 `APPROVE WITH NITS`、`Style consistency: PASS`，20 个受审文件保持不变。唯一非阻断项是基础清单继承的本机路径必读指令，随后已改为包内指引；这次文档修正经过本地检查，未再次付费复审，不把原 verdict 扩大为对修正后版本的复审结论。

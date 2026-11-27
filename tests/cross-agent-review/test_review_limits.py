@@ -1904,6 +1904,87 @@ class CommonHardeningTests(unittest.TestCase):
             self.assertEqual({"input_tokens": 5}, record["usage"])
             self.assertEqual(1.23, record["wall_seconds"])
 
+    def test_persist_success_redacts_secret_in_gate_id_before_sanitizing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            out_path = Path(directory) / "review.md"
+            result = common.ReviewResult(
+                "success",
+                "APPROVE\nChecked.",
+                {"session_id": "sess-1", "total_cost_usd": None},
+                0,
+            )
+            common.persist_success(
+                str(out_path),
+                "gate-GEMINI_API_KEY=secretval-http://localhost:8080/tok",
+                result,
+                sensitive_values=["tok/val+secret"],
+                reviewer="Antigravity",
+            )
+            body = out_path.read_text(encoding="utf-8")
+            self.assertNotIn("secretval", body)
+            self.assertNotIn("localhost", body)
+
+            out_path2 = Path(directory) / "review2.md"
+            common.persist_success(
+                str(out_path2),
+                "gate-tok/val+secret",
+                result,
+                sensitive_values=["tok/val+secret"],
+                reviewer="Antigravity",
+            )
+            body2 = out_path2.read_text(encoding="utf-8")
+            self.assertNotIn("tok-val-secret", body2)
+            self.assertNotIn("tok/val+secret", body2)
+
+    def test_claude_and_grok_main_use_redacted_handoff_path_from_envelope(self) -> None:
+        secret = "AIzaSySecretTokenValue1234567890"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            req = root / "req.md"
+            req.write_text("Review this.", encoding="utf-8")
+            handoff_dir = root / "handoffs"
+
+            # to_grok.main()
+            grok_out = io.StringIO()
+            with mock.patch.object(to_grok, "grok_available", return_value=False), \
+                    contextlib.redirect_stdout(grok_out):
+                rc_g = to_grok.main([
+                    "--request-file", str(req),
+                    "--cd", str(root),
+                    "--handoff-dir", str(handoff_dir),
+                    "--marker-path", str(root / "rounds-g.json"),
+                    "--gate-id", f"gate-{secret}",
+                    "--artifact-key", "art-g",
+                    "--cost-log", str(root / "cost-g.jsonl"),
+                    "--output", str(root / "out-g.md"),
+                    "--settings", str(root / "absent"),
+                ])
+            self.assertEqual(1, rc_g)
+            grok_payload = json.loads(grok_out.getvalue())
+            self.assertNotIn(secret, grok_out.getvalue())
+            self.assertTrue(Path(grok_payload["handoff_path"]).is_file())
+
+            # to_claude.main()
+            claude_out = io.StringIO()
+            with mock.patch.object(to_claude, "claude_available", return_value=False), \
+                    contextlib.redirect_stdout(claude_out):
+                rc_c = to_claude.main([
+                    "--request-file", str(req),
+                    "--add-dir", str(root),
+                    "--handoff-dir", str(handoff_dir),
+                    "--marker-path", str(root / "rounds-c.json"),
+                    "--gate-id", f"gate-{secret}",
+                    "--artifact-key", "art-c",
+                    "--cost-log", str(root / "cost-c.jsonl"),
+                    "--output", str(root / "out-c.md"),
+                    "--settings", str(root / "absent"),
+                    "--max-budget-usd", "1",
+                ])
+            self.assertEqual(1, rc_c)
+            claude_payload = json.loads(claude_out.getvalue())
+            self.assertNotIn(secret, claude_out.getvalue())
+            self.assertTrue(Path(claude_payload["handoff_path"]).is_file())
+
 
 _AGY_VALID_HELP = """Usage of agy:
   --add-dir                       Add a directory to the workspace (repeatable)
@@ -2301,6 +2382,66 @@ class AgyAdapterTests(unittest.TestCase):
                 self.assertNotIn(secret, cost_text)
                 self.assertNotIn(secret, handoff_path)
                 self.assertNotIn(secret, handoff_text)
+
+    def test_agy_success_path_redacts_secrets_across_output_cost_stderr_and_stdout(self) -> None:
+        gemini_secret = "AIzaSyRealSecretKeyValue1234567890"
+        google_secret = "goog/secret+abc=999"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            req = root / "request.md"
+            req.write_text("Review code cleanly.", encoding="utf-8")
+            out_file = root / "review.md"
+            cost_log = root / "cost.jsonl"
+            handoff_dir = root / "handoffs"
+
+            def ok_runner(argv, **kwargs):
+                if "--help" in argv:
+                    return subprocess.CompletedProcess(argv, 0, _AGY_VALID_HELP, "")
+                return subprocess.CompletedProcess(
+                    argv,
+                    0,
+                    _agy_stream_bytes(
+                        response=f"APPROVE\nChecked config {gemini_secret} and {google_secret}."
+                    ),
+                    b"",
+                )
+
+            env_patch = {
+                "GEMINI_API_KEY": gemini_secret,
+                "GOOGLE_API_KEY": google_secret,
+            }
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with mock.patch.dict(os.environ, env_patch), \
+                    mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                    mock.patch.object(to_agy.subprocess, "run", side_effect=ok_runner), \
+                    contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                rc = to_agy.main([
+                    "--request-file", str(req),
+                    "--cd", str(root),
+                    "--handoff-dir", str(handoff_dir),
+                    "--marker-path", str(root / "rounds.json"),
+                    "--gate-id", f"gate-{gemini_secret}-{google_secret}",
+                    "--artifact-key", "art-redact-ok",
+                    "--cost-log", str(cost_log),
+                    "--output", str(out_file),
+                    "--settings", str(root / "absent"),
+                    "--timeout-seconds", "10",
+                ])
+            self.assertEqual(0, rc)
+            stdout_text = stdout_buf.getvalue()
+            stderr_text = stderr_buf.getvalue()
+            cost_text = cost_log.read_text(encoding="utf-8")
+            review_text = out_file.read_text(encoding="utf-8")
+            payload = json.loads(stdout_text)
+            self.assertEqual("success", payload["status"])
+            self.assertEqual(_AGY_UUID, payload["session_id"])
+            for secret in (gemini_secret, google_secret, "goog-secret-abc-999"):
+                self.assertNotIn(secret, stdout_text)
+                self.assertNotIn(secret, stderr_text)
+                self.assertNotIn(secret, cost_text)
+                self.assertNotIn(secret, review_text)
 
 
 if __name__ == "__main__":

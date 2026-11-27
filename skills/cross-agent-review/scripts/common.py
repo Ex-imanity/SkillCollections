@@ -605,11 +605,12 @@ def persist_success(
         raise ValueError("only a verified non-empty review can be persisted")
     session_id = result.envelope.get("session_id") or "unknown"
     total_cost = result.envelope.get("total_cost_usd", "unknown")
+    safe_gate = _safe_gate_id(_redact_sensitive_text(str(gate_id), sensitive_values))
     safe_text = _redact_sensitive_text(result.text, sensitive_values)
     body = (
-        f"# Cross-Agent Review - {_safe_gate_id(gate_id)}\n\n"
+        f"# Cross-Agent Review - {safe_gate}\n\n"
         f"Reviewer: {reviewer}\n"
-        f"Gate: `{_safe_gate_id(gate_id)}`\n"
+        f"Gate: `{safe_gate}`\n"
         f"Reviewer session: `{session_id}`\n"
         f"Reported cost USD: `{total_cost}`\n\n"
         "## Review\n\n"
