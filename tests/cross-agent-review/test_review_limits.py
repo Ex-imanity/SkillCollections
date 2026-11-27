@@ -17,7 +17,7 @@ from unittest import mock
 SKILL_DIR = Path(__file__).resolve().parents[2] / "skills" / "cross-agent-review"
 sys.path.insert(0, str(SKILL_DIR))
 
-from scripts import common, to_claude, to_codex, to_grok
+from scripts import common, to_agy, to_claude, to_codex, to_grok
 
 
 def assert_style_review_contract(test: unittest.TestCase, prompt: str) -> None:
@@ -1903,6 +1903,404 @@ class CommonHardeningTests(unittest.TestCase):
             record = json.loads(raw.strip())
             self.assertEqual({"input_tokens": 5}, record["usage"])
             self.assertEqual(1.23, record["wall_seconds"])
+
+
+_AGY_VALID_HELP = """Usage of agy:
+  --add-dir                       Add a directory to the workspace (repeatable)
+  --conversation                  Resume a previous conversation by ID
+  --dangerously-skip-permissions  Auto-approve all tool permission requests
+  --disable-slash-commands        Disable slash command expansion
+  --input-format                  Input format for print mode (text, stream-json)
+  --model                         Model for the current CLI session
+  --output-format                 Output format for print mode (text, json, stream-json)
+"""
+_AGY_UUID = "f7965130-c060-4181-abcf-4fadb1054401"
+_AGY_OTHER_UUID = "11111111-2222-4333-8444-555555555555"
+
+
+def _agy_stream_bytes(
+    *,
+    conv_id: str = _AGY_UUID,
+    result_conv_id: str | None = None,
+    status: str = "SUCCESS",
+    response: str = "APPROVE\nVerified against source.",
+    error: str | None = None,
+    usage: object = None,
+) -> bytes:
+    if usage is None:
+        usage = {
+            "input_tokens": 100,
+            "output_tokens": 25,
+            "thinking_tokens": 10,
+            "cache_read_tokens": 50,
+            "total_tokens": 125,
+        }
+    result_obj = {
+        "conversation_id": conv_id if result_conv_id is None else result_conv_id,
+        "status": status,
+        "response": response,
+        "num_turns": 1,
+        "usage": usage,
+    }
+    if error is not None:
+        result_obj["error"] = error
+    lines = [
+        json.dumps({"event": "init", "conversation_id": conv_id, "init": {"permission_mode": "always-proceed"}}),
+        json.dumps({"event": "result", "result": result_obj}),
+    ]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+class AgyAdapterTests(unittest.TestCase):
+    def test_build_agy_command_and_encode_prompt(self) -> None:
+        argv = to_agy.build_agy_command(
+            agy_executable="/opt/bin/agy",
+            add_dirs=["/repo/fe", "/repo/be"],
+            model="gemini-4-neon-high",
+        )
+        self.assertEqual("/opt/bin/agy", argv[0])
+        self.assertIn("--input-format", argv)
+        self.assertEqual("stream-json", argv[argv.index("--input-format") + 1])
+        self.assertIn("--output-format", argv)
+        self.assertEqual("stream-json", argv[argv.index("--output-format") + 1])
+        self.assertIn("--dangerously-skip-permissions", argv)
+        self.assertIn("--disable-slash-commands", argv)
+        self.assertIn("--model=gemini-4-neon-high", argv)
+        self.assertEqual(["/repo/fe", "/repo/be"], [argv[i + 1] for i, tok in enumerate(argv) if tok == "--add-dir"])
+        for forbidden in ("--continue", "-c", "--print-timeout", "--effort", "--agent", "--mode", "--sandbox"):
+            self.assertNotIn(forbidden, argv)
+
+        resumed = to_agy.build_agy_command(
+            agy_executable="/opt/bin/agy",
+            session_id=_AGY_UUID,
+            resume=True,
+        )
+        self.assertIn(f"--conversation={_AGY_UUID}", resumed)
+
+        with self.assertRaises(ValueError):
+            to_agy.build_agy_command(model="--bad-flag")
+        with self.assertRaises(ValueError):
+            to_agy.build_agy_command(session_id="not-a-uuid", resume=True)
+        with self.assertRaises(ValueError):
+            to_agy.build_agy_command(resume=True)
+
+        encoded = to_agy.encode_agy_prompt("Review line1\nline2")
+        self.assertIsInstance(encoded, bytes)
+        self.assertTrue(encoded.endswith(b"\n"))
+        self.assertEqual(1, encoded.count(b"\n"))
+        payload = json.loads(encoded.decode("utf-8"))
+        self.assertEqual({"event": "user", "message": {"content": "Review line1\nline2"}}, payload)
+
+    def test_agy_help_preflight_requires_usage_and_both_stream_json_directions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            extra = root / "extra"
+            extra.mkdir()
+
+            seen_calls: list[tuple[list[str], dict]] = []
+
+            def make_help_runner(rc: int, stdout: str, stderr: str = "", exc: Exception | None = None):
+                def _runner(argv, **kwargs):
+                    seen_calls.append((list(argv), dict(kwargs)))
+                    if exc is not None:
+                        raise exc
+                    return subprocess.CompletedProcess(argv, rc, stdout, stderr)
+                return _runner
+
+            def ok_runner(argv, **kwargs):
+                return subprocess.CompletedProcess(argv, 0, _agy_stream_bytes(), b"")
+
+            def must_not_run(*_a, **_k):
+                raise AssertionError("reviewer subprocess must not run after preflight refusal")
+
+            # Valid help passes and pins absolute executable + explicit timeout=5.
+            with mock.patch.object(to_agy.shutil, "which", return_value="./bin/agy"), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                res = to_agy.agy_review_gate(
+                    request_prompt="Review this.",
+                    cd=str(root),
+                    add_dirs=[str(extra)],
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-help-ok",
+                    artifact_key="art-help-ok",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "absent"),
+                    runner=ok_runner,
+                    help_runner=make_help_runner(0, _AGY_VALID_HELP),
+                    model="gemini-4-neon-high",
+                    timeout_seconds=10,
+                )
+            self.assertEqual("success", res.status)
+            self.assertEqual(os.path.abspath("./bin/agy"), seen_calls[-1][0][0])
+            self.assertEqual(5, seen_calls[-1][1]["timeout"])
+
+            # Conclusive missing capabilities fail closed with zero attempt reservation.
+            missing_variants = [
+                (_AGY_VALID_HELP.replace("--conversation", "--other"), None, []),
+                (_AGY_VALID_HELP.replace("--disable-slash-commands", "--other"), None, []),
+                (_AGY_VALID_HELP.replace("--model", "--other"), "gemini-4-neon-high", []),
+                (_AGY_VALID_HELP.replace("--add-dir", "--other"), None, [str(extra)]),
+                (_AGY_VALID_HELP.replace("(text, stream-json)", "(text)"), None, []),
+            ]
+            for idx, (help_text, model_arg, dirs_arg) in enumerate(missing_variants):
+                marker = root / f"rounds-missing-{idx}.json"
+                with self.subTest(idx=idx), \
+                        mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"):
+                    r = to_agy.agy_review_gate(
+                        request_prompt="Review.",
+                        cd=str(root),
+                        add_dirs=dirs_arg,
+                        handoff_dir=str(root / "handoffs"),
+                        marker_path=str(marker),
+                        gate_id=f"gate-miss-{idx}",
+                        artifact_key=f"art-miss-{idx}",
+                        cost_log_path=str(root / "cost.jsonl"),
+                        settings_path=str(root / "absent"),
+                        runner=must_not_run,
+                        help_runner=make_help_runner(0, help_text),
+                        model=model_arg,
+                        timeout_seconds=10,
+                    )
+                    self.assertEqual("setup_failure", r.status)
+                    self.assertFalse(marker.exists())
+
+            # Inconclusive probes (exit-0 error page, non-zero echoing flags, empty, TimeoutExpired) do not block.
+            inconclusive = [
+                make_help_runner(0, "Error: daemon unreachable"),
+                make_help_runner(1, "error: unknown flag --help\n--conversation --input-format stream-json"),
+                make_help_runner(0, ""),
+                make_help_runner(0, "", exc=subprocess.TimeoutExpired(["agy", "--help"], 5)),
+            ]
+            for idx, hrunner in enumerate(inconclusive):
+                with self.subTest(inconclusive=idx), \
+                        mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    r = to_agy.agy_review_gate(
+                        request_prompt="Review.",
+                        cd=str(root),
+                        handoff_dir=str(root / "handoffs"),
+                        marker_path=str(root / f"rounds-inc-{idx}.json"),
+                        gate_id=f"gate-inc-{idx}",
+                        artifact_key=f"art-inc-{idx}",
+                        cost_log_path=str(root / "cost.jsonl"),
+                        settings_path=str(root / "absent"),
+                        runner=ok_runner,
+                        help_runner=hrunner,
+                        timeout_seconds=10,
+                    )
+                    self.assertEqual("success", r.status)
+
+    def test_agy_stream_parser_strict_lf_framing_and_malformed_fields(self) -> None:
+        # Unescaped U+2028 / U+2029 inside JSON string must NOT be split by LF framing.
+        raw_unicode = (
+            '{"event":"init","conversation_id":"' + _AGY_UUID + '"}\n'
+            '{"event":"result","result":{"conversation_id":"' + _AGY_UUID + '",'
+            '"status":"SUCCESS","response":"APPROVE\u2028line\u2029ok",'
+            '"usage":{"input_tokens":10,"output_tokens":5}}}\n'
+        ).encode("utf-8")
+        res = to_agy.run_agy_review(
+            ["agy"],
+            runner=lambda argv, **kw: subprocess.CompletedProcess(argv, 0, raw_unicode, b""),
+            prompt="Review.",
+        )
+        self.assertEqual("success", res.status)
+        self.assertIn("\u2028", res.text)
+        self.assertIn("\u2029", res.text)
+
+        # Provenance failures on exit 0.
+        bad_streams = [
+            # duplicate init
+            (json.dumps({"event": "init", "conversation_id": _AGY_UUID}) + "\n"
+             + json.dumps({"event": "init", "conversation_id": _AGY_UUID}) + "\n"
+             + json.dumps({"event": "result", "result": {"conversation_id": _AGY_UUID, "status": "SUCCESS", "response": "APPROVE", "usage": {"input_tokens": 1, "output_tokens": 1}}}) + "\n").encode(),
+            # duplicate result
+            _agy_stream_bytes() + (json.dumps({"event": "result", "result": {"conversation_id": _AGY_UUID, "status": "SUCCESS", "response": "APPROVE", "usage": {"input_tokens": 1, "output_tokens": 1}}}) + "\n").encode(),
+            # result before init
+            (json.dumps({"event": "result", "result": {"conversation_id": _AGY_UUID, "status": "SUCCESS", "response": "APPROVE", "usage": {"input_tokens": 1, "output_tokens": 1}}}) + "\n"
+             + json.dumps({"event": "init", "conversation_id": _AGY_UUID}) + "\n").encode(),
+            # conversation_id mismatch
+            _agy_stream_bytes(conv_id=_AGY_UUID, result_conv_id=_AGY_OTHER_UUID),
+            # bool in token usage
+            _agy_stream_bytes(usage={"input_tokens": True, "output_tokens": 5}),
+            # negative tokens
+            _agy_stream_bytes(usage={"input_tokens": -1, "output_tokens": 5}),
+            # corrupt trailing line on exit 0
+            _agy_stream_bytes() + b'{"event":"step_update",',
+        ]
+        for idx, stream_bytes in enumerate(bad_streams):
+            with self.subTest(bad_stream=idx):
+                r = to_agy.run_agy_review(
+                    ["agy"],
+                    runner=lambda argv, _s=stream_bytes, **kw: subprocess.CompletedProcess(argv, 0, _s, b""),
+                    prompt="Review.",
+                )
+                self.assertEqual("provenance_failure", r.status)
+
+        # Malformed field types must never raise TypeError and must preserve cost logging.
+        malformed_streams = [
+            b'{"event":"init","conversation_id":123}\n{"event":"result","result":[]}\n',
+            b'{"event":"init","conversation_id":"' + _AGY_UUID.encode() + b'"}\n{"event":"result","result":{"conversation_id":"' + _AGY_UUID.encode() + b'","status":"SUCCESS","response":"APPROVE","usage":"bad"}}\n',
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for idx, stream_bytes in enumerate(malformed_streams):
+                cost_log = root / f"cost-{idx}.jsonl"
+                with mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    r = to_agy.agy_review_gate(
+                        request_prompt="Review.",
+                        cd=str(root),
+                        handoff_dir=str(root / "handoffs"),
+                        marker_path=str(root / f"rounds-{idx}.json"),
+                        gate_id=f"gate-mal-{idx}",
+                        artifact_key=f"art-mal-{idx}",
+                        cost_log_path=str(cost_log),
+                        settings_path=str(root / "absent"),
+                        runner=lambda argv, _s=stream_bytes, **kw: subprocess.CompletedProcess(argv, 0, _s, b""),
+                        timeout_seconds=10,
+                    )
+                self.assertIn(r.status, {"provenance_failure", "other_error"})
+                self.assertTrue(cost_log.is_file())
+                self.assertEqual(1, len(cost_log.read_text(encoding="utf-8").splitlines()))
+
+    def test_agy_classification_auth_vs_completion_vs_verdict(self) -> None:
+        captured_prompts: list[str] = []
+
+        def success_runner(argv, **kwargs):
+            payload = json.loads(kwargs["input"].decode("utf-8"))
+            captured_prompts.append(payload["message"]["content"])
+            return subprocess.CompletedProcess(
+                argv, 0,
+                _agy_stream_bytes(response="APPROVE\nChecked HTTP 401, 403, forbidden, authentication paths."),
+                b"",
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                ok = to_agy.agy_review_gate(
+                    request_prompt="Review auth code.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-ok",
+                    artifact_key="art-ok",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    output_path=str(root / "review.md"),
+                    settings_path=str(root / "absent"),
+                    runner=success_runner,
+                    timeout_seconds=10,
+                )
+            self.assertEqual("success", ok.status)
+            self.assertIsNone(ok.envelope["total_cost_usd"])
+            assert_style_review_contract(self, captured_prompts[0])
+
+        # Missing verdict -> other_error
+        no_verdict = to_agy.run_agy_review(
+            ["agy"],
+            runner=lambda argv, **kw: subprocess.CompletedProcess(argv, 0, _agy_stream_bytes(response="Written to file."), b""),
+            prompt="Review.",
+        )
+        self.assertEqual("other_error", no_verdict.status)
+
+        # Incomplete statuses -> completion_failure
+        for status_name in ("CANCELED", "INTERRUPTED", "WAITING", "RUNNING"):
+            with self.subTest(status_name=status_name):
+                r = to_agy.run_agy_review(
+                    ["agy"],
+                    runner=lambda argv, _st=status_name, **kw: subprocess.CompletedProcess(
+                        argv, 0, _agy_stream_bytes(status=_st, response="APPROVE"), b""
+                    ),
+                    prompt="Review.",
+                )
+                self.assertEqual("completion_failure", r.status)
+
+        # Auth failures on error/stderr
+        for err_text in ("authentication required: please login", "invalid_api_key provided"):
+            r = to_agy.run_agy_review(
+                ["agy"],
+                runner=lambda argv, _e=err_text, **kw: subprocess.CompletedProcess(
+                    argv, 1, _agy_stream_bytes(status="ERROR", response="", error=_e), b""
+                ),
+                prompt="Review.",
+            )
+            self.assertEqual("auth_failure", r.status)
+
+        # Bare 403 in non-auth error message must NOT misclassify as auth_failure
+        non_auth = to_agy.run_agy_review(
+            ["agy"],
+            runner=lambda argv, **kw: subprocess.CompletedProcess(
+                argv, 1, _agy_stream_bytes(status="ERROR", response="", error="line 403 syntax error"), b""
+            ),
+            prompt="Review.",
+        )
+        self.assertEqual("other_error", non_auth.status)
+
+    def test_agy_end_to_end_redaction_and_relative_which_resolution(self) -> None:
+        gemini_secret = "AIzaSyRealSecretKeyValue1234567890"
+        google_secret = "goog-secret-abc-999"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            req = root / "request.md"
+            req.write_text(f"Review code; never leak {google_secret}", encoding="utf-8")
+            out_file = root / "review.md"
+            cost_log = root / "cost.jsonl"
+            handoff_dir = root / "handoffs"
+            seen_argv: list[list[str]] = []
+
+            def fail_runner(argv, **kwargs):
+                seen_argv.append(list(argv))
+                return subprocess.CompletedProcess(
+                    argv, 1,
+                    _agy_stream_bytes(status="ERROR", response="", error=f"boom {gemini_secret} {google_secret}"),
+                    f"stderr {gemini_secret}".encode("utf-8"),
+                )
+
+            env_patch = {
+                "GEMINI_API_KEY": gemini_secret,
+                "GOOGLE_API_KEY": google_secret,
+            }
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with mock.patch.dict(os.environ, env_patch), \
+                    mock.patch.object(to_agy.shutil, "which", return_value="./bin/agy"), \
+                    mock.patch.object(to_agy.subprocess, "run", side_effect=fail_runner), \
+                    contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                rc = to_agy.main([
+                    "--request-file", str(req),
+                    "--cd", str(root),
+                    "--handoff-dir", str(handoff_dir),
+                    "--marker-path", str(root / "rounds.json"),
+                    "--gate-id", f"gate-{gemini_secret}-{google_secret}",
+                    "--artifact-key", "art-redact",
+                    "--cost-log", str(cost_log),
+                    "--output", str(out_file),
+                    "--settings", str(root / "absent"),
+                    "--timeout-seconds", "10",
+                ])
+            self.assertEqual(1, rc)
+            # Pinned absolute executable used for runner even though which returned relative path.
+            self.assertTrue(os.path.isabs(seen_argv[-1][0]))
+            self.assertEqual(os.path.abspath("./bin/agy"), seen_argv[-1][0])
+
+            stdout_text = stdout_buf.getvalue()
+            stderr_text = stderr_buf.getvalue()
+            cost_text = cost_log.read_text(encoding="utf-8")
+            payload = json.loads(stdout_text)
+            handoff_path = payload["handoff_path"]
+            self.assertIsNotNone(handoff_path)
+            self.assertTrue(Path(handoff_path).is_file())
+            handoff_text = Path(handoff_path).read_text(encoding="utf-8")
+
+            for secret in (gemini_secret, google_secret):
+                self.assertNotIn(secret, stdout_text)
+                self.assertNotIn(secret, stderr_text)
+                self.assertNotIn(secret, cost_text)
+                self.assertNotIn(secret, handoff_path)
+                self.assertNotIn(secret, handoff_text)
 
 
 if __name__ == "__main__":
