@@ -345,8 +345,7 @@ class AgyContinuationTests(unittest.TestCase):
         self.assertEqual("failed", state["state"])
 
     @unittest.skipUnless(os.name == "posix", "POSIX process-group regression")
-    def test_posix_timeout_kills_owned_pgid_and_detached_stdout_holder_fails_bounded(self) -> None:
-        # 1) Owned PGID child is killed on timeout.
+    def test_posix_timeout_kills_owned_pgid(self) -> None:
         marker = self.root / "orphan-kept-working"
         script = self.root / "wrapper.py"
         script.write_text(
@@ -367,7 +366,8 @@ class AgyContinuationTests(unittest.TestCase):
         time.sleep(0.8)
         self.assertFalse(marker.exists(), "owned child survived agy wrapper timeout")
 
-        # 2) Detached grandchild holding stdout open past post-exit drain fails in bounded time & releases lock.
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group regression")
+    def test_posix_detached_stdout_holder_fails_bounded_and_releases_lock(self) -> None:
         pid_file = self.root / "detached.pid"
         holder = self.root / "detached_holder.py"
         holder.write_text(
@@ -429,7 +429,8 @@ class AgyContinuationTests(unittest.TestCase):
         with common.round_cap_guard(str(gate_marker), "art-detached-lock") as decision:
             self.assertTrue(decision.allowed)
 
-        # 4) Selector OSError after Popen MUST terminate the child process so it cannot keep running.
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group regression")
+    def test_posix_selector_oserror_kills_live_child_and_post_exit_descendant(self) -> None:
         io_marker = self.root / "survived-io-error"
         io_script = self.root / "io_err_child.py"
         io_script.write_text(
@@ -512,8 +513,8 @@ class AgyContinuationTests(unittest.TestCase):
             "same-PGID descendant survived selector OSError after launcher exited 0",
         )
 
-        # 6) Hard POSIX stdout read EIO strictly AFTER valid init (both main-loop and timeout-drain)
-        #    MUST fail closed (NOT EOF / NOT resumable), filtering strictly on child stdout FD.
+    @unittest.skipUnless(os.name == "posix", "POSIX pipe EIO regression")
+    def test_posix_stdout_eio_after_init_fails_closed_in_main_and_drain_loops(self) -> None:
         import errno as _errno
 
         eio_script = self.root / "emit_init_then_chunk.py"
@@ -636,7 +637,10 @@ class AgyContinuationTests(unittest.TestCase):
         drain_state = json.loads(Path(drain_res.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
         self.assertEqual("failed", drain_state["state"])
 
-        # 7) POSIX killpg EPERM on timeout MUST fail closed (NOT resumable / NOT timed_out).
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group cleanup regression")
+    def test_posix_killpg_eperm_fails_closed_non_resumable(self) -> None:
+        import errno as _errno
+
         eperm_pid_file = self.root / "eperm-descendant.pid"
         eperm_script = self.root / "eperm_launcher.py"
         eperm_script.write_text(
@@ -679,7 +683,10 @@ class AgyContinuationTests(unittest.TestCase):
         eperm_state = json.loads(Path(eperm_res.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
         self.assertEqual("failed", eperm_state["state"])
 
-        # 8) POSIX stdin write EIO / incomplete delivery MUST NOT commit success even if child exits 0 with valid JSON.
+    @unittest.skipUnless(os.name == "posix", "POSIX stdin write regression")
+    def test_posix_stdin_eio_fails_closed_and_early_exit_auth_preserved(self) -> None:
+        import errno as _errno
+
         ok_no_stdin = self.root / "ignore_stdin_ok.py"
         ok_no_stdin.write_text(
             "import json, sys\n"
@@ -688,8 +695,9 @@ class AgyContinuationTests(unittest.TestCase):
             "sys.stdout.flush()\n",
             encoding="utf-8",
         )
+        real_popen = subprocess.Popen
         real_os_write = os.write
-        stdin_fd_box = {"fd": None}
+        stdin_fd_box = {"fd": None, "injected": False}
 
         def tracking_popen_stdin(*a, **kw):
             proc = real_popen(*a, **kw)
@@ -699,6 +707,7 @@ class AgyContinuationTests(unittest.TestCase):
 
         def failing_stdin_write(fd, data):
             if fd == stdin_fd_box["fd"]:
+                stdin_fd_box["injected"] = True
                 raise OSError(_errno.EIO, "Input/output error")
             return real_os_write(fd, data)
 
@@ -724,7 +733,9 @@ class AgyContinuationTests(unittest.TestCase):
                 artifact_paths=[str(self.artifact)],
                 agy_home=str(self.agy_home),
             )
+        self.assertTrue(stdin_fd_box["injected"], "test must actually inject EIO on child stdin FD")
         self.assertEqual("other_error", stdin_eio_res.status)
+        self.assertIn("stdin pipe write failed", stdin_eio_res.envelope["detail"])
         self.assertFalse(stdin_out.exists())
         self.assertEqual(0, json.loads(stdin_marker.read_text(encoding="utf-8"))["art-posix-stdin-eio"]["successes"])
         self.assertEqual(1, len(stdin_cost.read_text(encoding="utf-8").splitlines()))
@@ -757,7 +768,7 @@ class AgyContinuationTests(unittest.TestCase):
             )
         self.assertEqual("auth_failure", auth_res.status)
 
-    def test_windows_read_eio_and_thread_start_failure_fail_closed_with_audit(self) -> None:
+    def test_windows_stdout_read_eio_fails_closed(self) -> None:
         class WindowsOS:
             name = "nt"
             def __getattr__(self, name):
@@ -790,7 +801,6 @@ class AgyContinuationTests(unittest.TestCase):
         killer_proc.returncode = 0
         killer_proc.wait.return_value = 0
 
-        # Case A: Windows stdout reader raises OSError on timeout -> must fail closed (resumable=False).
         eio_proc = mock.MagicMock()
         eio_proc.pid = 777771
         eio_proc.returncode = 1
@@ -799,12 +809,13 @@ class AgyContinuationTests(unittest.TestCase):
         eio_proc.stderr = DonePipe()
         eio_proc.wait.side_effect = [subprocess.TimeoutExpired(["agy"], 1.0), 1]
 
-        def fake_popen_a(argv, **kwargs):
-            return killer_proc if argv and argv[0] == "taskkill" else eio_proc
-
         with mock.patch.object(to_agy, "os", WindowsOS()), \
                 mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.2), \
-                mock.patch.object(to_agy.subprocess, "Popen", side_effect=fake_popen_a), \
+                mock.patch.object(
+                    to_agy.subprocess,
+                    "Popen",
+                    side_effect=lambda argv, **kw: killer_proc if argv and argv[0] == "taskkill" else eio_proc,
+                ), \
                 mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
                 contextlib.redirect_stderr(io.StringIO()):
             res_a = to_agy.agy_review_gate(
@@ -823,7 +834,28 @@ class AgyContinuationTests(unittest.TestCase):
         self.assertEqual("other_error", res_a.status)
         self.assertFalse(res_a.envelope.get("resumable", False))
 
-        # Case B: Second Thread.start() raises RuntimeError -> must clean up, log cost, write handoff, mark failed.
+    def test_windows_thread_start_runtime_error_fails_closed_with_audit(self) -> None:
+        class WindowsOS:
+            name = "nt"
+            def __getattr__(self, name):
+                return getattr(os, name)
+
+        class DonePipe:
+            def read(self, _n=-1):
+                return b""
+            def close(self):
+                pass
+
+        class OkStdin:
+            def write(self, data):
+                return len(data)
+            def close(self):
+                pass
+
+        killer_proc = mock.MagicMock()
+        killer_proc.returncode = 0
+        killer_proc.wait.return_value = 0
+
         thr_proc = mock.MagicMock()
         thr_proc.pid = 777772
         thr_proc.returncode = 1
@@ -831,9 +863,6 @@ class AgyContinuationTests(unittest.TestCase):
         thr_proc.stdout = DonePipe()
         thr_proc.stderr = DonePipe()
         thr_proc.wait.return_value = 1
-
-        def fake_popen_b(argv, **kwargs):
-            return killer_proc if argv and argv[0] == "taskkill" else thr_proc
 
         real_thread_cls = threading.Thread
         start_count = {"n": 0}
@@ -848,7 +877,11 @@ class AgyContinuationTests(unittest.TestCase):
         cost_log_b = self.root / "cost-win-thr.jsonl"
         with mock.patch.object(to_agy, "os", WindowsOS()), \
                 mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.2), \
-                mock.patch.object(to_agy.subprocess, "Popen", side_effect=fake_popen_b), \
+                mock.patch.object(
+                    to_agy.subprocess,
+                    "Popen",
+                    side_effect=lambda argv, **kw: killer_proc if argv and argv[0] == "taskkill" else thr_proc,
+                ), \
                 mock.patch.object(to_agy.threading, "Thread", SecondStartFailThread), \
                 mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
                 contextlib.redirect_stderr(io.StringIO()):
@@ -874,10 +907,20 @@ class AgyContinuationTests(unittest.TestCase):
         self.assertEqual("failed", state_b["state"])
         self.assertTrue(thr_proc.kill.called)
 
-        # Case C: Windows stdin.write raises OSError (EIO) while child exits 0 with valid JSON -> MUST NOT succeed.
-        class EioStdin:
+    def test_windows_stdin_eio_fails_closed_and_einval_preserves_early_auth(self) -> None:
+        import errno as _errno
+
+        class WindowsOS:
+            name = "nt"
+            def __getattr__(self, name):
+                return getattr(os, name)
+
+        class ErrorStdin:
+            def __init__(self, err: int, msg: str):
+                self._err = err
+                self._msg = msg
             def write(self, _data):
-                raise OSError(5, "Input/output error")
+                raise OSError(self._err, self._msg)
             def close(self):
                 pass
 
@@ -890,23 +933,29 @@ class AgyContinuationTests(unittest.TestCase):
             def close(self):
                 pass
 
+        killer_proc = mock.MagicMock()
+        killer_proc.returncode = 0
+        killer_proc.wait.return_value = 0
+
+        # 1) Hard EIO on stdin.write with exit 0 valid JSON -> MUST NOT succeed.
         win_stdin_proc = mock.MagicMock()
         win_stdin_proc.pid = 777773
         win_stdin_proc.returncode = 0
-        win_stdin_proc.stdin = EioStdin()
+        win_stdin_proc.stdin = ErrorStdin(_errno.EIO, "Input/output error")
         win_stdin_proc.stdout = PayloadPipe(_init_line(SESSION) + _result_line(SESSION))
-        win_stdin_proc.stderr = DonePipe()
+        win_stdin_proc.stderr = PayloadPipe(b"")
         win_stdin_proc.wait.return_value = 0
-
-        def fake_popen_c(argv, **kwargs):
-            return killer_proc if argv and argv[0] == "taskkill" else win_stdin_proc
 
         win_stdin_out = self.root / "win-stdin-review.md"
         win_stdin_marker = self.root / "win-stdin-rounds.json"
         win_stdin_cost = self.root / "win-stdin-cost.jsonl"
         with mock.patch.object(to_agy, "os", WindowsOS()), \
                 mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.2), \
-                mock.patch.object(to_agy.subprocess, "Popen", side_effect=fake_popen_c), \
+                mock.patch.object(
+                    to_agy.subprocess,
+                    "Popen",
+                    side_effect=lambda argv, **kw: killer_proc if argv and argv[0] == "taskkill" else win_stdin_proc,
+                ), \
                 mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
                 contextlib.redirect_stderr(io.StringIO()):
             res_c = to_agy.agy_review_gate(
@@ -928,6 +977,122 @@ class AgyContinuationTests(unittest.TestCase):
         self.assertEqual(0, json.loads(win_stdin_marker.read_text(encoding="utf-8"))["art-win-stdin-eio"]["successes"])
         self.assertEqual(1, len(win_stdin_cost.read_text(encoding="utf-8").splitlines()))
         self.assertTrue(Path(res_c.envelope["handoff_path"]).is_file())
+
+        # 2) Windows EINVAL on early-closed stdin with non-zero exit + auth error MUST preserve auth_failure.
+        auth_proc = mock.MagicMock()
+        auth_proc.pid = 777774
+        auth_proc.returncode = 2
+        auth_proc.stdin = ErrorStdin(_errno.EINVAL, "Invalid argument")
+        auth_proc.stdout = PayloadPipe(b"")
+        auth_proc.stderr = PayloadPipe(b"authentication required: please login\n")
+        auth_proc.wait.return_value = 2
+
+        with mock.patch.object(to_agy, "os", WindowsOS()), \
+                mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.2), \
+                mock.patch.object(
+                    to_agy.subprocess,
+                    "Popen",
+                    side_effect=lambda argv, **kw: killer_proc if argv and argv[0] == "taskkill" else auth_proc,
+                ), \
+                mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                contextlib.redirect_stderr(io.StringIO()):
+            res_auth = to_agy.agy_review_gate(
+                request_prompt="Review.",
+                cd=str(self.root),
+                handoff_dir=str(self.root / "handoffs"),
+                marker_path=str(self.root / "win-einval-auth-rounds.json"),
+                gate_id="gate-win-einval-auth",
+                artifact_key="art-win-einval-auth",
+                cost_log_path=str(self.root / "cost-win-einval-auth.jsonl"),
+                settings_path=str(self.root / "absent"),
+                timeout_seconds=1.0,
+                artifact_paths=[str(self.artifact)],
+                agy_home=str(self.agy_home),
+            )
+        self.assertEqual("auth_failure", res_auth.status)
+
+        # 3) Windows EINVAL on stdin with exit 0 valid JSON MUST still reject incomplete prompt delivery.
+        einval_ok_proc = mock.MagicMock()
+        einval_ok_proc.pid = 777775
+        einval_ok_proc.returncode = 0
+        einval_ok_proc.stdin = ErrorStdin(_errno.EINVAL, "Invalid argument")
+        einval_ok_proc.stdout = PayloadPipe(_init_line(SESSION) + _result_line(SESSION))
+        einval_ok_proc.stderr = PayloadPipe(b"")
+        einval_ok_proc.wait.return_value = 0
+
+        with mock.patch.object(to_agy, "os", WindowsOS()), \
+                mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.2), \
+                mock.patch.object(
+                    to_agy.subprocess,
+                    "Popen",
+                    side_effect=lambda argv, **kw: killer_proc if argv and argv[0] == "taskkill" else einval_ok_proc,
+                ), \
+                mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                contextlib.redirect_stderr(io.StringIO()):
+            res_einval_ok = to_agy.agy_review_gate(
+                request_prompt="Review.",
+                cd=str(self.root),
+                handoff_dir=str(self.root / "handoffs"),
+                marker_path=str(self.root / "win-einval-ok-rounds.json"),
+                gate_id="gate-win-einval-ok",
+                artifact_key="art-win-einval-ok",
+                cost_log_path=str(self.root / "cost-win-einval-ok.jsonl"),
+                settings_path=str(self.root / "absent"),
+                timeout_seconds=1.0,
+                artifact_paths=[str(self.artifact)],
+                agy_home=str(self.agy_home),
+            )
+        self.assertEqual("other_error", res_einval_ok.status)
+
+    def test_windows_help_probe_timeout_is_bounded_without_unbounded_communicate(self) -> None:
+        class WindowsOS:
+            name = "nt"
+            def __getattr__(self, name):
+                return getattr(os, name)
+
+        unblock_reader = threading.Event()
+
+        class HungPipe:
+            def read(self, _n=-1):
+                unblock_reader.wait(timeout=3.0)
+                return b""
+            def close(self):
+                pass
+
+        class DoneStdin:
+            def close(self):
+                pass
+
+        help_proc = mock.MagicMock()
+        help_proc.pid = 777776
+        help_proc.returncode = 1
+        help_proc.stdin = DoneStdin()
+        help_proc.stdout = HungPipe()
+        help_proc.stderr = HungPipe()
+        help_proc.wait.side_effect = [subprocess.TimeoutExpired(["agy", "--help"], 0.1), 1]
+        help_proc.communicate.side_effect = AssertionError("help probe must not call unbounded communicate()")
+
+        killer_proc = mock.MagicMock()
+        killer_proc.returncode = 0
+        killer_proc.wait.return_value = 0
+
+        try:
+            t0 = time.monotonic()
+            with mock.patch.object(to_agy, "os", WindowsOS()), \
+                    mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.1), \
+                    mock.patch.object(
+                        to_agy.subprocess,
+                        "Popen",
+                        side_effect=lambda argv, **kw: killer_proc if argv and argv[0] == "taskkill" else help_proc,
+                    ):
+                probed = to_agy.agy_supported_flags(executable="/opt/bin/agy", timeout_seconds=0.1)
+            elapsed = time.monotonic() - t0
+        finally:
+            unblock_reader.set()
+
+        self.assertIsNone(probed)
+        self.assertLess(elapsed, 1.5, f"Windows --help probe blocked for {elapsed:.2f}s")
+        self.assertFalse(help_proc.communicate.called)
 
     def test_resume_refuses_recorded_uuid_matching_current_sensitive_env_before_launch(self) -> None:
         # 1) Establish a legitimate timeout state with SESSION while GEMINI_API_KEY is unset.

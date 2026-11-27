@@ -2020,6 +2020,29 @@ class CommonHardeningTests(unittest.TestCase):
             self.assertTrue(Path(p1).is_file())
             self.assertTrue(Path(p2).is_file())
 
+    def test_log_cost_normalizes_non_finite_and_secret_total_cost_usd_to_null(self) -> None:
+        secret = "sk-ant-secret-cost-value-999"
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "cost.jsonl"
+            for bad_cost in (secret, float("nan"), float("inf"), float("-inf"), True, {"nested": secret}):
+                common.log_cost(
+                    {"total_cost_usd": bad_cost},
+                    str(log_path),
+                    gate_id="gate-bad-cost",
+                    wall_seconds=1.25,
+                    extra={"provider": "claude", "note": f"ok {secret}"},
+                    sensitive_values=[secret],
+                )
+            raw = log_path.read_text(encoding="utf-8")
+            self.assertNotIn(secret, raw)
+            self.assertNotIn("NaN", raw)
+            self.assertNotIn("Infinity", raw)
+            lines = raw.splitlines()
+            self.assertEqual(6, len(lines))
+            for line in lines:
+                rec = json.loads(line)
+                self.assertIsNone(rec["total_cost_usd"])
+
 
 _AGY_VALID_HELP = """Usage of agy:
   --add-dir                       Add a directory to the workspace (repeatable)

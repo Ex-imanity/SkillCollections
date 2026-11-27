@@ -12,6 +12,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -501,11 +502,24 @@ def _atomic_write_text(path: str, body: str) -> None:
             os.unlink(temporary_path)
 
 
+def _normalize_cost_usd(value: object) -> Optional[float]:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return value
+    return None
+
+
 def _redact_value(value: Any, sensitive_values: Optional[list] = None) -> Any:
     if isinstance(value, str):
         return _redact_sensitive_text(value, sensitive_values)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     if isinstance(value, dict):
-        return {k: _redact_value(v, sensitive_values) for k, v in value.items()}
+        return {
+            (_redact_sensitive_text(k, sensitive_values) if isinstance(k, str) else k): _redact_value(
+                v, sensitive_values
+            )
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [_redact_value(item, sensitive_values) for item in value]
     return value
@@ -642,14 +656,17 @@ def log_cost(
     provider like Codex reports token usage but no USD — never fabricate 0).
     `extra` merges provider-specific fields such as token usage.
     """
+    wall = float(wall_seconds)
     record = {
         "gate_id": _redact_sensitive_text(str(gate_id), sensitive_values),
-        "total_cost_usd": envelope.get("total_cost_usd"),
-        "wall_seconds": round(float(wall_seconds), 3),
+        "total_cost_usd": _normalize_cost_usd(envelope.get("total_cost_usd")),
+        "wall_seconds": round(wall, 3) if math.isfinite(wall) else None,
     }
     if extra:
         record.update(_redact_value(extra, sensitive_values))
-    line = json.dumps(record, sort_keys=True)
+        if "total_cost_usd" in extra:
+            record["total_cost_usd"] = _normalize_cost_usd(record["total_cost_usd"])
+    line = json.dumps(record, sort_keys=True, allow_nan=False)
     os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as fh:
         fh.write(line + "\n")

@@ -130,9 +130,28 @@ def _flag_description_mentions(help_text: str, flag_name: str, needle: str) -> b
     return False
 
 
+def _run_agy_help_probe(
+    argv: list,
+    *,
+    capture_output: bool = True,
+    text: bool = False,
+    timeout: float = 5,
+    env: Optional[dict] = None,
+):
+    """Run `agy --help` via the strictly bounded subprocess runner."""
+    return _run_agy_subprocess(
+        argv,
+        env=env,
+        input=b"",
+        capture_output=capture_output,
+        text=text,
+        timeout=timeout,
+    )
+
+
 def agy_supported_flags(
     executable: Optional[str] = None,
-    help_runner: Callable = subprocess.run,
+    help_runner: Optional[Callable] = None,
     timeout_seconds: float = 5,
     env: Optional[dict] = None,
 ) -> Optional[dict]:
@@ -146,6 +165,7 @@ def agy_supported_flags(
     exe = os.path.abspath(executable) if executable else resolve_agy_executable()
     if not exe:
         return None
+    probe_runner = _run_agy_help_probe if help_runner is None else help_runner
     probe_kwargs: dict = {
         "capture_output": True,
         "text": False,
@@ -154,7 +174,7 @@ def agy_supported_flags(
     if env is not None:
         probe_kwargs["env"] = env
     try:
-        completed = help_runner([exe, "--help"], **probe_kwargs)
+        completed = probe_runner([exe, "--help"], **probe_kwargs)
     except (OSError, subprocess.SubprocessError, UnicodeError):
         return None
     if getattr(completed, "returncode", 1) != 0:
@@ -864,7 +884,9 @@ def _run_agy_subprocess_windows(
         except BrokenPipeError:
             pass
         except OSError as exc:
-            if getattr(exc, "errno", None) != errno.EPIPE:
+            # On Windows, writing to a pipe after the child exits early can raise
+            # EINVAL as well as BrokenPipeError/EPIPE (see CPython subprocess.py).
+            if getattr(exc, "errno", None) not in (errno.EPIPE, errno.EINVAL):
                 write_errors.append(f"stdin: {exc}")
         finally:
             _safe_close_stream(stream)
@@ -1592,7 +1614,7 @@ def main(argv: Optional[list] = None) -> int:
         settings_path=args.settings,
         timeout_seconds=args.timeout_seconds,
         model=args.model,
-        help_runner=subprocess.run,
+        help_runner=_run_agy_help_probe,
         resume=args.resume,
         artifact_paths=args.artifact_paths,
     )
