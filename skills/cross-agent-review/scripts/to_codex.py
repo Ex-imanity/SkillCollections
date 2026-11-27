@@ -30,7 +30,6 @@ from .continuation import ReviewContinuation
 from .common import (
     ReviewResult,
     _known_sensitive_values,
-    _safe_gate_id,
     fail_closed as _fail_closed,
     gate_failure_result as _gate_failure_result,
     MODEL_FLAG,

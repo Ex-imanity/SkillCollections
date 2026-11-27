@@ -37,7 +37,6 @@ from .common import (
     PROXY_ENV_KEYS,
     ReviewResult,
     _known_sensitive_values,
-    _safe_gate_id,
     build_reviewer_prompt,
     fail_closed as _fail_closed,
     gate_failure_result as _gate_failure_result,

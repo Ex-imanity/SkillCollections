@@ -512,26 +512,46 @@ class AgyContinuationTests(unittest.TestCase):
             "same-PGID descendant survived selector OSError after launcher exited 0",
         )
 
-        # 6) Hard POSIX stdout read EIO after valid init MUST fail closed (NOT EOF / NOT resumable).
-        eio_script = self.root / "emit_init_then_sleep.py"
+        # 6) Hard POSIX stdout read EIO strictly AFTER valid init (both main-loop and timeout-drain)
+        #    MUST fail closed (NOT EOF / NOT resumable), filtering strictly on child stdout FD.
+        import errno as _errno
+
+        eio_script = self.root / "emit_init_then_chunk.py"
         eio_script.write_text(
             "import json, sys, time\n"
+            "sys.stdin.read()\n"
             f"sys.stdout.write(json.dumps({{'event': 'init', 'conversation_id': '{SESSION}'}}) + '\\n')\n"
+            "sys.stdout.flush()\n"
+            "time.sleep(0.08)\n"
+            "sys.stdout.write('{\"event\":\"step_update\"}\\n')\n"
             "sys.stdout.flush()\n"
             "time.sleep(5)\n",
             encoding="utf-8",
         )
+        real_popen = subprocess.Popen
         real_os_read = os.read
-        read_calls = {"count": 0}
+        stdout_fd_box = {"fd": None, "saw_init": False, "injected": False}
 
-        def failing_os_read(fd, n):
-            read_calls["count"] += 1
-            if read_calls["count"] == 1:
-                return real_os_read(fd, n)
-            raise OSError(5, "Input/output error")
+        def tracking_popen(*a, **kw):
+            proc = real_popen(*a, **kw)
+            if proc.stdout is not None:
+                stdout_fd_box["fd"] = proc.stdout.fileno()
+            return proc
+
+        def failing_stdout_read(fd, n):
+            if fd == stdout_fd_box["fd"]:
+                if not stdout_fd_box["saw_init"]:
+                    data = real_os_read(fd, n)
+                    if SESSION.encode("utf-8") in data:
+                        stdout_fd_box["saw_init"] = True
+                    return data
+                stdout_fd_box["injected"] = True
+                raise OSError(_errno.EIO, "Input/output error")
+            return real_os_read(fd, n)
 
         eio_marker = self.root / "eio-rounds.json"
-        with mock.patch.object(to_agy.os, "read", side_effect=failing_os_read), \
+        with mock.patch.object(to_agy.subprocess, "Popen", side_effect=tracking_popen), \
+                mock.patch.object(to_agy.os, "read", side_effect=failing_stdout_read), \
                 mock.patch.object(to_agy.shutil, "which", return_value=sys.executable), \
                 mock.patch.object(to_agy, "build_agy_command", return_value=[sys.executable, str(eio_script)]), \
                 contextlib.redirect_stderr(io.StringIO()):
@@ -548,10 +568,194 @@ class AgyContinuationTests(unittest.TestCase):
                 artifact_paths=[str(self.artifact)],
                 agy_home=str(self.agy_home),
             )
+        self.assertTrue(stdout_fd_box["saw_init"], "test must read valid init before injecting EIO")
+        self.assertTrue(stdout_fd_box["injected"], "test must actually inject EIO on child stdout FD")
         self.assertEqual("other_error", eio_res.status)
         self.assertFalse(eio_res.envelope.get("resumable", False))
         eio_state = json.loads(Path(eio_res.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
         self.assertEqual("failed", eio_state["state"])
+
+        # 6b) Hard POSIX stdout read EIO during timeout drain strictly AFTER valid init + killpg.
+        drain_eio_script = self.root / "emit_init_then_sleep_drain.py"
+        drain_eio_script.write_text(
+            "import json, sys, time\n"
+            "sys.stdin.read()\n"
+            f"sys.stdout.write(json.dumps({{'event': 'init', 'conversation_id': '{SESSION}'}}) + '\\n')\n"
+            "sys.stdout.flush()\n"
+            "time.sleep(5)\n",
+            encoding="utf-8",
+        )
+        drain_box = {"fd": None, "saw_init": False, "killed": False, "injected": False}
+        real_killpg = os.killpg
+
+        def tracking_popen_drain(*a, **kw):
+            proc = real_popen(*a, **kw)
+            if proc.stdout is not None:
+                drain_box["fd"] = proc.stdout.fileno()
+            return proc
+
+        def tracking_killpg(pgid, sig):
+            drain_box["killed"] = True
+            return real_killpg(pgid, sig)
+
+        def failing_drain_read(fd, n):
+            if fd == drain_box["fd"]:
+                if not drain_box["saw_init"]:
+                    data = real_os_read(fd, n)
+                    if SESSION.encode("utf-8") in data:
+                        drain_box["saw_init"] = True
+                    return data
+                if drain_box["killed"]:
+                    drain_box["injected"] = True
+                    raise OSError(_errno.EIO, "Input/output error")
+            return real_os_read(fd, n)
+
+        with mock.patch.object(to_agy.subprocess, "Popen", side_effect=tracking_popen_drain), \
+                mock.patch.object(to_agy.os, "killpg", side_effect=tracking_killpg), \
+                mock.patch.object(to_agy.os, "read", side_effect=failing_drain_read), \
+                mock.patch.object(to_agy.shutil, "which", return_value=sys.executable), \
+                mock.patch.object(to_agy, "build_agy_command", return_value=[sys.executable, str(drain_eio_script)]), \
+                contextlib.redirect_stderr(io.StringIO()):
+            drain_res = to_agy.agy_review_gate(
+                request_prompt="Review.",
+                cd=str(self.root),
+                handoff_dir=str(self.root / "handoffs"),
+                marker_path=str(self.root / "eio-drain-rounds.json"),
+                gate_id="gate-posix-drain-eio",
+                artifact_key="art-posix-drain-eio",
+                cost_log_path=str(self.root / "cost-drain-eio.jsonl"),
+                settings_path=str(self.root / "absent"),
+                timeout_seconds=0.25,
+                artifact_paths=[str(self.artifact)],
+                agy_home=str(self.agy_home),
+            )
+        self.assertTrue(drain_box["saw_init"])
+        self.assertTrue(drain_box["injected"])
+        self.assertEqual("other_error", drain_res.status)
+        self.assertFalse(drain_res.envelope.get("resumable", False))
+        drain_state = json.loads(Path(drain_res.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
+        self.assertEqual("failed", drain_state["state"])
+
+        # 7) POSIX killpg EPERM on timeout MUST fail closed (NOT resumable / NOT timed_out).
+        eperm_pid_file = self.root / "eperm-descendant.pid"
+        eperm_script = self.root / "eperm_launcher.py"
+        eperm_script.write_text(
+            "import json, pathlib, subprocess, sys, time\n"
+            "sys.stdin.read()\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(10)'], "
+            "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+            "pathlib.Path(sys.argv[1]).write_text(str(child.pid), encoding='utf-8')\n"
+            f"sys.stdout.write(json.dumps({{'event': 'init', 'conversation_id': '{SESSION}'}}) + '\\n')\n"
+            "sys.stdout.flush()\n"
+            "time.sleep(0.35)\n",
+            encoding="utf-8",
+        )
+        try:
+            with mock.patch.object(to_agy.os, "killpg", side_effect=PermissionError(_errno.EPERM, "Operation not permitted")), \
+                    mock.patch.object(to_agy.shutil, "which", return_value=sys.executable), \
+                    mock.patch.object(to_agy, "build_agy_command", return_value=[sys.executable, str(eperm_script), str(eperm_pid_file)]), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                eperm_res = to_agy.agy_review_gate(
+                    request_prompt="Review.",
+                    cd=str(self.root),
+                    handoff_dir=str(self.root / "handoffs"),
+                    marker_path=str(self.root / "eperm-rounds.json"),
+                    gate_id="gate-posix-eperm",
+                    artifact_key="art-posix-eperm",
+                    cost_log_path=str(self.root / "cost-eperm.jsonl"),
+                    settings_path=str(self.root / "absent"),
+                    timeout_seconds=0.15,
+                    artifact_paths=[str(self.artifact)],
+                    agy_home=str(self.agy_home),
+                )
+        finally:
+            if eperm_pid_file.exists():
+                try:
+                    os.kill(int(eperm_pid_file.read_text(encoding="utf-8").strip()), 9)
+                except OSError:
+                    pass
+        self.assertEqual("other_error", eperm_res.status)
+        self.assertFalse(eperm_res.envelope.get("resumable", False))
+        eperm_state = json.loads(Path(eperm_res.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
+        self.assertEqual("failed", eperm_state["state"])
+
+        # 8) POSIX stdin write EIO / incomplete delivery MUST NOT commit success even if child exits 0 with valid JSON.
+        ok_no_stdin = self.root / "ignore_stdin_ok.py"
+        ok_no_stdin.write_text(
+            "import json, sys\n"
+            f"sys.stdout.write(json.dumps({{'event': 'init', 'conversation_id': '{SESSION}'}}) + '\\n')\n"
+            f"sys.stdout.write(json.dumps({{'event': 'result', 'result': {{'conversation_id': '{SESSION}', 'status': 'SUCCESS', 'response': 'APPROVE', 'usage': {{'input_tokens': 1, 'output_tokens': 1}}}}}}) + '\\n')\n"
+            "sys.stdout.flush()\n",
+            encoding="utf-8",
+        )
+        real_os_write = os.write
+        stdin_fd_box = {"fd": None}
+
+        def tracking_popen_stdin(*a, **kw):
+            proc = real_popen(*a, **kw)
+            if proc.stdin is not None:
+                stdin_fd_box["fd"] = proc.stdin.fileno()
+            return proc
+
+        def failing_stdin_write(fd, data):
+            if fd == stdin_fd_box["fd"]:
+                raise OSError(_errno.EIO, "Input/output error")
+            return real_os_write(fd, data)
+
+        stdin_out = self.root / "stdin-eio-review.md"
+        stdin_marker = self.root / "stdin-eio-rounds.json"
+        stdin_cost = self.root / "stdin-eio-cost.jsonl"
+        with mock.patch.object(to_agy.subprocess, "Popen", side_effect=tracking_popen_stdin), \
+                mock.patch.object(to_agy.os, "write", side_effect=failing_stdin_write), \
+                mock.patch.object(to_agy.shutil, "which", return_value=sys.executable), \
+                mock.patch.object(to_agy, "build_agy_command", return_value=[sys.executable, str(ok_no_stdin)]), \
+                contextlib.redirect_stderr(io.StringIO()):
+            stdin_eio_res = to_agy.agy_review_gate(
+                request_prompt="Review.",
+                cd=str(self.root),
+                handoff_dir=str(self.root / "handoffs"),
+                marker_path=str(stdin_marker),
+                gate_id="gate-posix-stdin-eio",
+                artifact_key="art-posix-stdin-eio",
+                cost_log_path=str(stdin_cost),
+                output_path=str(stdin_out),
+                settings_path=str(self.root / "absent"),
+                timeout_seconds=2.0,
+                artifact_paths=[str(self.artifact)],
+                agy_home=str(self.agy_home),
+            )
+        self.assertEqual("other_error", stdin_eio_res.status)
+        self.assertFalse(stdin_out.exists())
+        self.assertEqual(0, json.loads(stdin_marker.read_text(encoding="utf-8"))["art-posix-stdin-eio"]["successes"])
+        self.assertEqual(1, len(stdin_cost.read_text(encoding="utf-8").splitlines()))
+        self.assertTrue(Path(stdin_eio_res.envelope["handoff_path"]).is_file())
+
+        # Early-exit non-zero auth error with BrokenPipeError on stdin MUST still report auth_failure.
+        early_auth = self.root / "early_auth_err.py"
+        early_auth.write_text(
+            "import sys\n"
+            "sys.stdin.close()\n"
+            "sys.stderr.write('authentication required: please login\\n')\n"
+            "sys.exit(1)\n",
+            encoding="utf-8",
+        )
+        with mock.patch.object(to_agy.shutil, "which", return_value=sys.executable), \
+                mock.patch.object(to_agy, "build_agy_command", return_value=[sys.executable, str(early_auth)]), \
+                contextlib.redirect_stderr(io.StringIO()):
+            auth_res = to_agy.agy_review_gate(
+                request_prompt="Review." + ("x" * 200000),
+                cd=str(self.root),
+                handoff_dir=str(self.root / "handoffs"),
+                marker_path=str(self.root / "early-auth-rounds.json"),
+                gate_id="gate-early-auth",
+                artifact_key="art-early-auth",
+                cost_log_path=str(self.root / "early-auth-cost.jsonl"),
+                settings_path=str(self.root / "absent"),
+                timeout_seconds=2.0,
+                artifact_paths=[str(self.artifact)],
+                agy_home=str(self.agy_home),
+            )
+        self.assertEqual("auth_failure", auth_res.status)
 
     def test_windows_read_eio_and_thread_start_failure_fail_closed_with_audit(self) -> None:
         class WindowsOS:
@@ -669,6 +873,86 @@ class AgyContinuationTests(unittest.TestCase):
         state_b = json.loads(Path(res_b.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
         self.assertEqual("failed", state_b["state"])
         self.assertTrue(thr_proc.kill.called)
+
+        # Case C: Windows stdin.write raises OSError (EIO) while child exits 0 with valid JSON -> MUST NOT succeed.
+        class EioStdin:
+            def write(self, _data):
+                raise OSError(5, "Input/output error")
+            def close(self):
+                pass
+
+        class PayloadPipe:
+            def __init__(self, payload: bytes):
+                self._buf = payload
+            def read(self, _n=-1):
+                out, self._buf = self._buf, b""
+                return out
+            def close(self):
+                pass
+
+        win_stdin_proc = mock.MagicMock()
+        win_stdin_proc.pid = 777773
+        win_stdin_proc.returncode = 0
+        win_stdin_proc.stdin = EioStdin()
+        win_stdin_proc.stdout = PayloadPipe(_init_line(SESSION) + _result_line(SESSION))
+        win_stdin_proc.stderr = DonePipe()
+        win_stdin_proc.wait.return_value = 0
+
+        def fake_popen_c(argv, **kwargs):
+            return killer_proc if argv and argv[0] == "taskkill" else win_stdin_proc
+
+        win_stdin_out = self.root / "win-stdin-review.md"
+        win_stdin_marker = self.root / "win-stdin-rounds.json"
+        win_stdin_cost = self.root / "win-stdin-cost.jsonl"
+        with mock.patch.object(to_agy, "os", WindowsOS()), \
+                mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.2), \
+                mock.patch.object(to_agy.subprocess, "Popen", side_effect=fake_popen_c), \
+                mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                contextlib.redirect_stderr(io.StringIO()):
+            res_c = to_agy.agy_review_gate(
+                request_prompt="Review.",
+                cd=str(self.root),
+                handoff_dir=str(self.root / "handoffs"),
+                marker_path=str(win_stdin_marker),
+                gate_id="gate-win-stdin-eio",
+                artifact_key="art-win-stdin-eio",
+                cost_log_path=str(win_stdin_cost),
+                output_path=str(win_stdin_out),
+                settings_path=str(self.root / "absent"),
+                timeout_seconds=1.0,
+                artifact_paths=[str(self.artifact)],
+                agy_home=str(self.agy_home),
+            )
+        self.assertEqual("other_error", res_c.status)
+        self.assertFalse(win_stdin_out.exists())
+        self.assertEqual(0, json.loads(win_stdin_marker.read_text(encoding="utf-8"))["art-win-stdin-eio"]["successes"])
+        self.assertEqual(1, len(win_stdin_cost.read_text(encoding="utf-8").splitlines()))
+        self.assertTrue(Path(res_c.envelope["handoff_path"]).is_file())
+
+    def test_resume_refuses_recorded_uuid_matching_current_sensitive_env_before_launch(self) -> None:
+        # 1) Establish a legitimate timeout state with SESSION while GEMINI_API_KEY is unset.
+        first = self.call()
+        self.assertEqual("timeout", first.status)
+        self.assertTrue(first.envelope["resumable"])
+        state_path = Path(first.envelope["continuation_state_path"])
+        before_state_bytes = state_path.read_bytes()
+        before_mtime_ns = state_path.stat().st_mtime_ns
+
+        # 2) Now GEMINI_API_KEY matches the previously recorded SESSION UUID.
+        #    --resume MUST reject inside the lock BEFORE building --conversation or invoking runner,
+        #    and MUST NOT rewrite the state file with the matching value.
+        self.calls.clear()
+        self.timeout = False
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": SESSION}):
+            resumed = self.call(resume=True)
+
+        self.assertEqual("continuation_rejected", resumed.status)
+        self.assertFalse(resumed.envelope.get("resumable", False))
+        self.assertEqual([], self.calls, "runner must never be invoked with a sensitive UUID in --conversation")
+        self.assertEqual(before_state_bytes, state_path.read_bytes())
+        self.assertEqual(before_mtime_ns, state_path.stat().st_mtime_ns)
+        handoff_text = Path(resumed.envelope["handoff_path"]).read_text(encoding="utf-8")
+        self.assertNotIn(SESSION, handoff_text)
 
     def test_windows_hung_stdin_writer_fails_closed_instead_of_returning_success(self) -> None:
         class WindowsOS:

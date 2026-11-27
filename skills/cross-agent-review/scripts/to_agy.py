@@ -18,6 +18,7 @@ never make real model calls.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import math
 import os
@@ -491,6 +492,27 @@ class _AgyContinuation(ReviewContinuation):
             output_path=output_path,
             cost_log_path=cost_log_path,
         )
+        if self.resume and _is_sensitive_id(self.session_id, self.sensitive_values):
+            raise ValueError(
+                "recorded Antigravity conversation UUID matches a known sensitive value; refusing to resume"
+            )
+
+    def finish(self, result: ReviewResult) -> ReviewResult:
+        if _is_sensitive_id(self.data.get("session_id"), self.sensitive_values):
+            self.data["session_id"] = "[REDACTED]"
+            if result.status in {"success", "timeout"}:
+                result = ReviewResult(
+                    "provenance_failure",
+                    None,
+                    {
+                        **result.envelope,
+                        "session_id": None,
+                        "observed_session_id": None,
+                        "detail": "Antigravity conversation_id matches a known sensitive value; refusing to persist session identity",
+                    },
+                    1,
+                )
+        return super().finish(result)
 
     def decorate(self, result: ReviewResult) -> ReviewResult:
         observed_id = _validate_uuid(result.envelope.get("observed_session_id"))
@@ -572,6 +594,19 @@ def _safe_close_stream(stream: Any) -> None:
         pass
 
 
+def _killpg_strict(pgid: int) -> None:
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except OSError as exc:
+        if exc.errno == errno.ESRCH:
+            return
+        raise OSError(
+            f"Antigravity POSIX process-group cleanup failed (pgid={pgid}): {exc}"
+        ) from exc
+
+
 def _run_agy_subprocess_posix(
     argv: list,
     *,
@@ -584,6 +619,8 @@ def _run_agy_subprocess_posix(
     process = None
     stdin_stream = None
     completed_cleanly = False
+    killpg_error: Optional[OSError] = None
+    raising_timeout = False
     try:
         process = subprocess.Popen(
             argv,
@@ -601,6 +638,7 @@ def _run_agy_subprocess_posix(
         stdin_stream = process.stdin
         stdin_view = memoryview(input_bytes)
         stdin_offset = 0
+        stdin_complete = len(input_bytes) == 0
 
         if stdin_stream is not None:
             if not input_bytes:
@@ -636,17 +674,31 @@ def _run_agy_subprocess_posix(
                 tag = key.data
                 stream = key.fileobj
                 if tag == "stdin":
+                    broken_pipe = False
                     try:
                         written = os.write(stream.fileno(), stdin_view[stdin_offset : stdin_offset + 65536])
-                        stdin_offset += written
-                    except BlockingIOError:
+                    except (BlockingIOError, InterruptedError):
                         continue
-                    except (BrokenPipeError, OSError):
-                        stdin_offset = len(input_bytes)
-                    if stdin_offset >= len(input_bytes):
+                    except BrokenPipeError:
+                        broken_pipe = True
+                    except OSError as exc:
+                        if exc.errno == errno.EPIPE:
+                            broken_pipe = True
+                        else:
+                            raise OSError(f"Antigravity stdin pipe write failed: {exc}") from exc
+                    if broken_pipe:
                         sel.unregister(stream)
                         _safe_close_stream(stream)
                         stdin_stream = None
+                    else:
+                        if written <= 0:
+                            raise OSError("Antigravity stdin pipe write returned 0 bytes")
+                        stdin_offset += written
+                        if stdin_offset >= len(input_bytes):
+                            stdin_complete = True
+                            sel.unregister(stream)
+                            _safe_close_stream(stream)
+                            stdin_stream = None
                 else:
                     try:
                         chunk = os.read(stream.fileno(), 65536)
@@ -670,11 +722,13 @@ def _run_agy_subprocess_posix(
             if open_readers:
                 # Launcher exited, but a descendant kept stdout/stderr open past drain deadline.
                 try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except (ProcessLookupError, OSError):
+                    _killpg_strict(process.pid)
+                except OSError:
                     pass
                 raise OSError("Antigravity post-exit pipe drain timed out; descendant held output open")
             rc = process.wait(timeout=1.0)
+            if not stdin_complete and rc == 0:
+                raise OSError("Antigravity stdin prompt delivery was incomplete before exit 0")
             completed_cleanly = True
             return subprocess.CompletedProcess(
                 argv, rc, b"".join(stdout_chunks), b"".join(stderr_chunks)
@@ -690,9 +744,10 @@ def _run_agy_subprocess_posix(
             stdin_stream = None
 
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
+            _killpg_strict(process.pid)
+        except OSError as exc:
+            killpg_error = exc
+            raise
 
         cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
         try:
@@ -725,7 +780,10 @@ def _run_agy_subprocess_posix(
 
         if open_readers:
             raise OSError("Antigravity timeout cleanup did not close owned process pipes")
+        if not stdin_complete:
+            raise OSError("Antigravity stdin prompt delivery was incomplete before timeout")
 
+        raising_timeout = True
         raise subprocess.TimeoutExpired(
             argv,
             timeout,
@@ -737,10 +795,15 @@ def _run_agy_subprocess_posix(
         # entire owned PGID, even if the direct launcher already exited with 0.
         if process is not None and not completed_cleanly:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                pass
+                _killpg_strict(process.pid)
+            except OSError as exc:
+                if killpg_error is None:
+                    killpg_error = exc
             if process.poll() is None:
+                try:
+                    process.kill()
+                except (ProcessLookupError, OSError):
+                    pass
                 try:
                     process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
                 except (subprocess.TimeoutExpired, OSError):
@@ -756,6 +819,8 @@ def _run_agy_subprocess_posix(
         if process is not None:
             _safe_close_stream(process.stdout)
             _safe_close_stream(process.stderr)
+        if killpg_error is not None and raising_timeout:
+            raise killpg_error
 
 
 def _run_agy_subprocess_windows(
@@ -778,6 +843,8 @@ def _run_agy_subprocess_windows(
     stdout_chunks: list = []
     stderr_chunks: list = []
     read_errors: list = []
+    write_errors: list = []
+    stdin_complete = [len(input_bytes) == 0]
 
     def _write_stdin() -> None:
         stream = process.stdin
@@ -788,11 +855,17 @@ def _run_agy_subprocess_windows(
             offset = 0
             while offset < len(input_bytes):
                 written = stream.write(view[offset : offset + 65536])
-                if not written:
+                if not written or written <= 0:
+                    write_errors.append("stdin: zero-byte write")
                     break
                 offset += written
-        except (BrokenPipeError, OSError):
+            else:
+                stdin_complete[0] = True
+        except BrokenPipeError:
             pass
+        except OSError as exc:
+            if getattr(exc, "errno", None) != errno.EPIPE:
+                write_errors.append(f"stdin: {exc}")
         finally:
             _safe_close_stream(stream)
 
@@ -870,10 +943,16 @@ def _run_agy_subprocess_windows(
         if threads_done:
             _safe_close_stream(process.stdout)
             _safe_close_stream(process.stderr)
-        if not cleanup_ok or not threads_done or read_errors:
+        if not cleanup_ok or not threads_done or read_errors or write_errors or not stdin_complete[0]:
             # Never call blocking close() on hung Windows pipes; fail closed and release lock.
-            detail = "; ".join(read_errors) if read_errors else "closure is unverified"
-            raise OSError(f"Antigravity Windows process-tree cleanup/read failed: {detail}")
+            io_errors = read_errors + write_errors
+            if io_errors:
+                detail = "; ".join(io_errors)
+            elif not stdin_complete[0]:
+                detail = "stdin prompt delivery was incomplete before timeout"
+            else:
+                detail = "closure is unverified"
+            raise OSError(f"Antigravity Windows process-tree cleanup/I/O failed: {detail}")
         raise subprocess.TimeoutExpired(
             argv,
             timeout,
@@ -904,8 +983,11 @@ def _run_agy_subprocess_windows(
         raise OSError("Antigravity post-exit pipe drain timed out; pipe thread stayed active")
     _safe_close_stream(process.stdout)
     _safe_close_stream(process.stderr)
-    if read_errors:
-        raise OSError(f"Antigravity Windows pipe read failed: {'; '.join(read_errors)}")
+    io_errors = read_errors + write_errors
+    if io_errors:
+        raise OSError(f"Antigravity Windows pipe I/O failed: {'; '.join(io_errors)}")
+    if not stdin_complete[0] and process.returncode == 0:
+        raise OSError("Antigravity stdin prompt delivery was incomplete before exit 0")
     return subprocess.CompletedProcess(
         argv, process.returncode, b"".join(stdout_chunks), b"".join(stderr_chunks)
     )
