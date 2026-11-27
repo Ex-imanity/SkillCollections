@@ -49,7 +49,6 @@ from .common import (
 )
 
 _REVIEWER_NAME = "Antigravity"
-_ORIGINAL_SUBPROCESS_RUN = subprocess.run
 POST_EXIT_DRAIN_SECONDS = 5.0
 CLEANUP_TIMEOUT_SECONDS = 5.0
 
@@ -151,31 +150,33 @@ def agy_supported_flags(
     """Probe local `agy --help` for required flags and stream-json I/O support.
 
     Returns ``{"flags": set[str], "input_stream_json": bool, "output_stream_json": bool}``
-    only on a conclusive exit-0 usage page; errors, non-zero exit, missing usage
-    header, empty output, or timeouts return ``None`` (inconclusive).
+    only on a conclusive exit-0 usage page; errors, non-zero exit, undecodable
+    UTF-8 bytes, missing usage header, empty output, or timeouts return
+    ``None`` (inconclusive).
     """
     exe = os.path.abspath(executable) if executable else resolve_agy_executable()
     if not exe:
         return None
     probe_kwargs: dict = {
         "capture_output": True,
-        "text": True,
+        "text": False,
         "timeout": timeout_seconds,
     }
     if env is not None:
         probe_kwargs["env"] = env
     try:
         completed = help_runner([exe, "--help"], **probe_kwargs)
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, UnicodeError):
         return None
     if getattr(completed, "returncode", 1) != 0:
         return None
-    stdout = getattr(completed, "stdout", "") or ""
-    stderr = getattr(completed, "stderr", "") or ""
-    if isinstance(stdout, bytes):
-        stdout = stdout.decode("utf-8", errors="replace")
-    if isinstance(stderr, bytes):
-        stderr = stderr.decode("utf-8", errors="replace")
+    raw_stdout = getattr(completed, "stdout", b"") or b""
+    raw_stderr = getattr(completed, "stderr", b"") or b""
+    try:
+        stdout = raw_stdout.decode("utf-8") if isinstance(raw_stdout, bytes) else str(raw_stdout)
+        stderr = raw_stderr.decode("utf-8") if isinstance(raw_stderr, bytes) else str(raw_stderr)
+    except UnicodeDecodeError:
+        return None
     text = (stdout + "\n" + stderr).strip()
     if not text or not _USAGE_HEADER_RE.search(text):
         return None
@@ -295,16 +296,28 @@ def parse_agy_stream(raw_stdout: Any, *, allow_trailing_truncation: bool = False
     """Parse `agy --output-format stream-json` using strict UTF-8 LF framing.
 
     Splits strictly on ``b"\\n"`` (never ``str.splitlines()``, which breaks JSON
-    strings containing unescaped U+2028/U+2029). All field inspections are
-    defensively type-checked so malformed payloads never raise TypeError.
+    strings containing unescaped U+2028/U+2029) and preserves LF termination per
+    segment. Only an unterminated trailing line may be tolerated on timeout.
+    All field inspections are defensively type-checked and RecursionError-safe.
     """
     raw_bytes = _to_utf8_bytes(raw_stdout)
-    raw_lines = raw_bytes.split(b"\n")
-    # Strip a single trailing empty element produced by a final LF.
-    if raw_lines and raw_lines[-1] == b"":
-        raw_lines = raw_lines[:-1]
-    non_empty = [line[:-1] if line.endswith(b"\r") else line for line in raw_lines]
-    indexed_lines = [(idx, line) for idx, line in enumerate(non_empty) if line.strip()]
+    segments: list = []
+    pos = 0
+    total_len = len(raw_bytes)
+    while pos < total_len:
+        nl = raw_bytes.find(b"\n", pos)
+        if nl == -1:
+            seg = raw_bytes[pos:]
+            terminated = False
+            pos = total_len
+        else:
+            seg = raw_bytes[pos:nl]
+            terminated = True
+            pos = nl + 1
+        if seg.endswith(b"\r"):
+            seg = seg[:-1]
+        if seg.strip():
+            segments.append((seg, terminated))
 
     total_init_events = 0
     valid_init_ids: list = []
@@ -318,17 +331,22 @@ def parse_agy_stream(raw_stdout: Any, *, allow_trailing_truncation: bool = False
     observed_events: list = []
     drift_hints: set = set()
 
-    last_pos = len(indexed_lines) - 1
-    for pos, (_orig_idx, line_bytes) in enumerate(indexed_lines):
-        is_last = pos == last_pos
+    last_pos = len(segments) - 1
+    for idx, (line_bytes, terminated) in enumerate(segments):
+        is_last = idx == last_pos
         try:
             text = line_bytes.decode("utf-8")
             obj = json.loads(text)
-        except (UnicodeDecodeError, ValueError, TypeError):
-            if allow_trailing_truncation and is_last:
+        except (UnicodeDecodeError, ValueError, TypeError, RecursionError):
+            if allow_trailing_truncation and is_last and not terminated:
                 trailing_parse_error = True
             else:
                 non_trailing_parse_errors += 1
+            continue
+        if allow_trailing_truncation and is_last and not terminated:
+            # An unterminated trailing line is not a complete LF-framed NDJSON
+            # event; never let an unframed init grant resumable identity.
+            trailing_parse_error = True
             continue
         if not isinstance(obj, dict):
             malformed_events += 1
@@ -339,17 +357,19 @@ def parse_agy_stream(raw_stdout: Any, *, allow_trailing_truncation: bool = False
         if isinstance(ev_name, str) and ev_name:
             observed_events.append(ev_name)
             label = ev_name
-        elif isinstance(alt_type, str) and alt_type:
-            observed_events.append(f"type:{alt_type}")
-            label = f"type:{alt_type}"
         else:
-            label = "<untyped>"
+            malformed_events += 1
+            if isinstance(alt_type, str) and alt_type:
+                observed_events.append(f"type:{alt_type}")
+                label = f"type:{alt_type}"
+            else:
+                label = "<untyped>"
         _collect_drift_hints(obj, label, drift_hints)
 
         if ev_name == "init":
             total_init_events += 1
             if init_index is None:
-                init_index = pos
+                init_index = idx
             conv_id = _validate_uuid(obj.get("conversation_id"))
             if conv_id is not None:
                 valid_init_ids.append(conv_id)
@@ -358,7 +378,7 @@ def parse_agy_stream(raw_stdout: Any, *, allow_trailing_truncation: bool = False
         elif ev_name == "result":
             total_result_events += 1
             if result_index is None:
-                result_index = pos
+                result_index = idx
             payload = obj.get("result")
             if isinstance(payload, dict):
                 _collect_drift_hints(payload, "result.payload", drift_hints)
@@ -388,22 +408,32 @@ def _is_auth_failure_text(*parts: object) -> bool:
     return any(phrase in blob for phrase in _AGY_AUTH_PHRASES)
 
 
+def _redact_and_truncate(
+    text: str, sensitive_values: Optional[list] = None, limit: int = 200
+) -> str:
+    return _redact_sensitive_text(text, sensitive_values)[:limit]
+
+
 def _classify_terminal_result_failure(
-    result_payload: dict, stderr_text: str
+    result_payload: dict,
+    stderr_text: str,
+    sensitive_values: Optional[list] = None,
 ) -> tuple:
     raw_status = result_payload.get("status")
     status_str = raw_status if isinstance(raw_status, str) else ""
     raw_error = result_payload.get("error")
     error_text = raw_error if isinstance(raw_error, str) else ""
     if _is_auth_failure_text(error_text, stderr_text):
-        return "auth_failure", (error_text or stderr_text or "authentication failed")[:200]
+        raw_detail = error_text or stderr_text or "authentication failed"
+        return "auth_failure", _redact_and_truncate(raw_detail, sensitive_values, 200)
     if status_str in _INCOMPLETE_STATUSES:
+        safe_err = _redact_and_truncate(error_text, sensitive_values, 160) if error_text else ""
         return "completion_failure", (
             f"agy completion incomplete: status={status_str!r}"
-            + (f" ({error_text[:160]})" if error_text else "")
+            + (f" ({safe_err})" if safe_err else "")
         )
     detail = error_text or stderr_text or f"agy terminal status={status_str or '<missing>'!r}"
-    return "other_error", detail[:200]
+    return "other_error", _redact_and_truncate(detail, sensitive_values, 200)
 
 
 def _provenance_failure_detail(parsed: dict, reason: str) -> str:
@@ -516,25 +546,27 @@ def _run_agy_subprocess_posix(
     timeout: float,
     cwd: Optional[str],
 ):
-    process = subprocess.Popen(
-        argv,
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        bufsize=0,
-        start_new_session=True,
-        **({"cwd": cwd} if cwd is not None else {}),
-    )
-    stdout_chunks: list = []
-    stderr_chunks: list = []
     sel = selectors.DefaultSelector()
-    open_readers: set = set()
-    stdin_stream = process.stdin
-    stdin_view = memoryview(input_bytes)
-    stdin_offset = 0
-
+    process = None
+    stdin_stream = None
     try:
+        process = subprocess.Popen(
+            argv,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+            start_new_session=True,
+            **({"cwd": cwd} if cwd is not None else {}),
+        )
+        stdout_chunks: list = []
+        stderr_chunks: list = []
+        open_readers: set = set()
+        stdin_stream = process.stdin
+        stdin_view = memoryview(input_bytes)
+        stdin_offset = 0
+
         if stdin_stream is not None:
             if not input_bytes:
                 _safe_close_stream(stdin_stream)
@@ -665,6 +697,16 @@ def _run_agy_subprocess_posix(
             stderr=b"".join(stderr_chunks),
         )
     finally:
+        # Ensure any I/O or selector exception after Popen terminates the owned PGID.
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            try:
+                process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
         for key in list(sel.get_map().values()):
             try:
                 sel.unregister(key.fileobj)
@@ -673,8 +715,9 @@ def _run_agy_subprocess_posix(
             _safe_close_stream(key.fileobj)
         sel.close()
         _safe_close_stream(stdin_stream)
-        _safe_close_stream(process.stdout)
-        _safe_close_stream(process.stderr)
+        if process is not None:
+            _safe_close_stream(process.stdout)
+            _safe_close_stream(process.stderr)
 
 
 def _run_agy_subprocess_windows(
@@ -726,13 +769,6 @@ def _run_agy_subprocess_windows(
         except OSError:
             pass
 
-    writer = threading.Thread(target=_write_stdin, daemon=True)
-    out_reader = threading.Thread(target=_read_pipe, args=(process.stdout, stdout_chunks), daemon=True)
-    err_reader = threading.Thread(target=_read_pipe, args=(process.stderr, stderr_chunks), daemon=True)
-    writer.start()
-    out_reader.start()
-    err_reader.start()
-
     def _taskkill_tree() -> bool:
         try:
             killer = subprocess.Popen(
@@ -757,9 +793,7 @@ def _run_agy_subprocess_windows(
                 pass
             return False
 
-    try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    def _terminate_bounded() -> bool:
         cleanup_ok = False
         try:
             cleanup_ok = _taskkill_tree()
@@ -772,16 +806,27 @@ def _run_agy_subprocess_windows(
                 process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
             except (subprocess.TimeoutExpired, OSError):
                 cleanup_ok = False
+        return cleanup_ok
 
+    writer = threading.Thread(target=_write_stdin, daemon=True)
+    out_reader = threading.Thread(target=_read_pipe, args=(process.stdout, stdout_chunks), daemon=True)
+    err_reader = threading.Thread(target=_read_pipe, args=(process.stderr, stderr_chunks), daemon=True)
+    try:
+        writer.start()
+        out_reader.start()
+        err_reader.start()
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        cleanup_ok = _terminate_bounded()
         drain_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
-        for reader in (out_reader, err_reader):
+        for thread in (out_reader, err_reader, writer):
             rem = max(0.0, drain_deadline - time.monotonic())
-            reader.join(timeout=rem)
-        readers_done = not out_reader.is_alive() and not err_reader.is_alive()
-        if readers_done:
+            thread.join(timeout=rem)
+        threads_done = not any(t.is_alive() for t in (out_reader, err_reader, writer))
+        if threads_done:
             _safe_close_stream(process.stdout)
             _safe_close_stream(process.stderr)
-        if not cleanup_ok or not readers_done:
+        if not cleanup_ok or not threads_done:
             # Never call blocking close() on hung Windows pipes; fail closed and release lock.
             raise OSError("Antigravity Windows process-tree cleanup failed; closure is unverified")
         raise subprocess.TimeoutExpired(
@@ -790,16 +835,18 @@ def _run_agy_subprocess_windows(
             output=b"".join(stdout_chunks),
             stderr=b"".join(stderr_chunks),
         ) from None
+    except BaseException:
+        _terminate_bounded()
+        raise
 
-    # Normal exit: drain reader threads within POST_EXIT_DRAIN_SECONDS.
+    # Normal exit: drain ALL pipe threads (readers + stdin writer) within POST_EXIT_DRAIN_SECONDS.
     drain_deadline = time.monotonic() + POST_EXIT_DRAIN_SECONDS
-    for reader in (out_reader, err_reader):
+    for thread in (out_reader, err_reader, writer):
         rem = max(0.0, drain_deadline - time.monotonic())
-        reader.join(timeout=rem)
-    writer.join(timeout=0.5)
-    if out_reader.is_alive() or err_reader.is_alive():
-        _taskkill_tree()
-        raise OSError("Antigravity post-exit pipe drain timed out; descendant held output open")
+        thread.join(timeout=rem)
+    if any(t.is_alive() for t in (out_reader, err_reader, writer)):
+        _terminate_bounded()
+        raise OSError("Antigravity post-exit pipe drain timed out; pipe thread stayed active")
     _safe_close_stream(process.stdout)
     _safe_close_stream(process.stderr)
     return subprocess.CompletedProcess(
@@ -828,27 +875,6 @@ def _run_agy_subprocess(
     )
 
 
-def _default_agy_runner(
-    argv: list,
-    *,
-    env: Optional[dict],
-    input: bytes,
-    capture_output: bool,
-    text: bool,
-    timeout: float,
-    cwd: Optional[str] = None,
-):
-    return _run_agy_subprocess(
-        argv,
-        env=env,
-        input=input,
-        capture_output=capture_output,
-        text=text,
-        timeout=timeout,
-        cwd=cwd,
-    )
-
-
 def run_agy_review(
     argv: list,
     *,
@@ -857,17 +883,11 @@ def run_agy_review(
     timeout_seconds: float = 600,
     prompt: Optional[str] = None,
     cwd: Optional[str] = None,
+    sensitive_values: Optional[list] = None,
 ) -> ReviewResult:
     """Invoke `agy` stream-json headless mode and classify the result."""
     encoded_input = encode_agy_prompt(prompt or "")
-    if runner is None:
-        invoke_runner = (
-            _default_agy_runner
-            if subprocess.run is _ORIGINAL_SUBPROCESS_RUN
-            else subprocess.run
-        )
-    else:
-        invoke_runner = runner
+    invoke_runner = _run_agy_subprocess if runner is None else runner
 
     try:
         completed = invoke_runner(
@@ -902,7 +922,9 @@ def run_agy_review(
                         },
                         1,
                     )
-                fail_status, fail_detail = _classify_terminal_result_failure(last_res, partial_err)
+                fail_status, fail_detail = _classify_terminal_result_failure(
+                    last_res, partial_err, sensitive_values
+                )
                 return ReviewResult(
                     fail_status,
                     None,
@@ -965,7 +987,7 @@ def run_agy_review(
             text=None,
             envelope={
                 "error_type": type(exc).__name__,
-                "detail": str(exc)[:200],
+                "detail": _redact_and_truncate(str(exc), sensitive_values, 200),
                 "total_cost_usd": None,
             },
             exit_code=1,
@@ -980,10 +1002,10 @@ def run_agy_review(
     result_status = last_result.get("status") if isinstance(last_result, dict) else None
     result_error = last_result.get("error") if isinstance(last_result, dict) else None
 
-    # Auth failure check on non-success (inspecting error/stderr only).
+    # Auth failure check on non-success (inspecting error/stderr only; redact before truncating).
     if exit_code != 0 or result_status != "SUCCESS":
         if _is_auth_failure_text(result_error, stderr_text):
-            detail = (
+            raw_detail = (
                 result_error
                 if isinstance(result_error, str) and result_error.strip()
                 else stderr_text.strip() or "authentication required"
@@ -991,13 +1013,19 @@ def run_agy_review(
             return ReviewResult(
                 "auth_failure",
                 None,
-                {"detail": detail[:200], "session_id": None, "total_cost_usd": None},
+                {
+                    "detail": _redact_and_truncate(raw_detail, sensitive_values, 200),
+                    "session_id": None,
+                    "total_cost_usd": None,
+                },
                 exit_code if exit_code != 0 else 1,
             )
 
     # Terminal non-SUCCESS status from a parsed result payload.
     if isinstance(last_result, dict) and result_status != "SUCCESS":
-        fail_status, fail_detail = _classify_terminal_result_failure(last_result, stderr_text)
+        fail_status, fail_detail = _classify_terminal_result_failure(
+            last_result, stderr_text, sensitive_values
+        )
         return ReviewResult(
             fail_status,
             None,
@@ -1015,7 +1043,11 @@ def run_agy_review(
             "other_error",
             None,
             {
-                "detail": (stderr_text.strip() or f"agy exited with status {exit_code}")[:200],
+                "detail": _redact_and_truncate(
+                    stderr_text.strip() or f"agy exited with status {exit_code}",
+                    sensitive_values,
+                    200,
+                ),
                 "session_id": None,
                 "total_cost_usd": None,
             },
@@ -1291,6 +1323,7 @@ def agy_review_gate(
             timeout_seconds=timeout_seconds,
             prompt=payload.get("prompt"),
             cwd=working_dir,
+            sensitive_values=sensitive_values,
         )
 
     return run_review_gate(
@@ -1366,7 +1399,13 @@ def main(argv: Optional[list] = None) -> int:
         artifact_paths=args.artifact_paths,
     )
     raw_session_id = result.envelope.get("session_id")
-    safe_session_id = _validate_uuid(raw_session_id)
+    valid_session_id = _validate_uuid(raw_session_id)
+    safe_session_id = (
+        valid_session_id
+        if valid_session_id is not None
+        and _redact_sensitive_text(valid_session_id, sensitive_values) == valid_session_id
+        else None
+    )
     raw_handoff = result.envelope.get("handoff_path")
     safe_handoff = (
         None

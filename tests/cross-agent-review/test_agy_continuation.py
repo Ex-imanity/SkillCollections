@@ -111,8 +111,11 @@ class AgyContinuationTests(unittest.TestCase):
     def test_timeout_invalid_streams_are_not_resumable(self) -> None:
         cases = [
             ("no_init", b'{"event":"step_update","step_update":{"step_index":0}}\n', "provenance_failure"),
+            ("unterminated_init_without_lf", _init_line(SESSION).rstrip(b"\n"), "provenance_failure"),
+            ("valid_init_then_lf_terminated_corrupt", _init_line(SESSION) + b'{"bad\n', "provenance_failure"),
             ("one_valid_one_invalid_init", _init_line(SESSION) + b'{"event":"init","conversation_id":"bad"}\n', "provenance_failure"),
             ("non_trailing_corrupt_json", b'{"broken\n' + _init_line(SESSION), "provenance_failure"),
+            ("deeply_nested_json_on_timeout", _init_line(SESSION) + (b"[" * 2000 + b"]" * 2000 + b"\n"), "provenance_failure"),
             ("complete_success_before_timeout", _init_line(SESSION) + _result_line(SESSION, status="SUCCESS"), "other_error"),
             ("complete_error_before_timeout", _init_line(SESSION) + _result_line(SESSION, status="ERROR", response="", error="boom"), "other_error"),
         ]
@@ -125,6 +128,8 @@ class AgyContinuationTests(unittest.TestCase):
                 self.assertFalse(res.envelope.get("resumable", False))
                 state = json.loads(Path(res.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
                 self.assertEqual("failed", state["state"])
+                self.assertTrue((self.root / "cost.jsonl").is_file())
+                self.assertTrue(Path(res.envelope["handoff_path"]).is_file())
                 self.assertEqual("continuation_rejected", self.call(resume=True).status)
 
     def test_timeout_without_artifact_path_is_non_resumable_everywhere(self) -> None:
@@ -391,6 +396,133 @@ class AgyContinuationTests(unittest.TestCase):
         self.assertLess(elapsed, 1.5, f"detached stdout holder blocked for {elapsed:.2f}s")
         self.assertEqual("other_error", res2.status)
         self.assertFalse(res2.envelope.get("resumable", False))
+
+        # 3) Detached stdout holder executed THROUGH agy_review_gate releases the shared marker lock.
+        pid_file2 = self.root / "detached2.pid"
+        gate_marker = self.root / "gate-lock-rounds.json"
+        with mock.patch.object(to_agy, "POST_EXIT_DRAIN_SECONDS", 0.2), \
+                mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.2), \
+                mock.patch.object(to_agy.shutil, "which", return_value=sys.executable), \
+                mock.patch.object(to_agy, "build_agy_command", return_value=[sys.executable, str(holder), str(pid_file2)]), \
+                contextlib.redirect_stderr(io.StringIO()):
+            gate_res = to_agy.agy_review_gate(
+                request_prompt="Review.",
+                cd=str(self.root),
+                handoff_dir=str(self.root / "handoffs"),
+                marker_path=str(gate_marker),
+                gate_id="gate-detached-lock",
+                artifact_key="art-detached-lock",
+                cost_log_path=str(self.root / "cost-lock.jsonl"),
+                settings_path=str(self.root / "absent"),
+                timeout_seconds=2.0,
+                artifact_paths=[str(self.artifact)],
+                agy_home=str(self.agy_home),
+            )
+        if pid_file2.exists():
+            try:
+                os.kill(int(pid_file2.read_text(encoding="utf-8").strip()), 9)
+            except OSError:
+                pass
+        self.assertEqual("other_error", gate_res.status)
+        self.assertFalse(gate_res.envelope.get("resumable", False))
+        # Marker lock must be released and immediately acquirable.
+        with common.round_cap_guard(str(gate_marker), "art-detached-lock") as decision:
+            self.assertTrue(decision.allowed)
+
+        # 4) Selector OSError after Popen MUST terminate the child process so it cannot keep running.
+        io_marker = self.root / "survived-io-error"
+        io_script = self.root / "io_err_child.py"
+        io_script.write_text(
+            "import pathlib, sys, time\n"
+            "time.sleep(0.5)\n"
+            "pathlib.Path(sys.argv[1]).touch()\n",
+            encoding="utf-8",
+        )
+        orig_selector = to_agy.selectors.DefaultSelector
+
+        class FailingSelector:
+            def __init__(self):
+                self._inner = orig_selector()
+            def register(self, *a, **kw):
+                return self._inner.register(*a, **kw)
+            def unregister(self, *a, **kw):
+                return self._inner.unregister(*a, **kw)
+            def get_map(self):
+                return self._inner.get_map()
+            def close(self):
+                return self._inner.close()
+            def select(self, timeout=None):
+                raise OSError("injected selector failure")
+
+        with mock.patch.object(to_agy.selectors, "DefaultSelector", FailingSelector):
+            io_res = to_agy.run_agy_review(
+                [sys.executable, str(io_script), str(io_marker)],
+                timeout_seconds=2.0,
+                prompt="Review.",
+                cwd=str(self.root),
+            )
+        self.assertEqual("other_error", io_res.status)
+        time.sleep(0.7)
+        self.assertFalse(io_marker.exists(), "child survived selector OSError and kept running")
+
+    def test_windows_hung_stdin_writer_fails_closed_instead_of_returning_success(self) -> None:
+        class WindowsOS:
+            name = "nt"
+            def __getattr__(self, name):
+                return getattr(os, name)
+
+        unblock_writer = threading.Event()
+
+        class HungStdin:
+            def write(self, _data):
+                unblock_writer.wait(timeout=3.0)
+                return 0
+            def close(self):
+                pass
+
+        class DonePipe:
+            def __init__(self, payload: bytes):
+                self._buf = payload
+            def read(self, _n=-1):
+                out, self._buf = self._buf, b""
+                return out
+            def close(self):
+                pass
+
+        main_proc = mock.MagicMock()
+        main_proc.pid = 888888
+        main_proc.returncode = 0
+        main_proc.stdin = HungStdin()
+        main_proc.stdout = DonePipe(_init_line(SESSION) + _result_line(SESSION))
+        main_proc.stderr = DonePipe(b"")
+        main_proc.wait.return_value = 0
+
+        killer_proc = mock.MagicMock()
+        killer_proc.returncode = 0
+        killer_proc.wait.return_value = 0
+
+        def fake_popen(argv, **kwargs):
+            if argv and argv[0] == "taskkill":
+                return killer_proc
+            return main_proc
+
+        try:
+            with mock.patch.object(to_agy, "os", WindowsOS()), \
+                    mock.patch.object(to_agy, "POST_EXIT_DRAIN_SECONDS", 0.1), \
+                    mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.1), \
+                    mock.patch.object(to_agy.subprocess, "Popen", side_effect=fake_popen):
+                res = to_agy.run_agy_review(
+                    ["agy"],
+                    runner=to_agy._run_agy_subprocess,
+                    timeout_seconds=1.0,
+                    prompt="Review.",
+                    cwd=str(self.root),
+                )
+        finally:
+            unblock_writer.set()
+
+        self.assertEqual("other_error", res.status)
+        self.assertFalse(res.envelope.get("resumable", False))
 
     def test_windows_cleanup_uses_devnull_taskkill_and_never_blocks_on_hung_reader(self) -> None:
         class WindowsOS:

@@ -1985,6 +1985,41 @@ class CommonHardeningTests(unittest.TestCase):
             self.assertNotIn(secret, claude_out.getvalue())
             self.assertTrue(Path(claude_payload["handoff_path"]).is_file())
 
+            # to_codex.main()
+            codex_out = io.StringIO()
+            with mock.patch.object(to_codex, "codex_available", return_value=False), \
+                    contextlib.redirect_stdout(codex_out):
+                rc_x = to_codex.main([
+                    "--request-file", str(req),
+                    "--cd", str(root),
+                    "--handoff-dir", str(handoff_dir),
+                    "--marker-path", str(root / "rounds-x.json"),
+                    "--gate-id", f"gate-{secret}",
+                    "--artifact-key", "art-x",
+                    "--cost-log", str(root / "cost-x.jsonl"),
+                    "--output", str(root / "out-x.md"),
+                    "--settings", str(root / "absent"),
+                ])
+            self.assertEqual(1, rc_x)
+            codex_payload = json.loads(codex_out.getvalue())
+            self.assertNotIn(secret, codex_out.getvalue())
+            self.assertTrue(Path(codex_payload["handoff_path"]).is_file())
+
+            # Distinct secrets sharing the same gate prefix must produce distinct redacted handoff files.
+            p1 = common.fail_closed(
+                str(handoff_dir), "gate-secret-alpha", "other_error", "err1", "req",
+                sensitive_values=["secret-alpha", "secret-beta"], reviewer="Antigravity",
+            )
+            p2 = common.fail_closed(
+                str(handoff_dir), "gate-secret-beta", "other_error", "err2", "req",
+                sensitive_values=["secret-alpha", "secret-beta"], reviewer="Antigravity",
+            )
+            self.assertNotEqual(p1, p2)
+            self.assertNotIn("secret-alpha", p1)
+            self.assertNotIn("secret-beta", p2)
+            self.assertTrue(Path(p1).is_file())
+            self.assertTrue(Path(p2).is_file())
+
 
 _AGY_VALID_HELP = """Usage of agy:
   --add-dir                       Add a directory to the workspace (repeatable)
@@ -2218,10 +2253,17 @@ class AgyAdapterTests(unittest.TestCase):
                 )
                 self.assertEqual("provenance_failure", r.status)
 
-        # Malformed field types must never raise TypeError and must preserve cost logging.
+        # Malformed field types & deeply nested JSON must never raise TypeError/RecursionError
+        # and must preserve cost logging and handoff persistence.
         malformed_streams = [
             b'{"event":"init","conversation_id":123}\n{"event":"result","result":[]}\n',
             b'{"event":"init","conversation_id":"' + _AGY_UUID.encode() + b'"}\n{"event":"result","result":{"conversation_id":"' + _AGY_UUID.encode() + b'","status":"SUCCESS","response":"APPROVE","usage":"bad"}}\n',
+            # Non-string event inserted between valid init and result on exit 0 -> provenance_failure
+            (json.dumps({"event": "init", "conversation_id": _AGY_UUID}) + "\n"
+             + '{"event":[]}\n'
+             + json.dumps({"event": "result", "result": {"conversation_id": _AGY_UUID, "status": "SUCCESS", "response": "APPROVE", "usage": {"input_tokens": 1, "output_tokens": 1}}}) + "\n").encode(),
+            # Deeply nested JSON causing RecursionError in json.loads -> must still log cost + handoff
+            b"[" * 2000 + b"]" * 2000 + b"\n",
         ]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2244,6 +2286,9 @@ class AgyAdapterTests(unittest.TestCase):
                 self.assertIn(r.status, {"provenance_failure", "other_error"})
                 self.assertTrue(cost_log.is_file())
                 self.assertEqual(1, len(cost_log.read_text(encoding="utf-8").splitlines()))
+                self.assertTrue(Path(r.envelope["handoff_path"]).is_file())
+                state = json.loads(Path(r.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
+                self.assertEqual("failed", state["state"])
 
     def test_agy_classification_auth_vs_completion_vs_verdict(self) -> None:
         captured_prompts: list[str] = []
@@ -2347,7 +2392,8 @@ class AgyAdapterTests(unittest.TestCase):
             stderr_buf = io.StringIO()
             with mock.patch.dict(os.environ, env_patch), \
                     mock.patch.object(to_agy.shutil, "which", return_value="./bin/agy"), \
-                    mock.patch.object(to_agy.subprocess, "run", side_effect=fail_runner), \
+                    mock.patch.object(to_agy, "agy_supported_flags", return_value=None), \
+                    mock.patch.object(to_agy, "_run_agy_subprocess", side_effect=fail_runner), \
                     contextlib.redirect_stdout(stdout_buf), \
                     contextlib.redirect_stderr(stderr_buf):
                 rc = to_agy.main([
@@ -2414,7 +2460,8 @@ class AgyAdapterTests(unittest.TestCase):
             stderr_buf = io.StringIO()
             with mock.patch.dict(os.environ, env_patch), \
                     mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
-                    mock.patch.object(to_agy.subprocess, "run", side_effect=ok_runner), \
+                    mock.patch.object(to_agy, "agy_supported_flags", return_value=None), \
+                    mock.patch.object(to_agy, "_run_agy_subprocess", side_effect=ok_runner), \
                     contextlib.redirect_stdout(stdout_buf), \
                     contextlib.redirect_stderr(stderr_buf):
                 rc = to_agy.main([
@@ -2442,6 +2489,70 @@ class AgyAdapterTests(unittest.TestCase):
                 self.assertNotIn(secret, stderr_text)
                 self.assertNotIn(secret, cost_text)
                 self.assertNotIn(secret, review_text)
+
+    def test_agy_redacts_before_truncation_uuid_secret_in_stdout_and_bad_utf8_help(self) -> None:
+        # 1) Invalid UTF-8 bytes in --help must return inconclusive None, not raise UnicodeDecodeError.
+        bad_help_runner = lambda argv, **kw: subprocess.CompletedProcess(argv, 0, b"\xff\xfe\x80Usage of agy:", b"")
+        self.assertIsNone(to_agy.agy_supported_flags(executable="/opt/bin/agy", help_runner=bad_help_runner))
+
+        # 2) Secret straddling the 200-char diagnostic truncation boundary must be redacted BEFORE truncation.
+        long_secret = "TOPSECRET_PREFIX_SUFFIX_VALUE_9876543210"
+        padded_error = ("authentication required: " + ("x" * 165) + long_secret)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.dict(os.environ, {"GOOGLE_API_KEY": long_secret}), \
+                    mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                res = to_agy.agy_review_gate(
+                    request_prompt="Review.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-trunc",
+                    artifact_key="art-trunc",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "absent"),
+                    runner=lambda argv, **kw: subprocess.CompletedProcess(
+                        argv, 1,
+                        _agy_stream_bytes(status="ERROR", response="", error=padded_error),
+                        b"",
+                    ),
+                    timeout_seconds=10,
+                )
+            self.assertEqual("auth_failure", res.status)
+            handoff_text = Path(res.envelope["handoff_path"]).read_text(encoding="utf-8")
+            self.assertNotIn("TOPSECRET_PREFIX", handoff_text)
+
+        # 3) UUID-shaped secret in env matching session_id must NOT leak into stdout JSON.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            req = root / "req.md"
+            req.write_text("Review.", encoding="utf-8")
+            stdout_buf = io.StringIO()
+            with mock.patch.dict(os.environ, {"GEMINI_API_KEY": _AGY_UUID}), \
+                    mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                    mock.patch.object(to_agy, "agy_supported_flags", return_value=None), \
+                    mock.patch.object(
+                        to_agy,
+                        "_run_agy_subprocess",
+                        return_value=subprocess.CompletedProcess(["agy"], 0, _agy_stream_bytes(conv_id=_AGY_UUID), b""),
+                    ), \
+                    contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                rc = to_agy.main([
+                    "--request-file", str(req),
+                    "--cd", str(root),
+                    "--handoff-dir", str(root / "handoffs"),
+                    "--marker-path", str(root / "rounds.json"),
+                    "--gate-id", "gate-uuid-secret",
+                    "--artifact-key", "art-uuid-secret",
+                    "--cost-log", str(root / "cost.jsonl"),
+                    "--output", str(root / "review.md"),
+                    "--settings", str(root / "absent"),
+                ])
+            self.assertEqual(0, rc)
+            self.assertNotIn(_AGY_UUID, stdout_buf.getvalue())
+            self.assertIsNone(json.loads(stdout_buf.getvalue())["session_id"])
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ Pure stdlib. This module never launches a reviewer CLI.
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import os
 import re
@@ -526,8 +527,13 @@ def fail_closed(
     A human continues the review interactively on the named reviewer route.
     """
     os.makedirs(handoff_dir, exist_ok=True)
-    safe_gate_heading = _redact_sensitive_text(str(gate_id), sensitive_values)
-    path = os.path.join(handoff_dir, f"handoff-{_safe_gate_id(safe_gate_heading)}.md")
+    raw_gate_id = str(gate_id)
+    safe_gate_heading = _redact_sensitive_text(raw_gate_id, sensitive_values)
+    file_stem = _safe_gate_id(safe_gate_heading)
+    if safe_gate_heading != raw_gate_id:
+        digest = hashlib.sha256(raw_gate_id.encode("utf-8")).hexdigest()[:8]
+        file_stem = f"{file_stem}-{digest}"
+    path = os.path.join(handoff_dir, f"handoff-{file_stem}.md")
     safe_detail = _redact_sensitive_text(str(detail), sensitive_values)
     safe_request = _redact_sensitive_text(str(request_prompt), sensitive_values)
     safe_reviewer = _redact_sensitive_text(str(reviewer or "reviewer"), sensitive_values)

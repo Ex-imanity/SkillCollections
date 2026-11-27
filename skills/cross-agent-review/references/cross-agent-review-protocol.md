@@ -3,7 +3,7 @@
 > **Bundled copy note (SkillCollections):** in this skill bundle the adapters live under `scripts/` (run `python -m scripts.<module>` from the skill dir) and the reference docs under `references/`. Historical evidence citations below (raw session paths, play-book file:line, test counts) point at the source play-book repo and are advisory provenance, not bundle paths.
 
 
-Status: **installed local bundle; P1 hardening and the 2026-07-25 Codex→ClaudeCode gateway-compatibility gate passed**. Grok reviewer support is shipped as a third peer adapter with unit coverage; treat a real Grok gate on each install as still pending until you run one. Historical validation cited below remains provenance for prior versions, not proof for later installed versions.
+Status: **installed local bundle; P1 hardening and the 2026-07-25 Codex→ClaudeCode gateway-compatibility gate passed**. Grok and Antigravity (`agy`) reviewer support are shipped as third and fourth peer adapters with deterministic + fake-subprocess regression coverage; treat real Grok and Antigravity (`to_agy`) end-to-end review gates on each install as still pending until you run one (`agy 1.5.18` has a 2-turn `CLI-path verified (manual probe)` only). Historical validation cited below remains provenance for prior versions, not proof for later installed versions.
 
 This protocol adds **mechanical CLI enforcement** on top of the validated, agent-agnostic checklist `references/codex-primary-claudecode-review-loop.md`. It does not restate that checklist's roles, stop conditions, or failure modes — read it first as the base protocol. Here we add: how host agents actually call each other, how readiness/credentials/cost/rounds are enforced, and how failures fail closed.
 
@@ -33,7 +33,7 @@ base, changed and new files, applicable conventions, implementer's style evidenc
 self-review and deviation rationale. Supply readable skill/reference locations
 only when relevant; never assume another peer has the same installed skills.
 
-All three adapters append a self-contained conditional checklist through
+All four adapters append a self-contained conditional checklist through
 `scripts.common.build_reviewer_prompt`. The reviewer independently opens the
 actual change, including untracked source, and pre-existing same-role comparators.
 It verifies supplied evidence or locates its own, checks relevant package,
@@ -212,7 +212,7 @@ Distinguish, in any check doc:
 - `CLI-path verified (manual probe)` — a reviewer envelope succeeded from a controlled probe.
 - `adapter end-to-end first-use (pending/passed)` — the adapter drove a real review gate start-to-finish under a primary turn.
 
-Do not merge these into one "all directions first-use passed" claim. Adding Grok does not retroactively validate a Grok e2e gate on every machine.
+Do not merge these into one "all directions first-use passed" claim. Adding Grok or Antigravity does not retroactively validate a Grok or Antigravity e2e gate on every machine.
 
 ## Evidence basis
 
