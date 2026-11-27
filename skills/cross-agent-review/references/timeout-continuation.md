@@ -2,8 +2,8 @@
 
 This continues one interrupted gate. A finished review followed by artifact
 changes is a new counted gate with prior findings and new evidence in its request.
-Codex, Grok and ClaudeCode support this exception. ClaudeCode/Grok primaries use
-the same source `to_codex` adapter for the Codex reviewer route.
+Codex, Grok, ClaudeCode, and Antigravity support this exception. Any other peer
+primary uses the same source `to_<peer>` adapter for its reviewer route.
 
 ## Start with recoverable identity
 
@@ -98,6 +98,49 @@ USD amount in this route: cost remains `null`. A resumed timeout does not commit
 success or reset the attempt. Local CLI help is checked for native resume support
 before reserving an attempt.
 
+## Antigravity reviewer
+
+Use `to_agy` with the same durable arguments, working directory, optional repeatable
+`--add-dir`, and **required** `--artifact-path` entries (Antigravity gates without
+`--artifact-path` are not resumable on timeout):
+
+```bash
+python -m scripts.to_agy \
+  --request-file /repo/Review/ForAntigravity/request.md --cd /repo \
+  --handoff-dir /repo/.task-state/review/handoff \
+  --marker-path /repo/.task-state/review/rounds.json \
+  --gate-id feature-agy-r1 --artifact-key feature-current-content \
+  --artifact-path src/feature.py --artifact-path tests/test_feature.py \
+  --cost-log /repo/.task-state/review/cost.jsonl \
+  --output /repo/Review/ByAntigravity/feature-r1.md --timeout-seconds 600
+```
+
+Antigravity (`agy`) assigns its own initial `conversation_id` UUID in the `stream-json`
+`init` event. The adapter captures that single verified UUID from partial stdout on a
+real timeout (tolerating only a truncated trailing line when no complete terminal
+`result` has arrived). A timeout before a valid `init` UUID—or after any complete
+terminal `result` event—fails closed and cannot be resumed.
+
+After an observed resumable timeout, repeat **all original arguments**, append
+`--resume`, and set the approved extension. Unlike ClaudeCode/Grok (which pass native
+`--resume=<UUID>`), the Antigravity adapter passes native `--conversation=<UUID>`
+while keeping `--input-format stream-json --output-format stream-json`; it never uses
+`--continue` or `-c`. Every resumed segment must emit a matching `init.conversation_id`
+receipt; a resumed timeout without that receipt fails closed as `provenance_failure`
+and is no longer resumable.
+
+Local native history is checked at `~/.gemini/antigravity-cli/conversations/<UUID>.db`
+(isolated from desktop `~/.gemini/antigravity/conversations/`). The `.db` file must be
+an existing, non-empty regular file strictly inside the session store (symlinks escaping
+the store, 0-byte `.db`, and `.db-wal`-only files fail closed). All user-owned native
+history remains intact after success or failure.
+
+The production subprocess uses a dedicated bounded runner (POSIX non-blocking `selectors`
+with `bufsize=0` and owned-PGID termination; Windows `bufsize=0` daemon threads with
+`DEVNULL` `taskkill` and bounded waits) so a hung child or pipe cannot hold the shared
+marker lock indefinitely; unverified cleanup fails closed as non-resumable `other_error`.
+Antigravity reports no USD amount: cost remains `null`.
+
 ## After a real timeout
 
 Retain and observe the original runner handle as required by the main protocol.
@@ -111,10 +154,12 @@ authorized another ten minutes, repeat **all original arguments** above and appe
 ```
 
 Keep the original gate ID, request file/content, artifact key, working directory,
-model, output path, artifact paths and native session store. The runtime restores
-the recorded UUID using the peer's native `--resume=<UUID>`, repeats the original request with
-an instruction to continue saved progress, and retains the completion contract.
-It never silently falls back to a new session or selects the latest session.
+additional directories, model, output path, artifact paths and native session store.
+The runtime restores the recorded UUID using the peer's native flag (`--resume=<UUID>`
+for ClaudeCode/Grok, `exec resume <UUID>` for Codex, `--conversation=<UUID>` for
+Antigravity), repeats the original request with an instruction to continue saved
+progress, and retains the completion contract. It never silently falls back to a new
+session or selects the latest session.
 
 ## Counting and audit
 
@@ -161,7 +206,10 @@ in-progress signals, not review results. Final stdout includes `resumable`,
   its existing completion contract: Grok requires a complete token pair,
   `stopReason=end_turn` and verdict; Codex requires its verified thread UUID,
   token pair and verdict; ClaudeCode requires its non-error JSON result
-  and self-contained verdict. Missing identity/history fails closed without
+  and self-contained verdict; Antigravity requires strictly one `init` before
+  one `result` with matching UUID `conversation_id`, `status=SUCCESS`, strict
+  integer token pair and self-contained verdict (and a matching `init` UUID
+  receipt on any resumed timeout). Missing identity/history fails closed without
   fabricating a review, committing success or starting a replacement session.
 - Cost-log or persistence failures do not become resumable timeouts. A partial
   output file or a `review_started` event is never a valid review.
@@ -194,3 +242,5 @@ References verified against local CLI help and official documentation:
 [budget limits](https://code.claude.com/docs/en/agent-sdk/agent-loop).
 
 Codex native resume syntax and persistence were checked against local `codex-cli 0.163.0 --help`, [official non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode), and the official `openai/codex` CLI source via Context7.
+
+Antigravity native `stream-json` and `--conversation=<UUID>` persistence were checked against local `agy 1.5.18 --help`, [official Antigravity CLI headless documentation](https://antigravity.google/docs/cli/headless.md), and a minimal 2-turn manual probe (`CLI-path verified (manual probe)`). Live `timeout -> native resume -> success` and `adapter end-to-end first-use` remain pending until executed under explicit user approval.

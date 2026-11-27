@@ -50,7 +50,7 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':1,'output_toke
                 env.update(ANTIGRAVITY_CONVERSATION_ID="16ab4f6c-9daf-4fef-975b-7a7e3197440a", AGY_SESSION_ID="agy-fixture")
             else:
                 env.update(GROK_WORKSPACE_ROOT=str(root), GROK_SESSION_ID="fixture-primary")
-            args = [sys.executable, "-m", "scripts.to_codex", "--request-file", str(request),
+            args = [sys.executable, "-B", "-m", "scripts.to_codex", "--request-file", str(request),
                     "--cd", str(root), "--handoff-dir", str(root / "handoff"),
                     "--marker-path", str(root / "rounds.json"), "--gate-id", "reverse-test",
                     "--artifact-key", "fixture", "--cost-log", str(root / "cost.jsonl"),
@@ -109,7 +109,7 @@ print(json.dumps({'event':'result','result':{'conversation_id':sid,'status':'SUC
                 env.update(CODEX_THREAD_ID="01a2174b-e2fa-7cc3-adc8-a9f550265f6d")
             else:
                 env.update(GROK_WORKSPACE_ROOT=str(root), GROK_SESSION_ID="fixture-primary")
-            args = [sys.executable, "-m", "scripts.to_agy", "--request-file", str(request),
+            args = [sys.executable, "-B", "-m", "scripts.to_agy", "--request-file", str(request),
                     "--cd", str(root), "--handoff-dir", str(root / "handoff"),
                     "--marker-path", str(root / "rounds.json"), "--gate-id", "agy-primary-test",
                     "--artifact-key", "fixture", "--cost-log", str(root / "cost.jsonl"),

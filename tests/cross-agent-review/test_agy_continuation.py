@@ -526,7 +526,7 @@ class AgyContinuationTests(unittest.TestCase):
         request.write_text("Review code.py; do not edit it.", encoding="utf-8")
 
         base_args = [
-            sys.executable, "-m", "scripts.to_agy",
+            sys.executable, "-B", "-m", "scripts.to_agy",
             "--request-file", str(request),
             "--cd", str(repo_dir),
             "--handoff-dir", str(self.root / "handoffs"),
