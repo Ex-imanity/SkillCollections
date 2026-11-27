@@ -22,6 +22,7 @@ class RuntimeCapabilityTests(unittest.TestCase):
         self.assertIsNotNone(runtime_capabilities, "runtime capability report is missing")
 
         paths = {
+            "agy": "/opt/bin/agy",
             "claude": "/opt/bin/claude",
             "gemini": "/opt/bin/gemini",
             "grok": "/opt/bin/grok",
@@ -38,6 +39,8 @@ class RuntimeCapabilityTests(unittest.TestCase):
                 version = "2.1.216 (Claude Code)"
             elif argv[0].endswith("grok"):
                 version = "grok 1.0.13 (5e9a58528b76)"
+            elif argv[0].endswith("agy"):
+                version = "1.5.18"
             else:
                 version = "0.17.1"
             return subprocess.CompletedProcess(argv, 0, stdout=version + "\n", stderr="")
@@ -49,6 +52,11 @@ class RuntimeCapabilityTests(unittest.TestCase):
         )
         agents = {entry["command"]: entry for entry in report["agents"]}
 
+        self.assertEqual("/opt/bin/agy", agents["agy"]["path"])
+        self.assertEqual("1.5.18", agents["agy"]["version"])
+        self.assertTrue(agents["agy"]["review_supported"])
+        self.assertEqual(["to_agy"], agents["agy"]["review_directions"])
+        self.assertEqual("supported", agents["agy"]["status"])
         self.assertEqual("/opt/bin/claude", agents["claude"]["path"])
         self.assertEqual("2.1.216 (Claude Code)", agents["claude"]["version"])
         self.assertTrue(agents["claude"]["review_supported"])

@@ -16,6 +16,7 @@ _AGENT_CLI_CATALOG = (
     ("claude", True, ("to_claude",)),
     ("codex", True, ("to_codex",)),
     ("grok", True, ("to_grok",)),
+    ("agy", True, ("to_agy",)),
     ("gemini", False, ()),
     ("aider", False, ()),
     ("opencode", False, ()),
