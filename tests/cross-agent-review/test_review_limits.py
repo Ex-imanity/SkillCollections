@@ -2264,6 +2264,8 @@ class AgyAdapterTests(unittest.TestCase):
              + json.dumps({"event": "result", "result": {"conversation_id": _AGY_UUID, "status": "SUCCESS", "response": "APPROVE", "usage": {"input_tokens": 1, "output_tokens": 1}}}) + "\n").encode(),
             # Deeply nested JSON causing RecursionError in json.loads -> must still log cost + handoff
             b"[" * 2000 + b"]" * 2000 + b"\n",
+            # Valid init + valid result missing trailing LF on exit 0 -> MUST NOT commit success
+            _agy_stream_bytes().rstrip(b"\n"),
         ]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2523,36 +2525,113 @@ class AgyAdapterTests(unittest.TestCase):
             handoff_text = Path(res.envelope["handoff_path"]).read_text(encoding="utf-8")
             self.assertNotIn("TOPSECRET_PREFIX", handoff_text)
 
-        # 3) UUID-shaped secret in env matching session_id must NOT leak into stdout JSON.
+        # 3) UUID-shaped secret in env matching conversation_id MUST be rejected during session adoption
+        #    so it NEVER persists to .sessions/<hash>.json, stdout, cost.jsonl, or output.
+        for mode in ("exit0", "timeout"):
+            with self.subTest(uuid_secret_mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                req = root / "req.md"
+                req.write_text("Review.", encoding="utf-8")
+                art = root / "target.py"
+                art.write_text("x = 1\n", encoding="utf-8")
+                out_file = root / "review.md"
+                stdout_buf = io.StringIO()
+                if mode == "exit0":
+                    mock_runner = mock.MagicMock(
+                        return_value=subprocess.CompletedProcess(["agy"], 0, _agy_stream_bytes(conv_id=_AGY_UUID), b"")
+                    )
+                else:
+                    init_only = (json.dumps({"event": "init", "conversation_id": _AGY_UUID}) + "\n").encode("utf-8")
+                    mock_runner = mock.MagicMock(
+                        side_effect=subprocess.TimeoutExpired(["agy"], 10, output=init_only, stderr=b"")
+                    )
+                with mock.patch.dict(os.environ, {"GEMINI_API_KEY": _AGY_UUID}), \
+                        mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                        mock.patch.object(to_agy, "agy_supported_flags", return_value=None), \
+                        mock.patch.object(to_agy, "_run_agy_subprocess", mock_runner), \
+                        contextlib.redirect_stdout(stdout_buf), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    rc = to_agy.main([
+                        "--request-file", str(req),
+                        "--cd", str(root),
+                        "--handoff-dir", str(root / "handoffs"),
+                        "--marker-path", str(root / "rounds.json"),
+                        "--gate-id", "gate-uuid-secret",
+                        "--artifact-key", "art-uuid-secret",
+                        "--artifact-path", str(art),
+                        "--cost-log", str(root / "cost.jsonl"),
+                        "--output", str(out_file),
+                        "--settings", str(root / "absent"),
+                    ])
+                self.assertEqual(1, rc)
+                payload = json.loads(stdout_buf.getvalue())
+                self.assertEqual("provenance_failure", payload["status"])
+                self.assertFalse(payload["resumable"])
+                self.assertIsNone(payload["session_id"])
+                self.assertNotIn(_AGY_UUID, stdout_buf.getvalue())
+                self.assertFalse(out_file.exists())
+                # Verify .sessions/<hash>.json does NOT contain the secret UUID either.
+                sess_path = Path(payload["continuation_state_path"])
+                self.assertTrue(sess_path.is_file())
+                self.assertNotIn(_AGY_UUID, sess_path.read_text(encoding="utf-8"))
+
+        # 4) Decodable terminal result lacking trailing LF on timeout MUST NOT grant resumability.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            art = root / "target.py"
+            art.write_text("x = 1\n", encoding="utf-8")
+            unterminated_result = _agy_stream_bytes().rstrip(b"\n")
+            with mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                r_unterm = to_agy.agy_review_gate(
+                    request_prompt="Review.",
+                    cd=str(root),
+                    handoff_dir=str(root / "handoffs"),
+                    marker_path=str(root / "rounds.json"),
+                    gate_id="gate-unterm-res",
+                    artifact_key="art-unterm-res",
+                    cost_log_path=str(root / "cost.jsonl"),
+                    settings_path=str(root / "absent"),
+                    runner=lambda argv, **kw: (_ for _ in ()).throw(
+                        subprocess.TimeoutExpired(argv, 10, output=unterminated_result, stderr=b"")
+                    ),
+                    timeout_seconds=10,
+                    artifact_paths=[str(art)],
+                )
+            self.assertEqual("provenance_failure", r_unterm.status)
+            self.assertFalse(r_unterm.envelope.get("resumable", False))
+            state_unterm = json.loads(Path(r_unterm.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
+            self.assertEqual("failed", state_unterm["state"])
+
+        # 5) When --handoff-dir itself contains a known secret, stdout MUST return null handoff_path
+        #    instead of a fabricated unopenable [REDACTED] path, while still writing the handoff file.
+        dir_secret = "AIzaSySecretDirPathValue9988776655"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             req = root / "req.md"
             req.write_text("Review.", encoding="utf-8")
+            secret_handoff_dir = root / f"dir-{dir_secret}" / "handoffs"
             stdout_buf = io.StringIO()
-            with mock.patch.dict(os.environ, {"GEMINI_API_KEY": _AGY_UUID}), \
-                    mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
-                    mock.patch.object(to_agy, "agy_supported_flags", return_value=None), \
-                    mock.patch.object(
-                        to_agy,
-                        "_run_agy_subprocess",
-                        return_value=subprocess.CompletedProcess(["agy"], 0, _agy_stream_bytes(conv_id=_AGY_UUID), b""),
-                    ), \
+            with mock.patch.dict(os.environ, {"GEMINI_API_KEY": dir_secret}), \
+                    mock.patch.object(to_agy.shutil, "which", return_value=None), \
                     contextlib.redirect_stdout(stdout_buf), \
                     contextlib.redirect_stderr(io.StringIO()):
                 rc = to_agy.main([
                     "--request-file", str(req),
                     "--cd", str(root),
-                    "--handoff-dir", str(root / "handoffs"),
+                    "--handoff-dir", str(secret_handoff_dir),
                     "--marker-path", str(root / "rounds.json"),
-                    "--gate-id", "gate-uuid-secret",
-                    "--artifact-key", "art-uuid-secret",
+                    "--gate-id", "gate-secret-dir",
+                    "--artifact-key", "art-secret-dir",
                     "--cost-log", str(root / "cost.jsonl"),
                     "--output", str(root / "review.md"),
                     "--settings", str(root / "absent"),
                 ])
-            self.assertEqual(0, rc)
-            self.assertNotIn(_AGY_UUID, stdout_buf.getvalue())
-            self.assertIsNone(json.loads(stdout_buf.getvalue())["session_id"])
+            self.assertEqual(1, rc)
+            self.assertNotIn(dir_secret, stdout_buf.getvalue())
+            payload = json.loads(stdout_buf.getvalue())
+            self.assertIsNone(payload["handoff_path"])
+            self.assertTrue((secret_handoff_dir / "handoff-gate-secret-dir.md").is_file())
 
 
 if __name__ == "__main__":

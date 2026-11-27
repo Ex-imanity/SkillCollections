@@ -15,8 +15,8 @@
 
 - 新增第四方 reviewer 桥 `scripts/to_agy.py`（任意 primary → Antigravity CLI `agy`），打通 Codex / ClaudeCode / Antigravity / Grok 四方双向互审；支持 `--cd` + 可重复 `--add-dir` 多仓范围与可选 `--model`。
 - `to_agy` 采用 `--input-format stream-json --output-format stream-json --dangerously-skip-permissions --disable-slash-commands`，经 stdin 传递单行 UTF-8 NDJSON（不落 argv）；按字节 `\n` 严格分帧校验唯一 `init` 先于唯一 `result`、UUID 一致性、`status=SUCCESS`、严格整数 `usage` 与标准 verdict，`total_cost_usd` 记 `null`。
-- `to_agy` 支持原 gate 超时续跑：从 `init` 捕获原生 `conversation_id`，要求登记 `--artifact-path`，校验 `~/.gemini/antigravity-cli/conversations/<UUID>.db` 非空普通主库且不逃逸目录，使用原生 `--conversation=<UUID>` 续跑并要求恢复段回执匹配 UUID；配备独立有界进程/管道清理器（POSIX 非阻塞 `selectors` + 进程组强杀；Windows `bufsize=0` 线程 + `DEVNULL` `taskkill`），不触碰 `to_codex.py`。
-- `scripts/common.py` 共享加固：`RESUMABLE_REVIEWERS` 纳入 `Antigravity`，`fail_closed` 遵循显式 `resumable=False` 并先脱敏 `gate_id` 再生成 handoff 文件名，`gate_failure_result` 回传实际 `handoff_path`，`log_cost` 对字符串字段统一脱敏并补充 `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `AIza...` 正则。
+- `to_agy` 支持原 gate 超时续跑：从 `init` 捕获原生 `conversation_id`，要求登记 `--artifact-path`，校验 `~/.gemini/antigravity-cli/conversations/<UUID>.db` 非空普通主库且不逃逸目录，使用原生 `--conversation=<UUID>` 续跑并要求恢复段回执匹配 UUID；配备独立有界进程/管道清理器（POSIX 非阻塞 `selectors` + 进程组强杀；Windows `bufsize=0` 线程 + `DEVNULL` `taskkill`），保持 `to_codex._run_codex_subprocess` 原样不动。
+- `scripts/common.py` 共享加固：`RESUMABLE_REVIEWERS` 纳入 `Antigravity`，`fail_closed` 遵循显式 `resumable=False`、先脱敏 `gate_id` 并附带短哈希区分同名冲突再生成 handoff 文件名，`gate_failure_result` 与各适配器 CLI（含 `to_codex.py` 两处对齐）统一回传实际 `handoff_path`，`log_cost` 对字符串字段统一脱敏并补充 `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `AIza...` 正则。
 - `scripts/runtime_capabilities.py` 注册 `("agy", True, ("to_agy",))`（`gemini` 仍保持 `detected_not_supported`），并补齐四方回归测试与全套协议/续跑文档；严格区分 `agy 1.5.18` 2 轮 `CLI-path verified (manual probe)` 与待实机验证项（真实超时续跑、adapter end-to-end first-use、Linux/Windows/shim）。
 
 ## 2.4.0 - 2026-10-30

@@ -41,7 +41,6 @@ from .common import (
     _known_sensitive_values,
     _redact_sensitive_text,
     build_reviewer_prompt,
-    fail_closed as _fail_closed,
     gate_failure_result as _gate_failure_result,
     has_review_verdict,
     run_review_gate,
@@ -94,18 +93,12 @@ _REQUIRED_FLAGS = frozenset(
         "--conversation",
     }
 )
-_REQUIRED_USAGE_KEYS = ("input_tokens", "output_tokens")
 _OPTIONAL_USAGE_KEYS = ("thinking_tokens", "cache_read_tokens", "total_tokens")
 _DIAGNOSTIC_SESSION_KEYS = ("session_id", "sessionId", "thread_id", "threadId")
 _DIAGNOSTIC_USAGE_KEYS = ("prompt_tokens", "completion_tokens")
 
 _USAGE_HEADER_RE = re.compile(r"(?i)\bUsage(?:\s+of\s+agy)?\s*:")
 _FLAG_TOKEN_RE = re.compile(r"(?<!\S)(--[a-z][a-z0-9-]*)(?=\s|=|,|$)")
-
-
-def fail_closed(*args, **kwargs):
-    kwargs.setdefault("reviewer", _REVIEWER_NAME)
-    return _fail_closed(*args, **kwargs)
 
 
 def gate_failure_result(*args, **kwargs):
@@ -119,11 +112,6 @@ def resolve_agy_executable() -> Optional[str]:
     if not found:
         return None
     return os.path.abspath(found)
-
-
-def agy_available() -> bool:
-    """True when the `agy` CLI is on PATH."""
-    return resolve_agy_executable() is not None
 
 
 def _flag_description_mentions(help_text: str, flag_name: str, needle: str) -> bool:
@@ -325,6 +313,8 @@ def parse_agy_stream(raw_stdout: Any, *, allow_trailing_truncation: bool = False
     total_result_events = 0
     results: list = []
     result_index: Optional[int] = None
+    unterminated_result_event = False
+    unterminated_results: list = []
     non_trailing_parse_errors = 0
     trailing_parse_error = False
     malformed_events = 0
@@ -343,10 +333,21 @@ def parse_agy_stream(raw_stdout: Any, *, allow_trailing_truncation: bool = False
             else:
                 non_trailing_parse_errors += 1
             continue
-        if allow_trailing_truncation and is_last and not terminated:
-            # An unterminated trailing line is not a complete LF-framed NDJSON
-            # event; never let an unframed init grant resumable identity.
-            trailing_parse_error = True
+        if not terminated:
+            # Strict LF framing: never accept an unterminated trailing line as a
+            # complete NDJSON record on normal exit or as a resumable init on timeout.
+            # On timeout, explicitly flag decodable terminal `result` records so they
+            # are never silently dropped to grant resumability.
+            if allow_trailing_truncation and is_last:
+                if isinstance(obj, dict) and obj.get("event") == "result":
+                    unterminated_result_event = True
+                    payload = obj.get("result")
+                    if isinstance(payload, dict):
+                        unterminated_results.append(payload)
+                else:
+                    trailing_parse_error = True
+            else:
+                trailing_parse_error = True
             continue
         if not isinstance(obj, dict):
             malformed_events += 1
@@ -393,6 +394,8 @@ def parse_agy_stream(raw_stdout: Any, *, allow_trailing_truncation: bool = False
         "total_result_events": total_result_events,
         "results": results,
         "result_index": result_index,
+        "unterminated_result_event": unterminated_result_event,
+        "unterminated_results": unterminated_results,
         "non_trailing_parse_errors": non_trailing_parse_errors,
         "trailing_parse_error": trailing_parse_error,
         "malformed_events": malformed_events,
@@ -412,6 +415,20 @@ def _redact_and_truncate(
     text: str, sensitive_values: Optional[list] = None, limit: int = 200
 ) -> str:
     return _redact_sensitive_text(text, sensitive_values)[:limit]
+
+
+def _is_sensitive_id(session_id: Optional[str], sensitive_values: Optional[list]) -> bool:
+    if session_id is None:
+        return False
+    return _redact_sensitive_text(session_id, sensitive_values) != session_id
+
+
+def _safe_stdout_path(path: object, sensitive_values: Optional[list]) -> Optional[str]:
+    if not isinstance(path, str) or not path:
+        return None
+    if _redact_sensitive_text(path, sensitive_values) != path:
+        return None
+    return path
 
 
 def _classify_terminal_result_failure(
@@ -446,6 +463,10 @@ def _provenance_failure_detail(parsed: dict, reason: str) -> str:
 class _AgyContinuation(ReviewContinuation):
     """Capture CLI-issued conversation UUID and require resumed-segment receipt."""
 
+    def __init__(self, *args, sensitive_values: Optional[list] = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.sensitive_values = list(sensitive_values) if sensitive_values else None
+
     def check(
         self,
         *,
@@ -473,6 +494,19 @@ class _AgyContinuation(ReviewContinuation):
 
     def decorate(self, result: ReviewResult) -> ReviewResult:
         observed_id = _validate_uuid(result.envelope.get("observed_session_id"))
+        if observed_id is not None and _is_sensitive_id(observed_id, self.sensitive_values):
+            result = ReviewResult(
+                "provenance_failure",
+                None,
+                {
+                    **result.envelope,
+                    "session_id": None,
+                    "observed_session_id": None,
+                    "detail": "Antigravity conversation_id matches a known sensitive value; refusing to adopt session identity",
+                },
+                1,
+            )
+            return super().decorate(result)
         if result.status in {"timeout", "success"}:
             if self.resume:
                 if observed_id is None or observed_id != self.session_id:
@@ -549,6 +583,7 @@ def _run_agy_subprocess_posix(
     sel = selectors.DefaultSelector()
     process = None
     stdin_stream = None
+    completed_cleanly = False
     try:
         process = subprocess.Popen(
             argv,
@@ -615,10 +650,10 @@ def _run_agy_subprocess_posix(
                 else:
                     try:
                         chunk = os.read(stream.fileno(), 65536)
-                    except BlockingIOError:
+                    except (BlockingIOError, InterruptedError):
                         continue
-                    except OSError:
-                        chunk = b""
+                    except OSError as exc:
+                        raise OSError(f"Antigravity {tag} pipe read failed: {exc}") from exc
                     if not chunk:
                         sel.unregister(stream)
                         _safe_close_stream(stream)
@@ -640,6 +675,7 @@ def _run_agy_subprocess_posix(
                     pass
                 raise OSError("Antigravity post-exit pipe drain timed out; descendant held output open")
             rc = process.wait(timeout=1.0)
+            completed_cleanly = True
             return subprocess.CompletedProcess(
                 argv, rc, b"".join(stdout_chunks), b"".join(stderr_chunks)
             )
@@ -674,10 +710,10 @@ def _run_agy_subprocess_posix(
                 stream = key.fileobj
                 try:
                     chunk = os.read(stream.fileno(), 65536)
-                except BlockingIOError:
+                except (BlockingIOError, InterruptedError):
                     continue
-                except OSError:
-                    chunk = b""
+                except OSError as exc:
+                    raise OSError(f"Antigravity timeout drain {tag} pipe read failed: {exc}") from exc
                 if not chunk:
                     sel.unregister(stream)
                     _safe_close_stream(stream)
@@ -697,16 +733,18 @@ def _run_agy_subprocess_posix(
             stderr=b"".join(stderr_chunks),
         )
     finally:
-        # Ensure any I/O or selector exception after Popen terminates the owned PGID.
-        if process is not None and process.poll() is None:
+        # Ensure any I/O, selector, or timeout exit after Popen terminates the
+        # entire owned PGID, even if the direct launcher already exited with 0.
+        if process is not None and not completed_cleanly:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except (ProcessLookupError, OSError):
                 pass
-            try:
-                process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
-            except (subprocess.TimeoutExpired, OSError):
-                pass
+            if process.poll() is None:
+                try:
+                    process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
         for key in list(sel.get_map().values()):
             try:
                 sel.unregister(key.fileobj)
@@ -739,6 +777,7 @@ def _run_agy_subprocess_windows(
     )
     stdout_chunks: list = []
     stderr_chunks: list = []
+    read_errors: list = []
 
     def _write_stdin() -> None:
         stream = process.stdin
@@ -757,7 +796,7 @@ def _run_agy_subprocess_windows(
         finally:
             _safe_close_stream(stream)
 
-    def _read_pipe(stream: Any, sink: list) -> None:
+    def _read_pipe(stream: Any, sink: list, tag: str) -> None:
         if stream is None:
             return
         try:
@@ -766,8 +805,8 @@ def _run_agy_subprocess_windows(
                 if not chunk:
                     break
                 sink.append(chunk)
-        except OSError:
-            pass
+        except OSError as exc:
+            read_errors.append(f"{tag}: {exc}")
 
     def _taskkill_tree() -> bool:
         try:
@@ -809,46 +848,64 @@ def _run_agy_subprocess_windows(
         return cleanup_ok
 
     writer = threading.Thread(target=_write_stdin, daemon=True)
-    out_reader = threading.Thread(target=_read_pipe, args=(process.stdout, stdout_chunks), daemon=True)
-    err_reader = threading.Thread(target=_read_pipe, args=(process.stderr, stderr_chunks), daemon=True)
+    out_reader = threading.Thread(
+        target=_read_pipe, args=(process.stdout, stdout_chunks, "stdout"), daemon=True
+    )
+    err_reader = threading.Thread(
+        target=_read_pipe, args=(process.stderr, stderr_chunks, "stderr"), daemon=True
+    )
+    started_threads: list = []
     try:
-        writer.start()
-        out_reader.start()
-        err_reader.start()
+        for thread in (writer, out_reader, err_reader):
+            thread.start()
+            started_threads.append(thread)
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         cleanup_ok = _terminate_bounded()
         drain_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
-        for thread in (out_reader, err_reader, writer):
+        for thread in started_threads:
             rem = max(0.0, drain_deadline - time.monotonic())
             thread.join(timeout=rem)
-        threads_done = not any(t.is_alive() for t in (out_reader, err_reader, writer))
+        threads_done = not any(t.is_alive() for t in started_threads)
         if threads_done:
             _safe_close_stream(process.stdout)
             _safe_close_stream(process.stderr)
-        if not cleanup_ok or not threads_done:
+        if not cleanup_ok or not threads_done or read_errors:
             # Never call blocking close() on hung Windows pipes; fail closed and release lock.
-            raise OSError("Antigravity Windows process-tree cleanup failed; closure is unverified")
+            detail = "; ".join(read_errors) if read_errors else "closure is unverified"
+            raise OSError(f"Antigravity Windows process-tree cleanup/read failed: {detail}")
         raise subprocess.TimeoutExpired(
             argv,
             timeout,
             output=b"".join(stdout_chunks),
             stderr=b"".join(stderr_chunks),
         ) from None
-    except BaseException:
+    except BaseException as exc:
         _terminate_bounded()
+        drain_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
+        for thread in started_threads:
+            rem = max(0.0, drain_deadline - time.monotonic())
+            thread.join(timeout=rem)
+        if not any(t.is_alive() for t in started_threads):
+            _safe_close_stream(process.stdin)
+            _safe_close_stream(process.stdout)
+            _safe_close_stream(process.stderr)
+        if isinstance(exc, RuntimeError):
+            raise OSError(f"Antigravity Windows I/O thread startup failed: {exc}") from exc
         raise
 
     # Normal exit: drain ALL pipe threads (readers + stdin writer) within POST_EXIT_DRAIN_SECONDS.
     drain_deadline = time.monotonic() + POST_EXIT_DRAIN_SECONDS
-    for thread in (out_reader, err_reader, writer):
+    for thread in started_threads:
         rem = max(0.0, drain_deadline - time.monotonic())
         thread.join(timeout=rem)
-    if any(t.is_alive() for t in (out_reader, err_reader, writer)):
+    if any(t.is_alive() for t in started_threads):
         _terminate_bounded()
         raise OSError("Antigravity post-exit pipe drain timed out; pipe thread stayed active")
     _safe_close_stream(process.stdout)
     _safe_close_stream(process.stderr)
+    if read_errors:
+        raise OSError(f"Antigravity Windows pipe read failed: {'; '.join(read_errors)}")
     return subprocess.CompletedProcess(
         argv, process.returncode, b"".join(stdout_chunks), b"".join(stderr_chunks)
     )
@@ -946,6 +1003,36 @@ def run_agy_review(
                 1,
             )
 
+        if parsed["unterminated_result_event"]:
+            if parsed["unterminated_results"]:
+                last_unterm = parsed["unterminated_results"][-1]
+                if last_unterm.get("status") != "SUCCESS":
+                    fail_status, fail_detail = _classify_terminal_result_failure(
+                        last_unterm, partial_err, sensitive_values
+                    )
+                    return ReviewResult(
+                        fail_status,
+                        None,
+                        {
+                            "error_type": "TimeoutExpired",
+                            "total_cost_usd": None,
+                            "detail": fail_detail,
+                        },
+                        1,
+                    )
+            return ReviewResult(
+                "provenance_failure",
+                None,
+                {
+                    "error_type": "TimeoutExpired",
+                    "total_cost_usd": None,
+                    "detail": _provenance_failure_detail(
+                        parsed, "unterminated terminal result before timeout"
+                    ),
+                },
+                1,
+            )
+
         if (
             parsed["non_trailing_parse_errors"] > 0
             or parsed["malformed_events"] > 0
@@ -969,6 +1056,19 @@ def run_agy_review(
             if parsed["total_init_events"] == 1 and len(parsed["valid_init_ids"]) == 1
             else None
         )
+        if _is_sensitive_id(observed_id, sensitive_values):
+            return ReviewResult(
+                "provenance_failure",
+                None,
+                {
+                    "error_type": "TimeoutExpired",
+                    "session_id": None,
+                    "observed_session_id": None,
+                    "total_cost_usd": None,
+                    "detail": "Antigravity conversation_id matches a known sensitive value; refusing to adopt session identity",
+                },
+                1,
+            )
         return ReviewResult(
             "timeout",
             None,
@@ -981,7 +1081,7 @@ def run_agy_review(
             },
             1,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
         return ReviewResult(
             status="other_error",
             text=None,
@@ -1026,12 +1126,15 @@ def run_agy_review(
         fail_status, fail_detail = _classify_terminal_result_failure(
             last_result, stderr_text, sensitive_values
         )
+        err_session_id = _validate_uuid(last_result.get("conversation_id"))
+        if _is_sensitive_id(err_session_id, sensitive_values):
+            err_session_id = None
         return ReviewResult(
             fail_status,
             None,
             {
                 "detail": fail_detail,
-                "session_id": _validate_uuid(last_result.get("conversation_id")),
+                "session_id": err_session_id,
                 "status": result_status if isinstance(result_status, str) else None,
                 "total_cost_usd": None,
             },
@@ -1094,6 +1197,18 @@ def run_agy_review(
         )
 
     init_id = parsed["valid_init_ids"][0]
+    if _is_sensitive_id(init_id, sensitive_values):
+        return ReviewResult(
+            "provenance_failure",
+            None,
+            {
+                "detail": "Antigravity conversation_id matches a known sensitive value; refusing to adopt session identity",
+                "session_id": None,
+                "observed_session_id": None,
+                "total_cost_usd": None,
+            },
+            1,
+        )
     result_payload = parsed["results"][0]
     result_id = _validate_uuid(result_payload.get("conversation_id"))
     if result_id is None or result_id != init_id:
@@ -1282,6 +1397,7 @@ def agy_review_gate(
         artifact_paths=artifact_paths or [],
         session_store=store_path,
         binding_context={"add_dirs": resolved_add_dirs},
+        sensitive_values=sensitive_values,
     )
 
     def prepare(_marker_dir: str) -> dict:
@@ -1402,24 +1518,18 @@ def main(argv: Optional[list] = None) -> int:
     valid_session_id = _validate_uuid(raw_session_id)
     safe_session_id = (
         valid_session_id
-        if valid_session_id is not None
-        and _redact_sensitive_text(valid_session_id, sensitive_values) == valid_session_id
+        if valid_session_id is not None and not _is_sensitive_id(valid_session_id, sensitive_values)
         else None
     )
     raw_handoff = result.envelope.get("handoff_path")
     safe_handoff = (
         None
-        if result.status == "success" or not isinstance(raw_handoff, str)
-        else _redact_sensitive_text(raw_handoff, sensitive_values)
+        if result.status == "success"
+        else _safe_stdout_path(raw_handoff, sensitive_values)
     )
-    raw_cont_path = result.envelope.get("continuation_state_path")
-    safe_cont_path = (
-        _redact_sensitive_text(raw_cont_path, sensitive_values)
-        if isinstance(raw_cont_path, str)
-        else None
-    )
+    safe_cont_path = _safe_stdout_path(result.envelope.get("continuation_state_path"), sensitive_values)
     safe_output = (
-        _redact_sensitive_text(args.output, sensitive_values)
+        _safe_stdout_path(args.output, sensitive_values)
         if result.status == "success"
         else None
     )

@@ -465,6 +465,211 @@ class AgyContinuationTests(unittest.TestCase):
         time.sleep(0.7)
         self.assertFalse(io_marker.exists(), "child survived selector OSError and kept running")
 
+        # 5) POSIX launcher exits 0 AFTER spawning a same-PGID descendant, then select() raises OSError.
+        #    Even though process.poll() == 0, finally MUST kill the PGID so the descendant cannot keep running.
+        desc_marker = self.root / "descendant-survived-after-launcher-exit"
+        launcher_script = self.root / "launcher_exits_early.py"
+        launcher_script.write_text(
+            "import pathlib, subprocess, sys, time\n"
+            "marker = sys.argv[1]\n"
+            "subprocess.Popen([sys.executable, '-c', "
+            "'import pathlib, sys, time; time.sleep(0.45); pathlib.Path(sys.argv[1]).touch()', marker])\n"
+            "sys.exit(0)\n",
+            encoding="utf-8",
+        )
+        orig_selector2 = to_agy.selectors.DefaultSelector
+
+        class PostExitFailingSelector:
+            def __init__(self):
+                self._inner = orig_selector2()
+                self._calls = 0
+            def register(self, *a, **kw):
+                return self._inner.register(*a, **kw)
+            def unregister(self, *a, **kw):
+                return self._inner.unregister(*a, **kw)
+            def get_map(self):
+                return self._inner.get_map()
+            def close(self):
+                return self._inner.close()
+            def select(self, timeout=None):
+                self._calls += 1
+                if self._calls == 1:
+                    time.sleep(0.15)
+                    raise OSError("injected post-launcher-exit selector failure")
+                return self._inner.select(timeout=timeout)
+
+        with mock.patch.object(to_agy.selectors, "DefaultSelector", PostExitFailingSelector):
+            early_res = to_agy.run_agy_review(
+                [sys.executable, str(launcher_script), str(desc_marker)],
+                timeout_seconds=2.0,
+                prompt="Review.",
+                cwd=str(self.root),
+            )
+        self.assertEqual("other_error", early_res.status)
+        time.sleep(0.65)
+        self.assertFalse(
+            desc_marker.exists(),
+            "same-PGID descendant survived selector OSError after launcher exited 0",
+        )
+
+        # 6) Hard POSIX stdout read EIO after valid init MUST fail closed (NOT EOF / NOT resumable).
+        eio_script = self.root / "emit_init_then_sleep.py"
+        eio_script.write_text(
+            "import json, sys, time\n"
+            f"sys.stdout.write(json.dumps({{'event': 'init', 'conversation_id': '{SESSION}'}}) + '\\n')\n"
+            "sys.stdout.flush()\n"
+            "time.sleep(5)\n",
+            encoding="utf-8",
+        )
+        real_os_read = os.read
+        read_calls = {"count": 0}
+
+        def failing_os_read(fd, n):
+            read_calls["count"] += 1
+            if read_calls["count"] == 1:
+                return real_os_read(fd, n)
+            raise OSError(5, "Input/output error")
+
+        eio_marker = self.root / "eio-rounds.json"
+        with mock.patch.object(to_agy.os, "read", side_effect=failing_os_read), \
+                mock.patch.object(to_agy.shutil, "which", return_value=sys.executable), \
+                mock.patch.object(to_agy, "build_agy_command", return_value=[sys.executable, str(eio_script)]), \
+                contextlib.redirect_stderr(io.StringIO()):
+            eio_res = to_agy.agy_review_gate(
+                request_prompt="Review.",
+                cd=str(self.root),
+                handoff_dir=str(self.root / "handoffs"),
+                marker_path=str(eio_marker),
+                gate_id="gate-posix-eio",
+                artifact_key="art-posix-eio",
+                cost_log_path=str(self.root / "cost-eio.jsonl"),
+                settings_path=str(self.root / "absent"),
+                timeout_seconds=2.0,
+                artifact_paths=[str(self.artifact)],
+                agy_home=str(self.agy_home),
+            )
+        self.assertEqual("other_error", eio_res.status)
+        self.assertFalse(eio_res.envelope.get("resumable", False))
+        eio_state = json.loads(Path(eio_res.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
+        self.assertEqual("failed", eio_state["state"])
+
+    def test_windows_read_eio_and_thread_start_failure_fail_closed_with_audit(self) -> None:
+        class WindowsOS:
+            name = "nt"
+            def __getattr__(self, name):
+                return getattr(os, name)
+
+        class EioPipe:
+            def __init__(self, first: bytes):
+                self._first = first
+            def read(self, _n=-1):
+                if self._first:
+                    out, self._first = self._first, b""
+                    return out
+                raise OSError(5, "Input/output error")
+            def close(self):
+                pass
+
+        class DonePipe:
+            def read(self, _n=-1):
+                return b""
+            def close(self):
+                pass
+
+        class OkStdin:
+            def write(self, data):
+                return len(data)
+            def close(self):
+                pass
+
+        killer_proc = mock.MagicMock()
+        killer_proc.returncode = 0
+        killer_proc.wait.return_value = 0
+
+        # Case A: Windows stdout reader raises OSError on timeout -> must fail closed (resumable=False).
+        eio_proc = mock.MagicMock()
+        eio_proc.pid = 777771
+        eio_proc.returncode = 1
+        eio_proc.stdin = OkStdin()
+        eio_proc.stdout = EioPipe(_init_line(SESSION))
+        eio_proc.stderr = DonePipe()
+        eio_proc.wait.side_effect = [subprocess.TimeoutExpired(["agy"], 1.0), 1]
+
+        def fake_popen_a(argv, **kwargs):
+            return killer_proc if argv and argv[0] == "taskkill" else eio_proc
+
+        with mock.patch.object(to_agy, "os", WindowsOS()), \
+                mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.2), \
+                mock.patch.object(to_agy.subprocess, "Popen", side_effect=fake_popen_a), \
+                mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                contextlib.redirect_stderr(io.StringIO()):
+            res_a = to_agy.agy_review_gate(
+                request_prompt="Review.",
+                cd=str(self.root),
+                handoff_dir=str(self.root / "handoffs"),
+                marker_path=str(self.root / "win-eio-rounds.json"),
+                gate_id="gate-win-eio",
+                artifact_key="art-win-eio",
+                cost_log_path=str(self.root / "cost-win-eio.jsonl"),
+                settings_path=str(self.root / "absent"),
+                timeout_seconds=1.0,
+                artifact_paths=[str(self.artifact)],
+                agy_home=str(self.agy_home),
+            )
+        self.assertEqual("other_error", res_a.status)
+        self.assertFalse(res_a.envelope.get("resumable", False))
+
+        # Case B: Second Thread.start() raises RuntimeError -> must clean up, log cost, write handoff, mark failed.
+        thr_proc = mock.MagicMock()
+        thr_proc.pid = 777772
+        thr_proc.returncode = 1
+        thr_proc.stdin = OkStdin()
+        thr_proc.stdout = DonePipe()
+        thr_proc.stderr = DonePipe()
+        thr_proc.wait.return_value = 1
+
+        def fake_popen_b(argv, **kwargs):
+            return killer_proc if argv and argv[0] == "taskkill" else thr_proc
+
+        real_thread_cls = threading.Thread
+        start_count = {"n": 0}
+
+        class SecondStartFailThread(real_thread_cls):
+            def start(self):
+                start_count["n"] += 1
+                if start_count["n"] == 2:
+                    raise RuntimeError("can't start new thread")
+                return super().start()
+
+        cost_log_b = self.root / "cost-win-thr.jsonl"
+        with mock.patch.object(to_agy, "os", WindowsOS()), \
+                mock.patch.object(to_agy, "CLEANUP_TIMEOUT_SECONDS", 0.2), \
+                mock.patch.object(to_agy.subprocess, "Popen", side_effect=fake_popen_b), \
+                mock.patch.object(to_agy.threading, "Thread", SecondStartFailThread), \
+                mock.patch.object(to_agy.shutil, "which", return_value="/opt/bin/agy"), \
+                contextlib.redirect_stderr(io.StringIO()):
+            res_b = to_agy.agy_review_gate(
+                request_prompt="Review.",
+                cd=str(self.root),
+                handoff_dir=str(self.root / "handoffs"),
+                marker_path=str(self.root / "win-thr-rounds.json"),
+                gate_id="gate-win-thr",
+                artifact_key="art-win-thr",
+                cost_log_path=str(cost_log_b),
+                settings_path=str(self.root / "absent"),
+                timeout_seconds=1.0,
+                artifact_paths=[str(self.artifact)],
+                agy_home=str(self.agy_home),
+            )
+        self.assertEqual("other_error", res_b.status)
+        self.assertFalse(res_b.envelope.get("resumable", False))
+        self.assertTrue(cost_log_b.is_file())
+        self.assertEqual(1, len(cost_log_b.read_text(encoding="utf-8").splitlines()))
+        self.assertTrue(Path(res_b.envelope["handoff_path"]).is_file())
+        state_b = json.loads(Path(res_b.envelope["continuation_state_path"]).read_text(encoding="utf-8"))
+        self.assertEqual("failed", state_b["state"])
+        self.assertTrue(thr_proc.kill.called)
+
     def test_windows_hung_stdin_writer_fails_closed_instead_of_returning_success(self) -> None:
         class WindowsOS:
             name = "nt"
